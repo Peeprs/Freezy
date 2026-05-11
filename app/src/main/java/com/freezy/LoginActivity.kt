@@ -100,8 +100,8 @@ class LoginActivity : AppCompatActivity() {
                             val conn = url.openConnection() as HttpURLConnection
                             conn.requestMethod = "POST"
                             conn.setRequestProperty("Content-Type", "application/json")
-                            conn.connectTimeout = 10000
-                            conn.readTimeout = 10000
+                            conn.connectTimeout = 30000
+                            conn.readTimeout = 30000
                             conn.doOutput = true
 
                             // Obtener HWID

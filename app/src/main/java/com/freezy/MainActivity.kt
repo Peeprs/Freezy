@@ -290,8 +290,8 @@ class MainActivity : AppCompatActivity() {
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
-                conn.connectTimeout = 5000
-                conn.readTimeout = 5000
+                conn.connectTimeout = 30000
+                conn.readTimeout = 30000
                 conn.doOutput = true
 
                 val jsonInputString = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\"}"
@@ -334,7 +334,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     btnFreezy.isEnabled = true
                     btnFreezy.alpha = 1.0f
-                    android.widget.Toast.makeText(this@MainActivity, "Sin conexión", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(this@MainActivity, "Servidor despertando... Reintenta en 10 segundos.", android.widget.Toast.LENGTH_LONG).show()
                     Logger.log(this@MainActivity, "Error de conexión al iniciar: ${e.message}")
                 }
             }

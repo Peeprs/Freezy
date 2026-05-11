@@ -259,14 +259,6 @@ class BubbleService : Service() {
         val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
         btnBackToLag.setOnClickListener { returnToFakeLag() }
 
-        // 1. Redondear el menú y ponerlo negro
-        val menuShape = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            setColor(Color.BLACK)
-            cornerRadius = 16 * resources.displayMetrics.density
-        }
-        recoilMenu.background = menuShape
-
         // 2. Hacer el menú arrastrable usando el header
         val menuHeader = bubbleView.findViewById<LinearLayout>(R.id.menu_header)
         menuHeader.setOnTouchListener { _, event ->

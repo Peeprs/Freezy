@@ -9,7 +9,7 @@
         android:id="@+id/cara_fake_lag"
         android:layout_width="56dp"
         android:layout_height="56dp"
-        android:background="@drawable/bg_bubble">
+        android:background="@drawable/bg_glass_bubble">
         
         <ImageView
             android:id="@+id/bubble_icon"
@@ -23,90 +23,118 @@
     <!-- CARA 2: NoRecoil Menu (Oculto) -->
     <LinearLayout
         android:id="@+id/recoil_menu"
-        android:layout_width="230dp"
+        android:layout_width="240dp"
         android:layout_height="wrap_content"
-        android:minHeight="220dp"
         android:visibility="gone"
         android:orientation="vertical"
-        android:padding="12dp"
-        android:background="#000000">
+        android:padding="16dp"
+        android:background="@drawable/bg_glass_menu">
         
         <LinearLayout
             android:id="@+id/menu_header"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:gravity="center_vertical"
+            android:layout_marginBottom="12dp">
             
             <ImageButton
                 android:id="@+id/btn_back_to_lag"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_arrow_back"
                 android:tint="#FFFFFF" />
+                
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="FREEZY MENU"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="14sp"
+                android:layout_marginStart="12dp"/>
         </LinearLayout>
         
-        <Switch 
-            android:id="@+id/recoil_switch"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="NoRecoil External" 
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:thumb="@drawable/custom_seekbar_thumb"
-            android:layout_marginTop="2dp" />
-
-        <TextView 
-            android:id="@+id/recoil_percentage"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Efectividad: 50%" 
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:layout_marginTop="2dp" />
-
-        <SeekBar 
-            android:id="@+id/recoil_seekbar"
+        <!-- Tile NoRecoil -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:max="100"
-            android:progress="50"
-            android:progressDrawable="@drawable/custom_seekbar_track"
-            android:thumb="@drawable/custom_seekbar_thumb"
-            android:splitTrack="false"
-            android:layout_marginTop="4dp" />
+            android:orientation="vertical"
+            android:background="@drawable/bg_glass_tile"
+            android:padding="10dp"
+            android:layout_marginBottom="10dp">
+            
+            <Switch 
+                android:id="@+id/recoil_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="NoRecoil External" 
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
 
-            <!-- Añade esto justo debajo del SeekBar de NoRecoil -->
+            <TextView 
+                android:id="@+id/recoil_percentage"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Efectividad: 50%" 
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:layout_marginTop="4dp" />
 
-        <Switch 
-            android:id="@+id/fov_switch"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="FOV External" 
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:thumb="@drawable/custom_seekbar_thumb"
-            android:layout_marginTop="8dp" />
+            <SeekBar 
+                android:id="@+id/recoil_seekbar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="50"
+                android:progressDrawable="@drawable/custom_seekbar_track"
+                android:thumb="@drawable/custom_seekbar_thumb"
+                android:splitTrack="false"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
 
-        <TextView 
-            android:id="@+id/fov_size_text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Radio FOV: 100px" 
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:layout_marginTop="2dp" />
-
-        <SeekBar 
-            android:id="@+id/fov_seekbar"
+        <!-- Tile FOV -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:max="600"
-            android:progress="0"
-            android:progressDrawable="@drawable/custom_seekbar_track"
-            android:thumb="@drawable/custom_seekbar_thumb"
-            android:splitTrack="false"
-            android:layout_marginTop="4dp" />
+            android:orientation="vertical"
+            android:background="@drawable/bg_glass_tile"
+            android:padding="10dp">
+            
+            <Switch 
+                android:id="@+id/fov_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="FOV External" 
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <TextView 
+                android:id="@+id/fov_size_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Radio FOV: 100px" 
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:layout_marginTop="4dp" />
+
+            <SeekBar 
+                android:id="@+id/fov_seekbar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="600"
+                android:progress="0"
+                android:progressDrawable="@drawable/custom_seekbar_track"
+                android:thumb="@drawable/custom_seekbar_thumb"
+                android:splitTrack="false"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

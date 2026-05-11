@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <!-- Fondo semi-transparente para efecto cristal -->
+    <solid android:color="#991A1A1A" />
+    
+    <!-- Borde sutil que resalta los bordes del cristal -->
+    <stroke
+        android:width="1.5dp"
+        android:color="#80FFFFFF" />
+</shape>
