@@ -93,8 +93,8 @@ class MainActivity : AppCompatActivity() {
             updateModeUI(currentMode, btnModeAuto, btnModeCustom, btnModeManual, indicatorView, layoutCustomTime, false)
         }
 
-        val customTimeFloat = prefs.getFloat("custom_time_float", 3.0f)
-        seekbarTime.max = 100 // Para tener décimas (0.0 a 10.0)
+        val customTimeFloat = prefs.getFloat("custom_time_float", 3.0f).coerceAtMost(5.0f)
+        seekbarTime.max = 50 // Máximo 5.0 segundos (50 / 10)
         seekbarTime.progress = (customTimeFloat * 10).toInt()
         tvTimeLabel.text = String.format("%.1f Segundos", customTimeFloat)
 
@@ -334,7 +334,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     btnFreezy.isEnabled = true
                     btnFreezy.alpha = 1.0f
-                    android.widget.Toast.makeText(this@MainActivity, "Servidor despertando... Reintenta en 10 segundos.", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(this@MainActivity, "Por favor espere un momento.", android.widget.Toast.LENGTH_LONG).show()
                     Logger.log(this@MainActivity, "Error de conexión al iniciar: ${e.message}")
                 }
             }

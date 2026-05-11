@@ -12,67 +12,74 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="@drawable/shape_card_dark"
-        android:padding="32dp"
-        android:elevation="4dp">
+        android:background="@drawable/bg_glass_blue"
+        android:padding="32dp">
 
-        <!-- User Field -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="FREEZY"
+            android:textColor="#00A2FF"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="24dp"
+            android:gravity="center"
+            android:letterSpacing="0.1" />
+
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Usuario"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
+            android:text="USUARIO"
+            android:textColor="#BBBBBB"
+            android:textSize="11sp"
             android:textStyle="bold"
             android:layout_marginBottom="8dp" />
 
         <EditText
             android:id="@+id/et_user"
             android:layout_width="match_parent"
-            android:layout_height="50dp"
-            android:hint="Ingresa un usuario"
-            android:textColorHint="#666666"
+            android:layout_height="52dp"
+            android:hint="Ingresa tu usuario"
+            android:textColorHint="#55FFFFFF"
             android:textColor="#FFFFFF"
-            android:background="@drawable/shape_inner_card_dark"
+            android:background="@drawable/bg_glass_tile"
             android:paddingStart="16dp"
             android:paddingEnd="16dp"
             android:singleLine="true"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginBottom="20dp" />
 
-        <!-- Key Field -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Licencia"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
+            android:text="LICENCIA"
+            android:textColor="#BBBBBB"
+            android:textSize="11sp"
             android:textStyle="bold"
             android:layout_marginBottom="8dp" />
 
         <EditText
             android:id="@+id/et_key"
             android:layout_width="match_parent"
-            android:layout_height="50dp"
-            android:hint="Ingresa tu Licencia"
-            android:textColorHint="#666666"
+            android:layout_height="52dp"
+            android:hint="Pega tu licencia aquí"
+            android:textColorHint="#55FFFFFF"
             android:textColor="#FFFFFF"
-            android:background="@drawable/shape_inner_card_dark"
+            android:background="@drawable/bg_glass_tile"
             android:paddingStart="16dp"
             android:paddingEnd="16dp"
             android:singleLine="true"
             android:inputType="textCapCharacters|textNoSuggestions"
-            android:layout_marginBottom="24dp" />
+            android:layout_marginBottom="32dp" />
 
-        <!-- Login Button -->
         <Button
             android:id="@+id/btn_login"
             android:layout_width="match_parent"
-            android:layout_height="50dp"
-            android:text="Ingresar"
+            android:layout_height="52dp"
+            android:text="INGRESAR"
             android:textColor="#FFFFFF"
-            app:backgroundTint="#0084FF"
             android:textStyle="bold"
-            android:textSize="14sp" />
+            app:backgroundTint="#00A2FF"
+            android:elevation="0dp" />
 
     </LinearLayout>
 

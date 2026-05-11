@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Fondo cristal con tinte azul claro (30% opacidad) -->
+    <solid android:color="#4D004C8F" />
+        
+    <corners android:radius="24dp" />
+    
+    <!-- Borde azul claro brillante para el efecto Wow -->
+    <stroke
+        android:width="1.5dp"
+        android:color="#8000A2FF" />
+</shape>
