@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/shape_dialog_bg"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="⚠️ DESCARGO DE RESPONSABILIDAD"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp"
+        android:gravity="center_horizontal"
+        android:layout_gravity="center_horizontal"/>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Si bien esta herramienta NO altera los archivos originales del juego, te otorga una ventaja extrema.\n\n⚠️ Uso de Datos y Dispositivo:\nSolicitamos acceso al 'Uso de Datos' para monitorear la ejecución del juego y activar las funciones correctamente. También almacenamos el nombre de tu dispositivo para la detección y prevención de fallas técnicas específicas reportadas anteriormente en modelos similares.\n\nEl uso abusivo puede causar baneos. El uso de esta herramienta es bajo tu propia responsabilidad."
+        android:textColor="#EEEEEE"
+        android:textSize="14sp"
+        android:layout_marginBottom="24dp"
+        android:lineSpacingExtra="4sp"/>
+
+    <Button
+        android:id="@+id/btn_accept_risk"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="ACEPTO EL RIESGO"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#008800"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btn_exit_app"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="SALIR"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#880000" />
+</LinearLayout>

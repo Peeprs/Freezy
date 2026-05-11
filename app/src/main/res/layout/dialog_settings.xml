@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/shape_dialog_bg"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp">
+
+        <TextView
+            android:id="@+id/btn_close_dialog_x"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="X"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:layout_alignParentLeft="true"
+            android:layout_centerVertical="true"
+            android:padding="8dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Ajustes Avanzados"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:layout_centerInParent="true"/>
+    </RelativeLayout>
+
+    <Switch
+        android:id="@+id/switch_root"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Permitir Root (OBLIGATORIO)"
+        android:textColor="#EEEEEE"
+        android:textSize="16sp"
+        android:thumb="@drawable/custom_seekbar_thumb"
+        android:layout_marginBottom="24dp"/>
+
+
+
+    <TextView
+        android:id="@+id/tv_version"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="Versión actual de la app: v1.0"
+        android:textColor="#888888"
+        android:textSize="12sp"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/btn_view_logs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="VER LOGS"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#444444"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/btn_logout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="CERRAR SESIÓN"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#880000"
+        android:layout_marginBottom="16dp" />
+
+
+</LinearLayout>

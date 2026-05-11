@@ -1,0 +1,646 @@
+package com.freezy
+
+import com.system.network.ui.R
+import com.freezy.network.FovOverlay
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONObject
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.Toast
+import android.widget.LinearLayout
+import android.widget.ImageButton
+import android.widget.Switch
+import android.widget.TextView
+import android.widget.SeekBar
+import android.animation.ValueAnimator
+import androidx.core.app.NotificationCompat
+import kotlin.math.abs
+
+class BubbleService : Service() {
+
+    private var licenseCheckFailCount = 0
+    private lateinit var windowManager: WindowManager
+    private lateinit var bubbleView: View
+    private lateinit var params: WindowManager.LayoutParams
+    private lateinit var bubbleIcon: ImageView
+    private lateinit var arcOverlay: ArcProgressView
+    private lateinit var caraFakeLag: FrameLayout
+    private lateinit var recoilMenu: LinearLayout
+    private var isMenuExpanded = false
+    private val longClickRunnable = Runnable { 
+        isLongClickTriggered = true
+        expandBubbleMenu() 
+    }
+    private lateinit var fovOverlay: FovOverlay
+    private var fovParams = WindowManager.LayoutParams()
+    private var suProcess: Process? = null
+    private var suOutputStream: java.io.DataOutputStream? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    private var initialX = 0
+    private var initialY = 0
+    private var initialTouchX = 0f
+    private var initialTouchY = 0f
+    private var isDragging = false
+    private var isLongClickTriggered = false
+
+    private var isNoRecoilEnabled = false
+    private var recoilStrength = 50
+    private var inputMonitor: com.freezy.network.InputMonitor? = null
+
+    private var isFreezing = false
+    private var fillAnimator: ValueAnimator? = null
+
+    // Vista personalizada que dibuja el arco circular de progreso
+    inner class ArcProgressView(context: Context) : View(context) {
+        var progress = 0f // 0.0 a 1.0
+        
+        init {
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                isForceDarkAllowed = false
+            }
+        }
+
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#FFFFFF")
+            style = Paint.Style.STROKE
+            strokeWidth = 16f // Mucho más gruesa para que sea súper blanca
+            strokeCap = Paint.Cap.ROUND
+            alpha = 255 // Opacidad total
+        }
+        private val rect = RectF()
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val size = (56 * resources.displayMetrics.density).toInt()
+            setMeasuredDimension(size, size)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val pad = paint.strokeWidth / 2f + 2f
+            rect.set(pad, pad, width - pad, height - pad)
+            
+            // Dibujar arco de progreso (blanco puro)
+            paint.color = Color.WHITE
+            paint.alpha = 255
+            canvas.drawArc(rect, -90f, 360f * progress, false, paint)
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+
+    override fun onCreate() {
+        super.onCreate()
+        startForegroundNotification()
+        setupFov()
+        setupBubble()
+        startLicenseCheck()
+        
+        getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("is_bubble_running", true).apply()
+    }
+
+    private val licenseCheckRunnable = object : Runnable {
+        override fun run() {
+            checkLicense()
+            handler.postDelayed(this, 5 * 60 * 1000) // Cada 5 minutos
+        }
+    }
+
+    private fun startLicenseCheck() {
+        handler.post(licenseCheckRunnable)
+    }
+
+    private fun checkLicense() {
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val username = prefs.getString("saved_username", "") ?: return
+        val key = prefs.getString("saved_key", "") ?: return
+        val endpointUrl = prefs.getString("secure_endpoint", "") ?: return
+        
+        if (endpointUrl.isEmpty()) return
+        
+        Thread {
+            try {
+                val url = URL(endpointUrl)
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+                conn.doOutput = true
+
+                val hwid = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+                val jsonInputString = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\"}"
+                
+                conn.outputStream.use { os ->
+                    val input = jsonInputString.toByteArray(Charsets.UTF_8)
+                    os.write(input, 0, input.size)
+                }
+
+                val responseCode = conn.responseCode
+                if (responseCode == 200) {
+                    val responseBody = conn.inputStream.bufferedReader().readText()
+                    val jsonObject = JSONObject(responseBody)
+                    val isValid = jsonObject.getBoolean("valid")
+
+                    if (!isValid) {
+                        val message = jsonObject.optString("message", "La licencia expiró")
+                        handleLicenseExpired(message)
+                    } else {
+                        licenseCheckFailCount = 0
+                    }
+                } else {
+                    val errorBody = conn.errorStream?.bufferedReader()?.readText() ?: ""
+                    val serverMessage = try {
+                        JSONObject(errorBody).optString("message", "La licencia expiró")
+                    } catch (e: Exception) {
+                        "Error: $responseCode"
+                    }
+                    handleLicenseExpired(serverMessage)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                licenseCheckFailCount++
+                if (licenseCheckFailCount >= 3) {
+                    handleLicenseExpired("Error de conexión. Sesión cerrada.")
+                }
+            }
+        }.start()
+    }
+
+    private fun handleLicenseExpired(message: String) {
+        handler.post {
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            
+            val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putBoolean("is_logged_in", false)
+                .apply()
+                
+            stopSelf()
+            
+            val intent = Intent(this, LoginActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            startActivity(intent)
+        }
+    }
+
+    private fun startForegroundNotification() {
+        val channelId = "freezy_service_channel"
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(channelId, "Freezy Service", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(ch)
+        }
+        val notif = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("Freezy Activo")
+            .setContentText("Toca la burbuja para activar")
+            .setSmallIcon(android.R.drawable.ic_secure)
+            .build()
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 34)
+                startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            else startForeground(1, notif)
+        } catch (e: Exception) { startForeground(1, notif) }
+    }
+
+    private fun setupFov() {
+        fovOverlay = FovOverlay(this)
+        
+        fovParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        )
+    }
+
+    private fun setupBubble() {
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        bubbleView = LayoutInflater.from(this).inflate(R.layout.bubble_layout, null)
+        bubbleIcon = bubbleView.findViewById(R.id.bubble_icon)
+        caraFakeLag = bubbleView.findViewById(R.id.cara_fake_lag)
+        recoilMenu = bubbleView.findViewById(R.id.recoil_menu)
+
+        // Agregar la vista de arco circular programáticamente encima del ícono (en caraFakeLag)
+        arcOverlay = ArcProgressView(this)
+        arcOverlay.visibility = View.GONE
+        val size = (56 * resources.displayMetrics.density).toInt()
+        caraFakeLag.addView(
+            arcOverlay,
+            FrameLayout.LayoutParams(size, size, Gravity.CENTER)
+        )
+
+        // Configurar clics del menú
+        val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
+        btnBackToLag.setOnClickListener { returnToFakeLag() }
+
+        // 1. Redondear el menú y ponerlo negro
+        val menuShape = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(Color.BLACK)
+            cornerRadius = 16 * resources.displayMetrics.density
+        }
+        recoilMenu.background = menuShape
+
+        // 2. Hacer el menú arrastrable usando el header
+        val menuHeader = bubbleView.findViewById<LinearLayout>(R.id.menu_header)
+        menuHeader.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = params.x; initialY = params.y
+                    initialTouchX = event.rawX; initialTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - initialTouchX
+                    val dy = event.rawY - initialTouchY
+                    params.x = initialX + dx.toInt()
+                    params.y = initialY + dy.toInt()
+                    windowManager.updateViewLayout(bubbleView, params)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
+                        .putInt("bubble_x", params.x).putInt("bubble_y", params.y).apply()
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 3. Configurar SeekBar y Switch
+        val recoilSeekbar = bubbleView.findViewById<SeekBar>(R.id.recoil_seekbar)
+        val recoilPercentage = bubbleView.findViewById<TextView>(R.id.recoil_percentage)
+        val recoilSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
+
+
+
+        recoilSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                // Los permisos se otorgan dentro de RecoilService al iniciar
+
+                val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
+                    action = "START_RECOIL"
+                }
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+                
+                if (inputMonitor == null) {
+                    inputMonitor = com.freezy.network.InputMonitor(this)
+                }
+                inputMonitor?.startMonitoring()
+                
+            } else {
+                val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
+                    action = "STOP_RECOIL"
+                }
+                startService(intent)
+                inputMonitor?.stopMonitoring()
+                Toast.makeText(this, "No-Recoil: OFF", Toast.LENGTH_SHORT).show()
+            }
+        }
+        
+        recoilSeekbar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                recoilPercentage.text = "Efectividad: $progress%"
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val progress = seekBar?.progress ?: 0
+                // Calculamos los valores del perfil basados en el porcentaje (Aumentado para máxima fuerza)
+                val baseStrength = (progress * 0.5).toInt() // 0 a 50
+                val maxStrength = (progress * 1.5).toInt()  // 0 a 150
+                
+                val intent = Intent(this@BubbleService, com.freezy.network.RecoilService::class.java).apply {
+                    action = "SET_PROFILE"
+                    putExtra("base", baseStrength)
+                    putExtra("inc", 1.2f)
+                    putExtra("max", maxStrength)
+                }
+                startService(intent)
+            }
+        })
+
+        val fovSwitch = bubbleView.findViewById<Switch>(R.id.fov_switch)
+        
+
+
+        val fovSeekBar = bubbleView.findViewById<SeekBar>(R.id.fov_seekbar)
+        val fovText = bubbleView.findViewById<TextView>(R.id.fov_size_text)
+
+        // Registrar el callback de UI con C++ para recibir notificaciones de disparo
+        NativeBridge.registerUiCallback(this)
+
+        fovSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                windowManager.addView(fovOverlay, fovParams)
+                NativeBridge.setFovEnabled(true)
+            } else {
+                windowManager.removeView(fovOverlay)
+                NativeBridge.setFovEnabled(false)
+            }
+        }
+
+        fovSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                fovText.text = "Radio FOV: ${progress}px"
+                
+                if (progress > 0 && fovSwitch.isChecked) {
+                    // Si es la primera vez que sube de 0, mostramos el overlay
+                    if (fovOverlay.parent == null) {
+                        windowManager.addView(fovOverlay, fovParams)
+                    }
+                    fovOverlay.updateRadius(progress)
+                    NativeBridge.setFovRadius(progress)
+                    NativeBridge.setFovEnabled(true)
+                } else if (progress == 0) {
+                    // Si baja a 0, lo quitamos de la vista para limpieza
+                    if (fovOverlay.parent != null) {
+                        windowManager.removeView(fovOverlay)
+                    }
+                    NativeBridge.setFovEnabled(false)
+                }
+            }
+            override fun onStartTrackingTouch(p0: SeekBar?) {}
+            override fun onStopTrackingTouch(p0: SeekBar?) {}
+        })
+
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = prefs.getInt("bubble_x", 100)
+            y = prefs.getInt("bubble_y", 200)
+        }
+        windowManager.addView(bubbleView, params)
+        setupTouchListener()
+    }
+
+    private fun setupTouchListener() {
+        // Solo escuchamos toques en la burbuja (Face 1) para permitir clics en el menú (Face 2)
+        caraFakeLag.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    isDragging = false
+                    isLongClickTriggered = false
+                    initialX = params.x; initialY = params.y
+                    initialTouchX = event.rawX; initialTouchY = event.rawY
+                    handler.postDelayed(longClickRunnable, 1000) // 1 segundo para que no sea tan sensible
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - initialTouchX
+                    val dy = event.rawY - initialTouchY
+                    if (abs(dx) > 8 || abs(dy) > 8) {
+                        isDragging = true
+                        handler.removeCallbacks(longClickRunnable)
+                    }
+                    if (isDragging) {
+                        params.x = initialX + dx.toInt()
+                        params.y = initialY + dy.toInt()
+                        windowManager.updateViewLayout(bubbleView, params)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    handler.removeCallbacks(longClickRunnable)
+                    if (!isDragging && !isLongClickTriggered) {
+                        onBubbleTapped()
+                    } else if (isDragging) {
+                        getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
+                            .putInt("bubble_x", params.x).putInt("bubble_y", params.y).apply()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun expandBubbleMenu() {
+        isMenuExpanded = true
+        recoilMenu.visibility = View.VISIBLE
+        caraFakeLag.visibility = View.GONE
+        
+        // El tamaño de la ventana se adapta al menú (wrap_content)
+        params.width = WindowManager.LayoutParams.WRAP_CONTENT
+        params.height = WindowManager.LayoutParams.WRAP_CONTENT
+        windowManager.updateViewLayout(bubbleView, params)
+    }
+
+    private fun returnToFakeLag() {
+        recoilMenu.visibility = View.GONE
+        caraFakeLag.visibility = View.VISIBLE
+        isMenuExpanded = false
+
+        // Volver al tamaño de la burbuja (56dp)
+        val density = resources.displayMetrics.density
+        val size56dp = (56 * density).toInt()
+        params.width = size56dp
+        params.height = size56dp
+        windowManager.updateViewLayout(bubbleView, params)
+
+        // Recuperar animación de llenado si estaba activa
+        if (isFreezing) {
+            arcOverlay.visibility = View.VISIBLE
+        }
+    }
+
+    private fun onBubbleTapped() {
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val useRoot = prefs.getBoolean("use_root", false)
+        val mode = prefs.getInt("mode", 0)
+
+        // Modo Manual: el tap siempre hace toggle (ON/OFF)
+        if (mode == 2) {
+            toggleManual(useRoot)
+            return
+        }
+
+        // Modos Auto y Personalizado: ignorar taps mientras ya está activo
+        if (isFreezing) return
+
+        val duration = when (mode) {
+            1 -> (prefs.getFloat("custom_time_float", 3f) * 1000).toLong()
+            else -> 3000L
+        }
+        isFreezing = true
+        startFreeze(useRoot)
+        startArcAnimation(duration)
+        handler.postDelayed({ if (isFreezing) stopFreeze(useRoot) }, duration)
+    }
+
+    fun onFiringStateChanged(isFiring: Boolean) {
+        if (::fovOverlay.isInitialized) {
+            fovOverlay.setFiringState(isFiring)
+        }
+    }
+
+    private fun toggleManual(useRoot: Boolean) {
+        if (isFreezing) {
+            stopFreeze(useRoot)
+        } else {
+            isFreezing = true
+            startFreeze(useRoot)
+            bubbleIcon.setImageResource(R.drawable.ic_pause_white)
+            // En modo manual: mostrar arco fijo al 100%
+            arcOverlay.progress = 1f
+            arcOverlay.visibility = View.VISIBLE
+            arcOverlay.invalidate()
+        }
+    }
+
+    private fun executeRootCommand(command: String) {
+        if (suProcess == null) {
+            try {
+                suProcess = Runtime.getRuntime().exec("su")
+                suOutputStream = java.io.DataOutputStream(suProcess!!.outputStream)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                handler.post { Toast.makeText(this, "Error al obtener permisos Root", Toast.LENGTH_SHORT).show() }
+                return
+            }
+        }
+        try {
+            suOutputStream?.writeBytes(command + "\n")
+            suOutputStream?.flush()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            suProcess = null // Forzar reinicio en el próximo comando
+            suOutputStream = null
+        }
+    }
+
+    private fun startFreeze(useRoot: Boolean) {
+        playSound(android.media.ToneGenerator.TONE_PROP_BEEP)
+        Logger.log(this, "Fake Lag Activado (Root: $useRoot)")
+        if (useRoot) {
+            Thread {
+                executeRootCommand("iptables -I INPUT 1 -p udp -j DROP")
+            }.start()
+        }
+    }
+
+    private fun stopFreeze(useRoot: Boolean) {
+        playSound(android.media.ToneGenerator.TONE_PROP_BEEP2)
+        Logger.log(this, "Fake Lag Desactivado")
+        isFreezing = false
+        fillAnimator?.cancel()
+        arcOverlay.visibility = View.GONE
+        arcOverlay.progress = 0f
+        bubbleIcon.visibility = View.VISIBLE
+        bubbleIcon.alpha = 1f
+        bubbleIcon.setImageResource(R.drawable.ic_play_white)
+        if (useRoot) {
+            Thread {
+                executeRootCommand("iptables -D INPUT -p udp -j DROP")
+            }.start()
+        }
+    }
+
+    private fun playSound(type: Int) {
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 65)
+            toneGen.startTone(type, 100)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun startArcAnimation(duration: Long) {
+        arcOverlay.progress = 0f
+        arcOverlay.visibility = View.VISIBLE
+        bubbleIcon.visibility = View.GONE // Ocultar icono para evitar clics y que no tape la barra
+
+        fillAnimator?.cancel()
+        fillAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            this.duration = duration
+            addUpdateListener {
+                arcOverlay.progress = it.animatedValue as Float
+                arcOverlay.invalidate()
+            }
+            addListener(object : android.animation.Animator.AnimatorListener {
+                override fun onAnimationStart(a: android.animation.Animator) {}
+                override fun onAnimationEnd(a: android.animation.Animator) {
+                    arcOverlay.visibility = View.GONE
+                    bubbleIcon.visibility = View.VISIBLE // Volver a mostrar
+                }
+                override fun onAnimationCancel(a: android.animation.Animator) {
+                    arcOverlay.visibility = View.GONE
+                    bubbleIcon.visibility = View.VISIBLE // Volver a mostrar
+                }
+                override fun onAnimationRepeat(a: android.animation.Animator) {}
+            })
+            start()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isFreezing) stopFreeze(getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false))
+        fillAnimator?.cancel()
+        
+        // Detener No-Recoil y Monitoreo de Entrada
+        try {
+            val recoilIntent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
+                action = "STOP_RECOIL"
+            }
+            startService(recoilIntent)
+            inputMonitor?.stopMonitoring()
+        } catch (e: Exception) {}
+
+        // Limpieza de Overlays para evitar que queden pegados en pantalla
+        if (::bubbleView.isInitialized && bubbleView.parent != null) {
+            windowManager.removeView(bubbleView)
+        }
+        if (::fovOverlay.isInitialized && fovOverlay.parent != null) {
+            windowManager.removeView(fovOverlay)
+        }
+        
+        // Cerrar el shell root correctamente
+        try {
+            suOutputStream?.writeBytes("exit\n")
+            suOutputStream?.flush()
+            suOutputStream?.close()
+            suProcess?.destroy()
+        } catch (e: Exception) {}
+
+        getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("is_bubble_running", false).apply()
+    }
+
+    override fun onBind(intent: Intent): IBinder? = null
+}
