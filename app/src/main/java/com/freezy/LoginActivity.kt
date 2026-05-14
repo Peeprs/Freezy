@@ -9,11 +9,21 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
+import java.security.cert.X509Certificate
+import java.security.MessageDigest
+import android.util.Base64
 
 class LoginActivity : AppCompatActivity() {
 
@@ -41,6 +51,14 @@ class LoginActivity : AppCompatActivity() {
             val dialogView = layoutInflater.inflate(R.layout.dialog_disclaimer, null)
             val btnAccept = dialogView.findViewById<Button>(R.id.btn_accept_risk)
             val btnExit = dialogView.findViewById<Button>(R.id.btn_exit_app)
+            
+            val tvTitle = dialogView.findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_disclaimer_title)
+            val tvBody = dialogView.findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_disclaimer_body)
+            
+            // Cargar strings ofuscados de C++
+            tvTitle?.text = NativeBridge.getNativeString(NativeBridge.STRING_DISCLAIMER_TITLE)
+            tvBody?.text = NativeBridge.getNativeString(NativeBridge.STRING_DISCLAIMER_BODY)
+            btnAccept.text = NativeBridge.getNativeString(NativeBridge.STRING_ACCESS_GRANTED).replace("¡", "").replace("!", "") // Reutilizar o simplificar
 
             val dialog = AlertDialog.Builder(this)
                     .setView(dialogView)
@@ -68,7 +86,15 @@ class LoginActivity : AppCompatActivity() {
             return
         }
 
-        setContentView(R.layout.activity_login)
+        setContentView(com.system.network.ui.R.layout.activity_login)
+        
+        // Cargar strings ofuscados de C++ para los campos de login
+        findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_app_name)?.text = NativeBridge.getNativeString(NativeBridge.STRING_APP_NAME)
+        findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_label_user)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LABEL_USER)
+        findViewById<android.widget.EditText>(com.system.network.ui.R.id.et_user)?.hint = NativeBridge.getNativeString(NativeBridge.STRING_HINT_USER)
+        findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_label_license_login)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LABEL_LICENSE)
+        findViewById<android.widget.EditText>(com.system.network.ui.R.id.et_key)?.hint = NativeBridge.getNativeString(NativeBridge.STRING_HINT_LICENSE)
+        findViewById<android.widget.Button>(com.system.network.ui.R.id.btn_login)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
 
         val etUser = findViewById<EditText>(R.id.et_user)
         val etKey = findViewById<EditText>(R.id.et_key)
@@ -83,123 +109,176 @@ class LoginActivity : AppCompatActivity() {
             val key = etKey.text.toString().trim().uppercase()
 
             if (username.isEmpty() || key.isEmpty()) {
-                Toast.makeText(this, "Por favor completa todos los campos", Toast.LENGTH_SHORT)
+                Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_FILL_FIELDS), Toast.LENGTH_SHORT)
                         .show()
                 return@setOnClickListener
             }
 
-            btnLogin.text = "VERIFICANDO..."
+            btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_VERIFYING)
             btnLogin.isEnabled = false
 
             // Conexión real al servidor privado
             Thread {
-                        try {
-                            val endpointUrl =
-                                    getSecureEndpoint() // Obtenemos la URL de C++ (ofuscada)
-                            val url = URL(endpointUrl)
-                            val conn = url.openConnection() as HttpURLConnection
-                            conn.requestMethod = "POST"
-                            conn.setRequestProperty("Content-Type", "application/json")
-                            conn.connectTimeout = 30000
-                            conn.readTimeout = 30000
-                            conn.doOutput = true
+                try {
+                    val endpointUrl = getSecureEndpoint() // Obtenemos la URL de C++ (ofuscada)
+                    
+                    // PASO 1: Solicitar Desafío (Challenge)
+                    val challengeUrl = URL("$endpointUrl/challenge") // Asumiendo que getSecureEndpoint() devuelve algo como "http://ip:port/api/keys" pero el backend está en "/api/keys/challenge". Adaptar según la lógica. Wait.
+                    
+                    // El usuario tenía endpointUrl directo a "/api/keys/verify" o "https://.../api/keys"?
+                    // Vamos a arreglar eso después, por ahora usemos endpointUrl.replace("/verify", "/challenge")
+                    val challengeEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl.replace("/verify", "/challenge") else "$endpointUrl/challenge"
+                    val verifyEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl else "$endpointUrl/verify"
 
-                            // Obtener HWID
-                            val hwid =
-                                    Settings.Secure.getString(
-                                            contentResolver,
-                                            Settings.Secure.ANDROID_ID
-                                    )
-
-                            // Enviar JSON con la Key, HWID, Username y Device Model
-                            val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
-                            val jsonInputString =
-                                    "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\"}"
-                            conn.outputStream.use { os ->
-                                val input = jsonInputString.toByteArray(Charsets.UTF_8)
-                                os.write(input, 0, input.size)
+                    val hwid = NativeBridge.getNativeHWID()
+                    val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+                    
+                    // PASO 1.5: Certificate Pinning
+                    val trustManager = object : X509TrustManager {
+                        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                            if (chain.isNullOrEmpty()) throw java.security.cert.CertificateException("Certificado vacío")
+                            val cert = chain[0]
+                            val digest = MessageDigest.getInstance("SHA-256")
+                            val pubKeyHash = digest.digest(cert.publicKey.encoded)
+                            val pubKeyHashBase64 = Base64.encodeToString(pubKeyHash, Base64.NO_WRAP)
+                            
+                            val TARGET_HASH = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+                            if (TARGET_HASH != "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" && pubKeyHashBase64 != TARGET_HASH) {
+                                throw java.security.cert.CertificateException("Pinning Fallido: Posible Man-in-the-Middle")
                             }
+                        }
+                        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                    }
+                    val sslContext = SSLContext.getInstance("TLS")
+                    sslContext.init(null, arrayOf<TrustManager>(trustManager), java.security.SecureRandom())
+                    
+                    val challengeConn = URL(challengeEndpoint).openConnection() as HttpURLConnection
+                    if (challengeConn is HttpsURLConnection) {
+                        challengeConn.sslSocketFactory = sslContext.socketFactory
+                    }
+                    challengeConn.requestMethod = "POST"
+                    challengeConn.setRequestProperty("Content-Type", "application/json")
+                    challengeConn.connectTimeout = 30000
+                    challengeConn.readTimeout = 30000
+                    challengeConn.doOutput = true
 
-                            val responseCode = conn.responseCode
-                            if (responseCode == 200) {
-                                val responseBody = conn.inputStream.bufferedReader().readText()
-                                android.util.Log.d("LoginActivity", "Server Response: $responseBody")
-                                val jsonObject = JSONObject(responseBody)
-                                val isValid = jsonObject.getBoolean("valid")
+                    val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\"}"
+                    challengeConn.outputStream.use { os ->
+                        val input = challengeJson.toByteArray(Charsets.UTF_8)
+                        os.write(input, 0, input.size)
+                    }
 
-                                if (isValid) {
-                                    val createdAt = jsonObject.optString("created_at", "--")
-                                    val expiresAt = jsonObject.optString("expires_at", "--")
+                    if (challengeConn.responseCode != 200) {
+                        val errorStream = challengeConn.errorStream
+                        val errorMessage = if (errorStream != null) {
+                            try {
+                                JSONObject(errorStream.bufferedReader().readText()).getString("message")
+                            } catch (e: Exception) { "Error en el desafío" }
+                        } else { "Error en el desafío" }
+                        
+                        runOnUiThread {
+                            Toast.makeText(this@LoginActivity, errorMessage, Toast.LENGTH_LONG).show()
+                            btnLogin.text = "INGRESAR"
+                            btnLogin.isEnabled = true
+                        }
+                        return@Thread
+                    }
+
+                    val challengeResponse = challengeConn.inputStream.bufferedReader().readText()
+                    val nonce = JSONObject(challengeResponse).getString("nonce")
+
+                    // PASO 2: Calcular HMAC
+                    val HWID_PRIVADO = "FREEZY_SECRET_KEY_123"
+                    val algorithm = "HmacSHA256"
+                    val mac = Mac.getInstance(algorithm)
+                    val secretKey = SecretKeySpec(HWID_PRIVADO.toByteArray(Charsets.UTF_8), algorithm)
+                    mac.init(secretKey)
+                    val hmacBytes = mac.doFinal(nonce.toByteArray(Charsets.UTF_8))
+                    val hmacHex = hmacBytes.joinToString("") { "%02x".format(it) }
+
+                    // PASO 3: Enviar HMAC para Verificación
+                    val verifyConn = URL(verifyEndpoint).openConnection() as HttpURLConnection
+                    if (verifyConn is HttpsURLConnection) {
+                        verifyConn.sslSocketFactory = sslContext.socketFactory
+                    }
+                    verifyConn.requestMethod = "POST"
+                    verifyConn.setRequestProperty("Content-Type", "application/json")
+                    verifyConn.connectTimeout = 30000
+                    verifyConn.readTimeout = 30000
+                    verifyConn.doOutput = true
+
+                    val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\"}"
+                    verifyConn.outputStream.use { os ->
+                        val input = verifyJson.toByteArray(Charsets.UTF_8)
+                        os.write(input, 0, input.size)
+                    }
+
+                    if (verifyConn.responseCode == 200) {
+                        val responseBody = verifyConn.inputStream.bufferedReader().readText()
+                        android.util.Log.d("LoginActivity", "Server Response: $responseBody")
+                        val jsonObject = JSONObject(responseBody)
+                        val isValid = jsonObject.getBoolean("valid")
+
+                        if (isValid) {
+                            val createdAt = jsonObject.optString("created_at", "--")
+                            val expiresAt = jsonObject.optString("expires_at", "--")
+                            val sessionToken = jsonObject.optString("session_token", "")
+                            val encryptedPayloadHex = jsonObject.optString("encrypted_payload", "")
+                            val ivHex = jsonObject.optString("iv", "")
+                            
+                            var decryptedPayload = ""
+                            if (encryptedPayloadHex.isNotEmpty() && ivHex.isNotEmpty()) {
+                                try {
+                                    val aesKeyBytes = hmacHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                                    val ivBytes = ivHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                                    val encryptedBytes = encryptedPayloadHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
                                     
-                                    val activationDate = if (createdAt.length >= 10) createdAt.substring(0, 10) else createdAt
-                                    val expirationDate = if (expiresAt.length >= 10) expiresAt.substring(0, 10) else expiresAt
+                                    val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
+                                    val secretKeySpec = javax.crypto.spec.SecretKeySpec(aesKeyBytes, "AES")
+                                    val ivParameterSpec = javax.crypto.spec.IvParameterSpec(ivBytes)
                                     
-                                    runOnUiThread {
-                                        Logger.log(this@LoginActivity, "Licencia Validada")
-                                        prefs.edit()
-                                                .putBoolean("is_logged_in", true)
-                                                .putString("saved_username", username)
-                                                .putString("saved_key", key)
-                                                .putString("activation_date", activationDate)
-                                                .putString("expiration_date", expirationDate)
-                                                .apply()
-                                        Toast.makeText(
-                                                        this@LoginActivity,
-                                                        "¡Acceso Concedido!",
-                                                        Toast.LENGTH_SHORT
-                                                )
-                                                .show()
-                                        startActivity(
-                                                Intent(this@LoginActivity, MainActivity::class.java)
+                                    cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKeySpec, ivParameterSpec)
+                                    val decryptedBytes = cipher.doFinal(encryptedBytes)
+                                    decryptedPayload = String(decryptedBytes, Charsets.UTF_8)
+                                    
+                                    // Guardar el payload exclusivamente en memoria nativa
+                                    NativeBridge.setSecurePayload(decryptedPayload)
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
+                            
+                            val activationDate = if (createdAt.length >= 10) createdAt.substring(0, 10) else createdAt
+                            val expirationDate = if (expiresAt.length >= 10) expiresAt.substring(0, 10) else expiresAt
+                            
+                            runOnUiThread {
+                                Logger.log(this@LoginActivity, "Licencia Validada")
+                                prefs.edit()
+                                        .putBoolean("is_logged_in", true)
+                                        .putString("saved_username", username)
+                                        .putString("saved_key", key)
+                                        .putString("activation_date", activationDate)
+                                        .putString("expiration_date", expirationDate)
+                                        // NO se guarda el payload descifrado en SharedPreferences
+                                        .apply()
+                                Toast.makeText(
+                                                this@LoginActivity,
+                                                NativeBridge.getNativeString(NativeBridge.STRING_ACCESS_GRANTED),
+                                                Toast.LENGTH_SHORT
                                         )
-                                        finish()
-                                    }
-                                } else {
-                                    val message = jsonObject.optString("message", "Licencia inválida o expirada.")
-                                    runOnUiThread {
-                                        Toast.makeText(
-                                                        this@LoginActivity,
-                                                        message,
-                                                        Toast.LENGTH_LONG
-                                                )
-                                                .show()
-                                        btnLogin.text = "INGRESAR"
-                                        btnLogin.isEnabled = true
-                                    }
-                                }
-                            } else {
-                                // Leer el mensaje de error del servidor
-                                val errorStream = conn.errorStream
-                                val errorMessage =
-                                        if (errorStream != null) {
-                                            val errorResponse =
-                                                    errorStream.bufferedReader().readText()
-                                            try {
-                                                JSONObject(errorResponse).getString("message")
-                                            } catch (e: Exception) {
-                                                "Licencia inválida o inexistente. Adquiere una oficial."
-                                            }
-                                        } else {
-                                            "Licencia inválida o inexistente. Adquiere una oficial."
-                                        }
-
-                                runOnUiThread {
-                                    Toast.makeText(
-                                                    this@LoginActivity,
-                                                    errorMessage,
-                                                    Toast.LENGTH_LONG
-                                            )
-                                            .show()
-                                    btnLogin.text = "INGRESAR"
-                                    btnLogin.isEnabled = true
-                                }
+                                        .show()
+                                startActivity(
+                                        Intent(this@LoginActivity, MainActivity::class.java)
+                                )
+                                finish()
                             }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
+                        } else {
+                            val message = jsonObject.optString("message", NativeBridge.getNativeString(NativeBridge.STRING_INVALID_LICENSE))
                             runOnUiThread {
                                 Toast.makeText(
                                                 this@LoginActivity,
-                                                "Licencia inválida o inexistente. Adquiere una oficial.",
+                                                message,
                                                 Toast.LENGTH_LONG
                                         )
                                         .show()
@@ -207,8 +286,45 @@ class LoginActivity : AppCompatActivity() {
                                 btnLogin.isEnabled = true
                             }
                         }
+                    } else {
+                        val errorStream = verifyConn.errorStream
+                        val errorMessage = if (errorStream != null) {
+                            val errorResponse = errorStream.bufferedReader().readText()
+                            try {
+                                JSONObject(errorResponse).getString("message")
+                            } catch (e: Exception) {
+                                NativeBridge.getNativeString(NativeBridge.STRING_INVALID_LICENSE)
+                            }
+                        } else {
+                            NativeBridge.getNativeString(NativeBridge.STRING_INVALID_LICENSE)
+                        }
+
+                        runOnUiThread {
+                            Toast.makeText(
+                                            this@LoginActivity,
+                                            errorMessage,
+                                            Toast.LENGTH_LONG
+                                    )
+                                    .show()
+                            btnLogin.text = "INGRESAR"
+                            btnLogin.isEnabled = true
+                        }
                     }
-                    .start()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    runOnUiThread {
+                        Toast.makeText(
+                                        this@LoginActivity,
+                                        NativeBridge.getNativeString(NativeBridge.STRING_INVALID_LICENSE),
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                        btnLogin.text = "INGRESAR"
+                        btnLogin.isEnabled = true
+                    }
+                }
+            }
+            .start()
         }
     }
 

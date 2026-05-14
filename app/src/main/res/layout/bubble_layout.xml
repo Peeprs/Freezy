@@ -47,9 +47,9 @@
                 android:tint="#FFFFFF" />
                 
             <TextView
+                android:id="@+id/tv_bubble_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="FREEZY MENU"
                 android:textColor="#FFFFFF"
                 android:textStyle="bold"
                 android:textSize="14sp"
@@ -69,7 +69,6 @@
                 android:id="@+id/recoil_switch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="NoRecoil External" 
                 android:textColor="#FFFFFF"
                 android:textSize="12sp"
                 android:thumb="@drawable/custom_seekbar_thumb" />
@@ -78,7 +77,6 @@
                 android:id="@+id/recoil_percentage"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Efectividad: 50%" 
                 android:textColor="#FFFFFF"
                 android:textSize="11sp"
                 android:layout_marginTop="4dp" />
@@ -109,7 +107,6 @@
                 android:id="@+id/fov_switch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="FOV External" 
                 android:textColor="#FFFFFF"
                 android:textSize="12sp"
                 android:thumb="@drawable/custom_seekbar_thumb" />
@@ -118,7 +115,6 @@
                 android:id="@+id/fov_size_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Radio FOV: 100px" 
                 android:textColor="#FFFFFF"
                 android:textSize="11sp"
                 android:layout_marginTop="4dp" />

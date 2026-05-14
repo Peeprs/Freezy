@@ -1,6 +1,7 @@
 package com.freezy
 
 import com.system.network.ui.R
+
 import com.freezy.network.FovOverlay
 import java.net.HttpURLConnection
 import java.net.URL
@@ -153,7 +154,7 @@ class BubbleService : Service() {
                 conn.readTimeout = 10000
                 conn.doOutput = true
 
-                val hwid = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+                val hwid = NativeBridge.getNativeHWID()
                 val jsonInputString = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\"}"
                 
                 conn.outputStream.use { os ->
@@ -168,7 +169,7 @@ class BubbleService : Service() {
                     val isValid = jsonObject.getBoolean("valid")
 
                     if (!isValid) {
-                        val message = jsonObject.optString("message", "La licencia expiró")
+                        val message = jsonObject.optString("message", NativeBridge.getNativeString(NativeBridge.STRING_LICENSE_EXPIRED))
                         handleLicenseExpired(message)
                     } else {
                         licenseCheckFailCount = 0
@@ -176,7 +177,7 @@ class BubbleService : Service() {
                 } else {
                     val errorBody = conn.errorStream?.bufferedReader()?.readText() ?: ""
                     val serverMessage = try {
-                        JSONObject(errorBody).optString("message", "La licencia expiró")
+                        JSONObject(errorBody).optString("message", NativeBridge.getNativeString(NativeBridge.STRING_LICENSE_EXPIRED))
                     } catch (e: Exception) {
                         "Error: $responseCode"
                     }
@@ -186,7 +187,7 @@ class BubbleService : Service() {
                 e.printStackTrace()
                 licenseCheckFailCount++
                 if (licenseCheckFailCount >= 3) {
-                    handleLicenseExpired("Error de conexión. Sesión cerrada.")
+                    handleLicenseExpired(NativeBridge.getNativeString(NativeBridge.STRING_CONN_ERROR))
                 }
             }
         }.start()
@@ -212,12 +213,12 @@ class BubbleService : Service() {
     private fun startForegroundNotification() {
         val channelId = "freezy_service_channel"
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(channelId, "Freezy Service", NotificationManager.IMPORTANCE_LOW)
+            val ch = NotificationChannel(channelId, NativeBridge.getNativeString(NativeBridge.STRING_BUBBLE_NOTIF_TITLE), NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java)?.createNotificationChannel(ch)
         }
         val notif = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Freezy Activo")
-            .setContentText("Toca la burbuja para activar")
+            .setContentTitle(NativeBridge.getNativeString(NativeBridge.STRING_BUBBLE_NOTIF_TITLE))
+            .setContentText(NativeBridge.getNativeString(NativeBridge.STRING_BUBBLE_NOTIF_TEXT))
             .setSmallIcon(android.R.drawable.ic_secure)
             .build()
         try {
@@ -255,6 +256,9 @@ class BubbleService : Service() {
             FrameLayout.LayoutParams(size, size, Gravity.CENTER)
         )
 
+        // Set obfuscated strings for the bubble menu
+        bubbleView.findViewById<android.widget.TextView>(R.id.tv_bubble_title)?.text = NativeBridge.getNativeString(NativeBridge.STRING_BUBBLE_TITLE)
+
         // Configurar clics del menú
         val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
         btnBackToLag.setOnClickListener { returnToFakeLag() }
@@ -290,6 +294,9 @@ class BubbleService : Service() {
         val recoilPercentage = bubbleView.findViewById<TextView>(R.id.recoil_percentage)
         val recoilSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
 
+        recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}50%"
+        recoilSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_EXTERNAL)
+
 
 
         recoilSwitch.setOnCheckedChangeListener { _, isChecked ->
@@ -316,13 +323,13 @@ class BubbleService : Service() {
                 }
                 startService(intent)
                 inputMonitor?.stopMonitoring()
-                Toast.makeText(this, "No-Recoil: OFF", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_OFF), Toast.LENGTH_SHORT).show()
             }
         }
         
         recoilSeekbar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                recoilPercentage.text = "Efectividad: $progress%"
+                recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}$progress%"
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
@@ -348,6 +355,9 @@ class BubbleService : Service() {
         val fovSeekBar = bubbleView.findViewById<SeekBar>(R.id.fov_seekbar)
         val fovText = bubbleView.findViewById<TextView>(R.id.fov_size_text)
 
+        fovSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_FOV_EXTERNAL)
+        fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}0px"
+
         // Registrar el callback de UI con C++ para recibir notificaciones de disparo
         NativeBridge.registerUiCallback(this)
 
@@ -363,7 +373,7 @@ class BubbleService : Service() {
 
         fovSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                fovText.text = "Radio FOV: ${progress}px"
+                fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}${progress}px"
                 
                 if (progress > 0 && fovSwitch.isChecked) {
                     // Si es la primera vez que sube de 0, mostramos el overlay
@@ -522,7 +532,7 @@ class BubbleService : Service() {
                 suOutputStream = java.io.DataOutputStream(suProcess!!.outputStream)
             } catch (e: Exception) {
                 e.printStackTrace()
-                handler.post { Toast.makeText(this, "Error al obtener permisos Root", Toast.LENGTH_SHORT).show() }
+                handler.post { Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_ERROR), Toast.LENGTH_SHORT).show() }
                 return
             }
         }
@@ -538,7 +548,7 @@ class BubbleService : Service() {
 
     private fun startFreeze(useRoot: Boolean) {
         playSound(android.media.ToneGenerator.TONE_PROP_BEEP)
-        Logger.log(this, "Fake Lag Activado (Root: $useRoot)")
+        Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_ACTIVE) + " (Root: $useRoot)")
         if (useRoot) {
             Thread {
                 executeRootCommand("iptables -I INPUT 1 -p udp -j DROP")
@@ -548,7 +558,7 @@ class BubbleService : Service() {
 
     private fun stopFreeze(useRoot: Boolean) {
         playSound(android.media.ToneGenerator.TONE_PROP_BEEP2)
-        Logger.log(this, "Fake Lag Desactivado")
+        Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_DEACTIVATED))
         isFreezing = false
         fillAnimator?.cancel()
         arcOverlay.visibility = View.GONE

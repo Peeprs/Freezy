@@ -16,9 +16,9 @@
         android:padding="32dp">
 
         <TextView
+            android:id="@+id/tv_app_name"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="FREEZY"
             android:textColor="#00A2FF"
             android:textSize="28sp"
             android:textStyle="bold"
@@ -27,9 +27,9 @@
             android:letterSpacing="0.1" />
 
         <TextView
+            android:id="@+id/tv_label_user"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="USUARIO"
             android:textColor="#BBBBBB"
             android:textSize="11sp"
             android:textStyle="bold"
@@ -39,7 +39,6 @@
             android:id="@+id/et_user"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:hint="Ingresa tu usuario"
             android:textColorHint="#55FFFFFF"
             android:textColor="#FFFFFF"
             android:background="@drawable/bg_glass_tile"
@@ -49,9 +48,9 @@
             android:layout_marginBottom="20dp" />
 
         <TextView
+            android:id="@+id/tv_label_license_login"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="LICENCIA"
             android:textColor="#BBBBBB"
             android:textSize="11sp"
             android:textStyle="bold"
@@ -61,7 +60,6 @@
             android:id="@+id/et_key"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:hint="Pega tu licencia aquí"
             android:textColorHint="#55FFFFFF"
             android:textColor="#FFFFFF"
             android:background="@drawable/bg_glass_tile"
@@ -75,7 +73,6 @@
             android:id="@+id/btn_login"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:text="INGRESAR"
             android:textColor="#FFFFFF"
             android:textStyle="bold"
             app:backgroundTint="#00A2FF"

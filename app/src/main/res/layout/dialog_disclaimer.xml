@@ -7,6 +7,7 @@
     android:padding="24dp">
 
     <TextView
+        android:id="@+id/tv_disclaimer_title"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="⚠️ DESCARGO DE RESPONSABILIDAD"
@@ -26,6 +27,7 @@
         android:layout_marginBottom="24dp">
 
         <TextView
+            android:id="@+id/tv_disclaimer_body"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Si bien esta herramienta NO altera los archivos originales del juego, te otorga una ventaja extrema.\n\n⚠️ Uso de Datos y Dispositivo:\nSolicitamos acceso al 'Uso de Datos' para monitorear la ejecución del juego y activar las funciones correctamente. También almacenamos el nombre de tu dispositivo para la detección y prevención de fallas técnicas específicas reportadas anteriormente en modelos similares.\n\nEl uso abusivo puede causar baneos. El uso de esta herramienta es bajo tu propia responsabilidad."

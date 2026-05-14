@@ -2,6 +2,7 @@ package com.freezy
 
 import com.system.network.ui.R
 
+
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
@@ -48,7 +49,7 @@ class MainActivity : AppCompatActivity() {
         // Pedir permiso de uso de datos
         if (!hasUsageStatsPermission()) {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-            Toast.makeText(this, "Por favor, otorga acceso de uso a Freezy", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_USAGE_ACCESS_REQ), Toast.LENGTH_LONG).show()
         }
 
         if (Settings.canDrawOverlays(this)) {
@@ -105,6 +106,23 @@ class MainActivity : AppCompatActivity() {
         tvActivationDate.text = prefs.getString("activation_date", "--")
         tvExpirationDate.text = prefs.getString("expiration_date", "--")
 
+        // Cargar strings ofuscados de C++ para los títulos y etiquetas
+        findViewById<TextView>(R.id.tv_title_activation)?.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_ACTIVATION)
+        findViewById<TextView>(R.id.tv_title_license)?.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_LICENSE)
+        
+        findViewById<TextView>(R.id.btn_mode_auto)?.text = NativeBridge.getNativeString(NativeBridge.STRING_MODE_AUTO)
+        findViewById<TextView>(R.id.btn_mode_custom)?.text = NativeBridge.getNativeString(NativeBridge.STRING_MODE_CUSTOM)
+        findViewById<TextView>(R.id.btn_mode_manual)?.text = NativeBridge.getNativeString(NativeBridge.STRING_MODE_MANUAL)
+        
+        findViewById<TextView>(R.id.tv_label_seconds)?.text = NativeBridge.getNativeString(NativeBridge.STRING_SECONDS_TO_FREEZE)
+        tvTimeLabel.text = "3${NativeBridge.getNativeString(NativeBridge.STRING_SECONDS)}"
+        
+        findViewById<TextView>(R.id.tv_label_activation)?.text = NativeBridge.getNativeString(NativeBridge.STRING_ACTIVATION)
+        findViewById<TextView>(R.id.tv_label_expiration)?.text = NativeBridge.getNativeString(NativeBridge.STRING_EXPIRATION)
+
+        btnFreezy.text = NativeBridge.getNativeString(NativeBridge.STRING_BTN_START)
+        findViewById<Button>(R.id.btn_close_bubble)?.text = NativeBridge.getNativeString(NativeBridge.STRING_BTN_CLOSE_BUBBLE)
+
 
 
         btnModeAuto.setOnClickListener {
@@ -155,7 +173,7 @@ class MainActivity : AppCompatActivity() {
             val serviceIntent = Intent(this, BubbleService::class.java)
             stopService(serviceIntent)
             btnCloseBubble.visibility = View.GONE
-            Toast.makeText(this, "Burbuja cerrada definitivamente", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_BTN_CLOSE_BUBBLE), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -180,6 +198,16 @@ class MainActivity : AppCompatActivity() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null)
         val switchRoot = dialogView.findViewById<Switch>(R.id.switch_root)
         val tvVersion = dialogView.findViewById<TextView>(R.id.tv_version)
+        
+        // Cargar strings ofuscados
+        dialogView.findViewById<TextView>(R.id.tv_title_settings)?.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_SETTINGS)
+        dialogView.findViewById<TextView>(R.id.tv_label_system)?.text = NativeBridge.getNativeString(NativeBridge.STRING_SYSTEM)
+        dialogView.findViewById<Switch>(R.id.switch_root)?.text = NativeBridge.getNativeString(NativeBridge.STRING_ALLOW_ROOT)
+        dialogView.findViewById<TextView>(R.id.tv_label_info)?.text = NativeBridge.getNativeString(NativeBridge.STRING_INFO)
+        dialogView.findViewById<TextView>(R.id.tv_version)?.text = "${NativeBridge.getNativeString(NativeBridge.STRING_APP_VERSION)}: v2.2"
+        dialogView.findViewById<TextView>(R.id.tv_label_support)?.text = NativeBridge.getNativeString(NativeBridge.STRING_SUPPORT)
+        dialogView.findViewById<Button>(R.id.btn_view_logs)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGS_VER_LOGS)
+        dialogView.findViewById<Button>(R.id.btn_logout)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGOUT)
 
         val btnClose = dialogView.findViewById<TextView>(R.id.btn_close_dialog_x)
         val btnLogout = dialogView.findViewById<Button>(R.id.btn_logout)
@@ -204,9 +232,9 @@ class MainActivity : AppCompatActivity() {
 
         try {
             val pInfo = packageManager.getPackageInfo(packageName, 0)
-            tvVersion.text = "Versión actual de la app: ${pInfo.versionName}"
+            tvVersion.text = "${NativeBridge.getNativeString(NativeBridge.STRING_APP_VERSION)}${pInfo.versionName}"
         } catch (e: Exception) {
-            tvVersion.text = "Versión actual de la app: v1.0"
+            tvVersion.text = "${NativeBridge.getNativeString(NativeBridge.STRING_APP_VERSION)}v1.0"
         }
 
         switchRoot.isChecked = prefs.getBoolean("use_root", false)
@@ -214,13 +242,13 @@ class MainActivity : AppCompatActivity() {
         switchRoot.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
                 if (hasRootAccess()) {
-                    Logger.log(this, "Root Detectado")
+                    Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_DETECTED))
                     prefs.edit().putBoolean("use_root", true).apply()
-                    Toast.makeText(this, "Modo Root Activado", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_ENABLED), Toast.LENGTH_SHORT).show()
                 } else {
-                    Logger.log(this, "Root No Detectado")
+                    Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_NOT_DETECTED))
                     switchRoot.isChecked = false
-                    Toast.makeText(this, "Permiso Root denegado", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_DENIED), Toast.LENGTH_SHORT).show()
                 }
             } else {
                 prefs.edit().putBoolean("use_root", false).apply()
@@ -253,12 +281,12 @@ class MainActivity : AppCompatActivity() {
         scrollView.addView(textView)
 
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Logs de la App")
+            .setTitle(NativeBridge.getNativeString(NativeBridge.STRING_LOGS_TITLE))
             .setView(scrollView)
-            .setPositiveButton("Cerrar", null)
-            .setNegativeButton("Borrar Logs") { _, _ ->
+            .setPositiveButton(NativeBridge.getNativeString(NativeBridge.STRING_LOGS_CLOSE), null)
+            .setNegativeButton(NativeBridge.getNativeString(NativeBridge.STRING_LOGS_CLEAR)) { _, _ ->
                 Logger.clearLogs(this)
-                Toast.makeText(this, "Logs borrados", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_LOGS_CLEARED), Toast.LENGTH_SHORT).show()
             }
             .create()
 
@@ -270,7 +298,7 @@ class MainActivity : AppCompatActivity() {
         val endpointUrl = prefs.getString("secure_endpoint", "") ?: ""
         val key = prefs.getString("saved_key", "") ?: ""
         val username = prefs.getString("saved_username", "") ?: ""
-        val hwid = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+        val hwid = NativeBridge.getNativeHWID()
         val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
 
         if (endpointUrl.isEmpty() || key.isEmpty() || username.isEmpty()) {
@@ -278,7 +306,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        android.widget.Toast.makeText(this, "Validando conexión y licencia...", android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_VALIDATING), android.widget.Toast.LENGTH_SHORT).show()
         
         val btnFreezy = findViewById<Button>(R.id.btn_freezy)
         btnFreezy.isEnabled = false
@@ -386,7 +414,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchGameAndBubble() {
         val pkg = targetPackageToLaunch ?: return
-        Toast.makeText(this, "Ejecutando y validando Freezy...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_LAUNCHING), Toast.LENGTH_SHORT).show()
         
         // 1. Lanzamos el juego automáticamente
         val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
