@@ -152,24 +152,55 @@ class MainActivity : AppCompatActivity() {
         })
 
         val switchAutoLag = findViewById<Switch>(R.id.switch_autolag)
+        val btnResetAutoLag = findViewById<Button>(R.id.btn_reset_autolag)
+        
         switchAutoLag.isChecked = prefs.getBoolean("auto_lag_enabled", false)
+        btnResetAutoLag.visibility = if (switchAutoLag.isChecked) View.VISIBLE else View.GONE
 
         switchAutoLag.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean("auto_lag_enabled", isChecked).apply()
+            btnResetAutoLag.visibility = if (isChecked) View.VISIBLE else View.GONE
             if (isChecked) {
-                AlertDialog.Builder(this)
-                    .setTitle("Modo Auto-Lag")
-                    .setMessage("Deberá colocar el círculo sobre su botón de disparo en el juego. Ajústelo al tamaño lo más preciso posible.")
-                    .setCancelable(false)
-                    .setPositiveButton("Entendido") { _, _ ->
-                        iniciarCuentaRegresivaAutoLag()
-                    }
-                    .setNegativeButton("Cancelar") { dialog, _ ->
-                        switchAutoLag.isChecked = false
-                        dialog.dismiss()
-                    }
-                    .show()
+                // Si no tiene coordenadas previas guardadas, iniciar el mapeo
+                if (!prefs.contains("shoot_left")) {
+                    AlertDialog.Builder(this)
+                        .setTitle("Modo Auto-Lag")
+                        .setMessage("Deberá colocar el círculo sobre su botón de disparo en el juego. Ajústelo al tamaño lo más preciso posible.")
+                        .setCancelable(false)
+                        .setPositiveButton("Entendido") { _, _ ->
+                            iniciarCuentaRegresivaAutoLag()
+                        }
+                        .setNegativeButton("Cancelar") { dialog, _ ->
+                            switchAutoLag.isChecked = false
+                            btnResetAutoLag.visibility = View.GONE
+                            dialog.dismiss()
+                        }
+                        .show()
+                } else {
+                    Toast.makeText(this, "Modo Auto-Lag activado usando mapeo existente.", Toast.LENGTH_SHORT).show()
+                }
             }
+        }
+
+        btnResetAutoLag.setOnClickListener {
+            prefs.edit()
+                .remove("shoot_left")
+                .remove("shoot_top")
+                .remove("shoot_right")
+                .remove("shoot_bottom")
+                .putBoolean("modo_mapeo_activo", true)
+                .apply()
+            
+            AlertDialog.Builder(this)
+                .setTitle("Restablecer Mapeo")
+                .setMessage("Las coordenadas anteriores fueron eliminadas. ¿Deseas iniciar la calibración del botón de disparo ahora?")
+                .setPositiveButton("Sí, iniciar") { _, _ ->
+                    iniciarCuentaRegresivaAutoLag()
+                }
+                .setNegativeButton("No, después") { dialog, _ ->
+                    dialog.dismiss()
+                }
+                .show()
         }
 
         btnFreezy.setOnClickListener {

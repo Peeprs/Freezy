@@ -131,6 +131,9 @@ class BubbleService : Service() {
         startForegroundNotification()
         setupFov()
         
+        // Registrar siempre el callback para recibir notificaciones JNI del disparo
+        NativeBridge.registerUiCallback(this)
+        
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
         val isAutoLagEnabled = prefs.getBoolean("auto_lag_enabled", false)
         if (!isAutoLagEnabled) {
@@ -408,9 +411,6 @@ class BubbleService : Service() {
         fovSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_FOV_EXTERNAL)
         fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}0px"
 
-        // Registrar el callback de UI con C++ para recibir notificaciones de disparo
-        NativeBridge.registerUiCallback(this)
-
         fovSwitch.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
                 windowManager.addView(fovOverlay, fovParams)
@@ -568,7 +568,9 @@ class BubbleService : Service() {
                 if (!isFreezing) {
                     isFreezing = true
                     startFreeze(useRoot)
-                    startArcAnimation(1500L) // Límite de 1.5 segundos para evitar desconexiones
+                    if (::arcOverlay.isInitialized) {
+                        startArcAnimation(1500L) // Límite de 1.5 segundos para evitar desconexiones
+                    }
                     handler.postDelayed({
                         if (isFreezing) stopFreeze(useRoot)
                     }, 1500L)
@@ -619,6 +621,16 @@ class BubbleService : Service() {
     private fun startFreeze(useRoot: Boolean) {
         playSound(android.media.ToneGenerator.TONE_PROP_BEEP)
         Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_ACTIVE) + " (Root: $useRoot)")
+        
+        // Brillo visual de disparo: cambiar círculo a rojo translúcido si está visible
+        if (circleTargetContainer != null) {
+            circleTargetContainer?.post {
+                circleTargetContainer?.findViewById<View>(R.id.circle_target)?.setBackgroundTintList(
+                    android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FF3B30"))
+                )
+            }
+        }
+        
         if (useRoot) {
             Thread {
                 executeRootCommand("iptables -I INPUT 1 -p udp -j DROP")
@@ -630,12 +642,24 @@ class BubbleService : Service() {
         playSound(android.media.ToneGenerator.TONE_PROP_BEEP2)
         Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_DEACTIVATED))
         isFreezing = false
-        fillAnimator?.cancel()
-        arcOverlay.visibility = View.GONE
-        arcOverlay.progress = 0f
-        bubbleIcon.visibility = View.VISIBLE
-        bubbleIcon.alpha = 1f
-        bubbleIcon.setImageResource(R.drawable.ic_play_white)
+        
+        // Restaurar círculo a su diseño normal (quitar filtro rojo)
+        if (circleTargetContainer != null) {
+            circleTargetContainer?.post {
+                circleTargetContainer?.findViewById<View>(R.id.circle_target)?.setBackgroundTintList(null)
+            }
+        }
+        
+        if (::arcOverlay.isInitialized) {
+            fillAnimator?.cancel()
+            arcOverlay.visibility = View.GONE
+            arcOverlay.progress = 0f
+        }
+        if (::bubbleIcon.isInitialized) {
+            bubbleIcon.visibility = View.VISIBLE
+            bubbleIcon.alpha = 1f
+            bubbleIcon.setImageResource(R.drawable.ic_play_white)
+        }
         if (useRoot) {
             Thread {
                 executeRootCommand("iptables -D INPUT -p udp -j DROP")
