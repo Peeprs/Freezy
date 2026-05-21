@@ -145,6 +145,8 @@ class BubbleService : Service() {
         // Si el modo mapeo está activo, iniciamos la interfaz de arrastre
         if (prefs.getBoolean("modo_mapeo_activo", false)) {
             iniciarInterfazDeMapeo()
+        } else if (isAutoLagEnabled && prefs.contains("shoot_left")) {
+            mostrarCirculoDeMapeoBloqueado()
         }
     }
 
@@ -801,6 +803,10 @@ class BubbleService : Service() {
                 btnToggle.text = "Cerrar"
                 btnAceptar.visibility = View.VISIBLE
                 
+                // Forzar visibilidad para contrarrestar el 'gone' original del XML
+                mappingSeekBarView?.visibility = View.VISIBLE
+                circleTargetContainer?.visibility = View.VISIBLE
+                
                 // Agregamos el SeekBar y el Círculo dinámicamente al WindowManager
                 if (mappingSeekBarView?.parent == null) {
                     windowManager.addView(mappingSeekBarView, seekParams)
@@ -890,11 +896,20 @@ class BubbleService : Service() {
             inputMonitor?.startMonitoring()
             inputMonitor?.updateFireZone(shootAreaLeft, shootAreaTop, shootAreaRight, shootAreaBottom)
 
-            // Limpieza: removemos todas las vistas de mapeo del WindowManager
+            // Hacer el círculo completamente intangible al tacto y reposicionarlo de forma fija
+            circleParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            circleParams.gravity = Gravity.TOP or Gravity.START
+            circleParams.x = shootAreaLeft
+            circleParams.y = shootAreaTop
+            
+            if (circleTargetContainer?.parent != null) {
+                windowManager.updateViewLayout(circleTargetContainer, circleParams)
+            }
+
+            // Ocultar de inmediato las opciones de aumento, sliders y HUD de mostrar
             try {
                 if (mappingHudPanel?.parent != null) windowManager.removeView(mappingHudPanel)
                 if (mappingSeekBarView?.parent != null) windowManager.removeView(mappingSeekBarView)
-                if (circleTargetContainer?.parent != null) windowManager.removeView(circleTargetContainer)
             } catch (e: Exception) {}
             
             Toast.makeText(this, "Botón de disparo mapeado y guardado.", Toast.LENGTH_SHORT).show()
@@ -902,6 +917,52 @@ class BubbleService : Service() {
 
         // Al inicio, solo agregamos el panel de control (que tiene el botón "Mostrar")
         windowManager.addView(mappingHudPanel, hudParams)
+    }
+
+    private fun mostrarCirculoDeMapeoBloqueado() {
+        if (!::windowManager.isInitialized) {
+            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        }
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val left = prefs.getInt("shoot_left", -1)
+        val top = prefs.getInt("shoot_top", -1)
+        val right = prefs.getInt("shoot_right", -1)
+        val bottom = prefs.getInt("shoot_bottom", -1)
+        
+        val width = right - left
+        val height = bottom - top
+        if (left == -1 || top == -1 || width <= 0 || height <= 0) return
+
+        val parentView = LayoutInflater.from(this).inflate(R.layout.layout_mapping_bubble, null) as ViewGroup
+        val rawCircleContainer = parentView.findViewById<View>(R.id.circle_target_container)
+        parentView.removeView(rawCircleContainer)
+        
+        circleTargetContainer = rawCircleContainer
+        circleTargetContainer?.visibility = View.VISIBLE
+
+        val circleParams = WindowManager.LayoutParams(
+            width,
+            height,
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = left
+            y = top
+        }
+
+        windowManager.addView(circleTargetContainer, circleParams)
+        
+        // Iniciamos y alimentamos el lector nativo InputMonitor
+        if (inputMonitor == null) {
+            inputMonitor = com.freezy.network.InputMonitor(this)
+        }
+        inputMonitor?.startMonitoring()
+        inputMonitor?.updateFireZone(left, top, right, bottom)
     }
 
     override fun onBind(intent: Intent): IBinder? = null
