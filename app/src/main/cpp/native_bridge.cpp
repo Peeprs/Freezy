@@ -10,9 +10,12 @@
 JavaVM* g_jvm = nullptr;
 jobject g_ui_callback = nullptr;
 
+extern void start_anti_frida();
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_jvm = vm;
     LOGI("JNI_OnLoad: JavaVM registrada");
+    start_anti_frida();
     return JNI_VERSION_1_6;
 }
 

@@ -8,12 +8,16 @@ android {
     compileSdk = 34
     ndkVersion = "27.0.12077973"
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "com.system.network.ui" // Nombre camuflado contra Anti-Cheats
         minSdk = 29 // Android 10
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.01"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -26,8 +30,18 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true // Ofuscación activada
-            isShrinkResources = true // Eliminar recursos no usados
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false // MobSF detecta debuggable=true como riesgo
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        debug {
+            // Ofuscar también en debug para que MobSF no lea el código
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -314,23 +314,49 @@ class MainActivity : AppCompatActivity() {
 
         Thread {
             try {
-                val url = java.net.URL(endpointUrl)
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.connectTimeout = 30000
-                conn.readTimeout = 30000
-                conn.doOutput = true
+                val challengeEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl.replace("/verify", "/challenge") else "$endpointUrl/challenge"
+                val verifyEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl else "$endpointUrl/verify"
 
-                val jsonInputString = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\"}"
-                conn.outputStream.use { os ->
-                    val input = jsonInputString.toByteArray(Charsets.UTF_8)
-                    os.write(input, 0, input.size)
+                val challengeConn = java.net.URL(challengeEndpoint).openConnection() as java.net.HttpURLConnection
+                challengeConn.requestMethod = "POST"
+                challengeConn.setRequestProperty("Content-Type", "application/json")
+                challengeConn.connectTimeout = 30000
+                challengeConn.readTimeout = 30000
+                challengeConn.doOutput = true
+
+                val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\"}"
+                challengeConn.outputStream.write(challengeJson.toByteArray(Charsets.UTF_8))
+
+                if (challengeConn.responseCode != 200) {
+                    runOnUiThread {
+                        btnFreezy.isEnabled = true
+                        btnFreezy.alpha = 1.0f
+                        android.widget.Toast.makeText(this@MainActivity, "Error de validación al iniciar", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    return@Thread
                 }
 
-                val responseCode = conn.responseCode
+                val nonce = org.json.JSONObject(challengeConn.inputStream.bufferedReader().readText()).getString("nonce")
+
+                val HWID_PRIVADO = NativeBridge.getHmacSecret()
+                val algorithm = "HmacSHA256"
+                val mac = javax.crypto.Mac.getInstance(algorithm)
+                mac.init(javax.crypto.spec.SecretKeySpec(HWID_PRIVADO.toByteArray(Charsets.UTF_8), algorithm))
+                val hmacHex = mac.doFinal(nonce.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+                val verifyConn = java.net.URL(verifyEndpoint).openConnection() as java.net.HttpURLConnection
+                verifyConn.requestMethod = "POST"
+                verifyConn.setRequestProperty("Content-Type", "application/json")
+                verifyConn.connectTimeout = 30000
+                verifyConn.readTimeout = 30000
+                verifyConn.doOutput = true
+
+                val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\"}"
+                verifyConn.outputStream.write(verifyJson.toByteArray(Charsets.UTF_8))
+
+                val responseCode = verifyConn.responseCode
                 if (responseCode == 200) {
-                    val responseBody = conn.inputStream.bufferedReader().readText()
+                    val responseBody = verifyConn.inputStream.bufferedReader().readText()
                     val jsonResponse = org.json.JSONObject(responseBody)
                     val isValid = jsonResponse.optBoolean("valid", false)
 
@@ -347,13 +373,15 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 } else {
-                    val errorBody = conn.errorStream?.bufferedReader()?.readText() ?: ""
+                    val errorBody = verifyConn.errorStream?.bufferedReader()?.readText() ?: ""
                     val serverMessage = try {
                         org.json.JSONObject(errorBody).optString("message", "Error: $responseCode")
                     } catch (e: Exception) {
                         "Error: $responseCode"
                     }
                     runOnUiThread {
+                        btnFreezy.isEnabled = true
+                        btnFreezy.alpha = 1.0f
                         android.widget.Toast.makeText(this@MainActivity, serverMessage, android.widget.Toast.LENGTH_LONG).show()
                         Logger.log(this@MainActivity, "Fallo al iniciar: $serverMessage")
                     }
@@ -414,7 +442,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchGameAndBubble() {
         val pkg = targetPackageToLaunch ?: return
-        Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_LAUNCHING), Toast.LENGTH_SHORT).show()
         
         // 1. Lanzamos el juego automáticamente
         val launchIntent = packageManager.getLaunchIntentForPackage(pkg)

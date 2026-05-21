@@ -146,25 +146,50 @@ class BubbleService : Service() {
         
         Thread {
             try {
-                val url = URL(endpointUrl)
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.connectTimeout = 10000
-                conn.readTimeout = 10000
-                conn.doOutput = true
-
+                val challengeEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl.replace("/verify", "/challenge") else "$endpointUrl/challenge"
+                val verifyEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl else "$endpointUrl/verify"
                 val hwid = NativeBridge.getNativeHWID()
-                val jsonInputString = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\"}"
-                
-                conn.outputStream.use { os ->
-                    val input = jsonInputString.toByteArray(Charsets.UTF_8)
-                    os.write(input, 0, input.size)
+                val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+
+                val challengeConn = URL(challengeEndpoint).openConnection() as HttpURLConnection
+                challengeConn.requestMethod = "POST"
+                challengeConn.setRequestProperty("Content-Type", "application/json")
+                challengeConn.connectTimeout = 10000
+                challengeConn.readTimeout = 10000
+                challengeConn.doOutput = true
+
+                val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\"}"
+                challengeConn.outputStream.write(challengeJson.toByteArray(Charsets.UTF_8))
+
+                if (challengeConn.responseCode != 200) {
+                    licenseCheckFailCount++
+                    if (licenseCheckFailCount >= 3) {
+                        handleLicenseExpired(NativeBridge.getNativeString(NativeBridge.STRING_CONN_ERROR))
+                    }
+                    return@Thread
                 }
 
-                val responseCode = conn.responseCode
+                val nonce = JSONObject(challengeConn.inputStream.bufferedReader().readText()).getString("nonce")
+
+                val HWID_PRIVADO = NativeBridge.getHmacSecret()
+                val algorithm = "HmacSHA256"
+                val mac = javax.crypto.Mac.getInstance(algorithm)
+                mac.init(javax.crypto.spec.SecretKeySpec(HWID_PRIVADO.toByteArray(Charsets.UTF_8), algorithm))
+                val hmacHex = mac.doFinal(nonce.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+                val verifyConn = URL(verifyEndpoint).openConnection() as HttpURLConnection
+                verifyConn.requestMethod = "POST"
+                verifyConn.setRequestProperty("Content-Type", "application/json")
+                verifyConn.connectTimeout = 10000
+                verifyConn.readTimeout = 10000
+                verifyConn.doOutput = true
+
+                val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\"}"
+                verifyConn.outputStream.write(verifyJson.toByteArray(Charsets.UTF_8))
+
+                val responseCode = verifyConn.responseCode
                 if (responseCode == 200) {
-                    val responseBody = conn.inputStream.bufferedReader().readText()
+                    val responseBody = verifyConn.inputStream.bufferedReader().readText()
                     val jsonObject = JSONObject(responseBody)
                     val isValid = jsonObject.getBoolean("valid")
 
@@ -175,7 +200,7 @@ class BubbleService : Service() {
                         licenseCheckFailCount = 0
                     }
                 } else {
-                    val errorBody = conn.errorStream?.bufferedReader()?.readText() ?: ""
+                    val errorBody = verifyConn.errorStream?.bufferedReader()?.readText() ?: ""
                     val serverMessage = try {
                         JSONObject(errorBody).optString("message", NativeBridge.getNativeString(NativeBridge.STRING_LICENSE_EXPIRED))
                     } catch (e: Exception) {

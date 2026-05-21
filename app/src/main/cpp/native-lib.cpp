@@ -24,6 +24,18 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
+/* ── CSPRNG: Generador de números aleatorios seguro (CWE-330 fix) ────────── */
+/* Lee entropía del kernel Linux via /dev/urandom en lugar de usar rand()     */
+static uint16_t secure_random_u16() {
+    uint16_t val = 0;
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd >= 0) {
+        read(fd, &val, sizeof(val));
+        close(fd);
+    }
+    return val;
+}
+
 /* ── IP / UDP / TCP header structs ───────────────────────────────────────── */
 struct IpHdr {
     uint8_t  ihl_ver;
@@ -219,7 +231,7 @@ static void write_to_tun(int tun_fd,
     IpHdr* iph = (IpHdr*)pkt;
     iph->ihl_ver  = 0x45;
     iph->tot_len  = htons(ip_len);
-    iph->id       = htons((uint16_t)(rand() & 0xffff));
+    iph->id       = htons(secure_random_u16());
     iph->ttl      = 64;
     iph->proto    = 17;
     iph->saddr    = src_ip;
@@ -261,7 +273,7 @@ static void write_tcp_to_tun(int tun_fd,
     IpHdr* iph = (IpHdr*)pkt;
     iph->ihl_ver  = 0x45;
     iph->tot_len  = htons(ip_len);
-    iph->id       = htons((uint16_t)(rand() & 0xffff));
+    iph->id       = htons(secure_random_u16());
     iph->ttl      = 64;
     iph->proto    = 6; // TCP
     iph->saddr    = src_ip;
@@ -571,15 +583,15 @@ Java_com_freezy_NativeBridge_getNativeString(JNIEnv* env, jclass, jint id) {
         xor_cipher(s, sizeof(s) - 1);
         return env->NewStringUTF((char*)s);
     } else if (id == 9) {
-        unsigned char s[] = {0x16, 0x30, 0x27, 0x27, 0x34, 0x27, 0x75, 0x17, 0x20, 0x27, 0x37, 0x20, 0x32, 0x34, 0x00};
+        unsigned char s[] = {0x16, 0x30, 0x27, 0x27, 0x34, 0x27, 0x75, 0x17, 0x20, 0x27, 0x37, 0x20, 0x3F, 0x34, 0x00};
         xor_cipher(s, sizeof(s) - 1);
         return env->NewStringUTF((char*)s);
     } else if (id == 10) {
-        unsigned char s[] = {0x01, 0x3C, 0x25, 0x3A, 0x75, 0x31, 0x3A, 0x75, 0x14, 0x36, 0x21, 0x3C, 0x23, 0x34, 0x36, 0x3C, 0x3A, 0x3B, 0x00};
+        unsigned char s[] = {0x01, 0x3C, 0x25, 0x3A, 0x75, 0x31, 0x30, 0x75, 0x14, 0x36, 0x21, 0x3C, 0x23, 0x34, 0x36, 0x3C, 0x3A, 0x3B, 0x00};
         xor_cipher(s, sizeof(s) - 1);
         return env->NewStringUTF((char*)s);
     } else if (id == 11) {
-        unsigned char s[] = {0x1C, 0x3B, 0x33, 0x3A, 0x27, 0x38, 0x34, 0x36, 0x3C, 0x3A, 0x3B, 0x75, 0x31, 0x3A, 0x75, 0x19, 0x3C, 0x36, 0x30, 0x3B, 0x36, 0x3C, 0x34, 0x00};
+        unsigned char s[] = {0x1C, 0x3B, 0x33, 0x3A, 0x27, 0x38, 0x34, 0x36, 0x3C, 0x3A, 0x3B, 0x75, 0x31, 0x30, 0x75, 0x19, 0x3C, 0x36, 0x30, 0x3B, 0x36, 0x3C, 0x34, 0x00};
         xor_cipher(s, sizeof(s) - 1);
         return env->NewStringUTF((char*)s);
     } else if (id == 12) {
@@ -687,7 +699,7 @@ Java_com_freezy_NativeBridge_getNativeString(JNIEnv* env, jclass, jint id) {
         xor_cipher(s, sizeof(s) - 1);
         return env->NewStringUTF((char*)s);
     } else if (id == 38) {
-        unsigned char s[] = {0x13, 0x07, 0x10, 0x10, 0x0F, 0x0C, 0x75, 0x18, 0x10, 0x1B, 0x10, 0x00};
+        unsigned char s[] = {0x13, 0x07, 0x10, 0x10, 0x0F, 0x0C, 0x75, 0x18, 0x10, 0x1B, 0x00, 0x00};
         xor_cipher(s, sizeof(s) - 1);
         return env->NewStringUTF((char*)s);
     } else if (id == 39) {
@@ -860,6 +872,34 @@ Java_com_freezy_LoginActivity_getSecureEndpoint(JNIEnv* env, jobject thiz) {
     return Java_com_freezy_NativeBridge_getNativeString(env, nullptr, 1);
 }
 
+// Secreto HMAC ofuscado con XOR — NO aparece como string legible en el binario
+// Valor original: "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_freezy_NativeBridge_getHmacSecret(JNIEnv* env, jclass) {
+    // XOR key diferente al usado para strings UI para mayor seguridad
+    unsigned char xor_key = 0xA3;
+    unsigned char s[] = {
+        0x34^0xA3, 0x37^0xA3, 0x44^0xA3, 0x45^0xA3, 0x51^0xA3,
+        0x70^0xA3, 0x6A^0xA3, 0x38^0xA3, 0x48^0xA3, 0x42^0xA3,
+        0x53^0xA3, 0x61^0xA3, 0x2B^0xA3, 0x2F^0xA3, 0x54^0xA3,
+        0x49^0xA3, 0x6D^0xA3, 0x57^0xA3, 0x2B^0xA3, 0x35^0xA3,
+        0x4A^0xA3, 0x43^0xA3, 0x65^0xA3, 0x75^0xA3, 0x51^0xA3,
+        0x65^0xA3, 0x52^0xA3, 0x6B^0xA3, 0x6D^0xA3, 0x35^0xA3,
+        0x4E^0xA3, 0x4D^0xA3, 0x70^0xA3, 0x4A^0xA3, 0x57^0xA3,
+        0x5A^0xA3, 0x47^0xA3, 0x33^0xA3, 0x68^0xA3, 0x53^0xA3,
+        0x75^0xA3, 0x46^0xA3, 0x55^0xA3, 0x3D^0xA3
+    };
+    size_t len = sizeof(s);
+    for (size_t i = 0; i < len; i++) {
+        s[i] ^= xor_key;
+    }
+    // Null-terminate
+    char result[45];
+    memcpy(result, s, len);
+    result[len] = '\0';
+    return env->NewStringUTF(result);
+}
+
 std::string g_secure_payload = "";
 
 extern "C" JNIEXPORT void JNICALL
@@ -896,7 +936,6 @@ void anti_frida_loop() {
     }
 }
 
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+void start_anti_frida() {
     std::thread(anti_frida_loop).detach();
-    return JNI_VERSION_1_6;
 }

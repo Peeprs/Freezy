@@ -174,8 +174,8 @@ class LoginActivity : AppCompatActivity() {
                         val errorMessage = if (errorStream != null) {
                             try {
                                 JSONObject(errorStream.bufferedReader().readText()).getString("message")
-                            } catch (e: Exception) { "Error en el desafío" }
-                        } else { "Error en el desafío" }
+                            } catch (e: Exception) { "Error de validación. Verifica tus datos o tu conexión." }
+                        } else { "Error de validación. Verifica tus datos o tu conexión." }
                         
                         runOnUiThread {
                             Toast.makeText(this@LoginActivity, errorMessage, Toast.LENGTH_LONG).show()
@@ -189,7 +189,7 @@ class LoginActivity : AppCompatActivity() {
                     val nonce = JSONObject(challengeResponse).getString("nonce")
 
                     // PASO 2: Calcular HMAC
-                    val HWID_PRIVADO = "FREEZY_SECRET_KEY_123"
+                    val HWID_PRIVADO = NativeBridge.getHmacSecret()
                     val algorithm = "HmacSHA256"
                     val mac = Mac.getInstance(algorithm)
                     val secretKey = SecretKeySpec(HWID_PRIVADO.toByteArray(Charsets.UTF_8), algorithm)
@@ -216,7 +216,7 @@ class LoginActivity : AppCompatActivity() {
 
                     if (verifyConn.responseCode == 200) {
                         val responseBody = verifyConn.inputStream.bufferedReader().readText()
-                        android.util.Log.d("LoginActivity", "Server Response: $responseBody")
+                        if (com.system.network.ui.BuildConfig.DEBUG) android.util.Log.d("LoginActivity", "Server Response: $responseBody")
                         val jsonObject = JSONObject(responseBody)
                         val isValid = jsonObject.getBoolean("valid")
 
@@ -230,20 +230,18 @@ class LoginActivity : AppCompatActivity() {
                             var decryptedPayload = ""
                             if (encryptedPayloadHex.isNotEmpty() && ivHex.isNotEmpty()) {
                                 try {
-                                    val aesKeyBytes = hmacHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-                                    val ivBytes = ivHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-                                    val encryptedBytes = encryptedPayloadHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                                    // AES-256-GCM: Provee confidencialidad + integridad (AEAD)
+                                    val aesKeyBytes = SecureCrypto.hexToBytes(hmacHex)
+                                    val ivBytes = SecureCrypto.hexToBytes(ivHex)
+                                    val encryptedBytes = SecureCrypto.hexToBytes(encryptedPayloadHex)
                                     
-                                    val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
-                                    val secretKeySpec = javax.crypto.spec.SecretKeySpec(aesKeyBytes, "AES")
-                                    val ivParameterSpec = javax.crypto.spec.IvParameterSpec(ivBytes)
-                                    
-                                    cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKeySpec, ivParameterSpec)
-                                    val decryptedBytes = cipher.doFinal(encryptedBytes)
-                                    decryptedPayload = String(decryptedBytes, Charsets.UTF_8)
+                                    decryptedPayload = SecureCrypto.decryptGcm(aesKeyBytes, ivBytes, encryptedBytes)
                                     
                                     // Guardar el payload exclusivamente en memoria nativa
                                     NativeBridge.setSecurePayload(decryptedPayload)
+                                } catch (e: javax.crypto.AEADBadTagException) {
+                                    // El tag de autenticación no coincide — payload manipulado
+                                    if (com.system.network.ui.BuildConfig.DEBUG) android.util.Log.e("LoginActivity", "GCM auth tag mismatch — payload tampered")
                                 } catch (e: Exception) {
                                     e.printStackTrace()
                                 }

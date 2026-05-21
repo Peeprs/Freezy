@@ -29,6 +29,9 @@ object NativeBridge {
     @JvmStatic
     external fun setSecurePayload(payload: String)
 
+    @JvmStatic
+    external fun getHmacSecret(): String
+
     const val STRING_ENDPOINT = 1
     const val STRING_BTN_START = 2
     const val STRING_VALIDATING = 3
