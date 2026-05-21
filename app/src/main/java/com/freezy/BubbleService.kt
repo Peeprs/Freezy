@@ -764,8 +764,8 @@ class BubbleService : Service() {
 
         // 2. Configurar LayoutParams de la barra de progreso lateral (Izquierda Centro)
         val seekParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            (60 * resources.displayMetrics.density).toInt(),
+            (240 * resources.displayMetrics.density).toInt(),
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
