@@ -33,6 +33,7 @@ import android.widget.Toast
 import android.widget.LinearLayout
 import android.widget.ImageButton
 import android.widget.Switch
+import android.widget.Button
 import android.widget.TextView
 import android.widget.SeekBar
 import android.animation.ValueAnimator
@@ -74,6 +75,12 @@ class BubbleService : Service() {
 
     private var isFreezing = false
     private var fillAnimator: ValueAnimator? = null
+
+    // Variables para el mapeo del botón de disparo de Auto-Lag
+    private var shootAreaLeft = 0
+    private var shootAreaTop = 0
+    private var shootAreaRight = 0
+    private var shootAreaBottom = 0
 
     // Vista personalizada que dibuja el arco circular de progreso
     inner class ArcProgressView(context: Context) : View(context) {
@@ -123,6 +130,12 @@ class BubbleService : Service() {
         
         getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
             .putBoolean("is_bubble_running", true).apply()
+
+        // Si el modo mapeo está activo, iniciamos la interfaz de arrastre
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("modo_mapeo_activo", false)) {
+            iniciarInterfazDeMapeo()
+        }
     }
 
     private val licenseCheckRunnable = object : Runnable {
@@ -534,6 +547,26 @@ class BubbleService : Service() {
         if (::fovOverlay.isInitialized) {
             fovOverlay.setFiringState(isFiring)
         }
+
+        // Si el modo Auto-Lag está activo, disparamos el lag switch
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("auto_lag_enabled", false)) {
+            val useRoot = prefs.getBoolean("use_root", false)
+            if (isFiring) {
+                if (!isFreezing) {
+                    isFreezing = true
+                    startFreeze(useRoot)
+                    startArcAnimation(1500L) // Límite de 1.5 segundos para evitar desconexiones
+                    handler.postDelayed({
+                        if (isFreezing) stopFreeze(useRoot)
+                    }, 1500L)
+                }
+            } else {
+                if (isFreezing) {
+                    stopFreeze(useRoot)
+                }
+            }
+        }
     }
 
     private fun toggleManual(useRoot: Boolean) {
@@ -667,6 +700,118 @@ class BubbleService : Service() {
 
         getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
             .putBoolean("is_bubble_running", false).apply()
+    }
+
+    private fun iniciarInterfazDeMapeo() {
+        // Inicializamos windowManager si no está listo
+        if (!::windowManager.isInitialized) {
+            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        }
+
+        val mappingView = LayoutInflater.from(this).inflate(R.layout.layout_mapping_bubble, null)
+        
+        val mapParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        )
+
+        val btnToggle = mappingView.findViewById<Button>(R.id.btn_toggle_mapeo)
+        val btnAceptar = mappingView.findViewById<Button>(R.id.btn_aceptar_mapeo)
+        val seekbarSize = mappingView.findViewById<SeekBar>(R.id.seekbar_circle_size)
+        val circleTargetContainer = mappingView.findViewById<View>(R.id.circle_target_container)
+        val seekbarContainer = mappingView.findViewById<View>(R.id.layout_seekbar_container)
+
+        var isShowing = false
+
+        btnToggle.setOnClickListener {
+            isShowing = !isShowing
+            if (isShowing) {
+                btnToggle.text = "Cerrar"
+                btnAceptar.visibility = View.VISIBLE
+                seekbarContainer.visibility = View.VISIBLE
+                circleTargetContainer.visibility = View.VISIBLE
+            } else {
+                btnToggle.text = "Mostrar"
+                btnAceptar.visibility = View.GONE
+                seekbarContainer.visibility = View.GONE
+                circleTargetContainer.visibility = View.GONE
+            }
+        }
+
+        seekbarSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val newSize = Math.max(40, progress) // Mínimo 40px
+                val params = circleTargetContainer.layoutParams
+                params.width = newSize
+                params.height = newSize
+                circleTargetContainer.layoutParams = params
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        var initX = 0f
+        var initY = 0f
+        var touchX = 0f
+        var touchY = 0f
+
+        circleTargetContainer.setOnTouchListener { v: View, event: MotionEvent ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initX = circleTargetContainer.x
+                    initY = circleTargetContainer.y
+                    touchX = event.rawX
+                    touchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    circleTargetContainer.x = initX + (event.rawX - touchX)
+                    circleTargetContainer.y = initY + (event.rawY - touchY)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        btnAceptar.setOnClickListener {
+            val location = IntArray(2)
+            circleTargetContainer.getLocationOnScreen(location)
+            
+            shootAreaLeft = location[0]
+            shootAreaTop = location[1]
+            shootAreaRight = shootAreaLeft + circleTargetContainer.width
+            shootAreaBottom = shootAreaTop + circleTargetContainer.height
+
+            // Guardar en preferencias para recordarlo en futuros lanzamientos
+            getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
+                .putInt("shoot_left", shootAreaLeft)
+                .putInt("shoot_top", shootAreaTop)
+                .putInt("shoot_right", shootAreaRight)
+                .putInt("shoot_bottom", shootAreaBottom)
+                .putBoolean("modo_mapeo_activo", false)
+                .apply()
+
+            // Si el InputMonitor no se ha creado, lo instanciamos y activamos
+            if (inputMonitor == null) {
+                inputMonitor = com.freezy.network.InputMonitor(this)
+            }
+            inputMonitor?.startMonitoring()
+            inputMonitor?.updateFireZone(shootAreaLeft, shootAreaTop, shootAreaRight, shootAreaBottom)
+
+            try {
+                windowManager.removeView(mappingView)
+            } catch (e: Exception) {}
+            
+            Toast.makeText(this, "Botón de disparo mapeado y guardado.", Toast.LENGTH_SHORT).show()
+        }
+
+        windowManager.addView(mappingView, mapParams)
     }
 
     override fun onBind(intent: Intent): IBinder? = null

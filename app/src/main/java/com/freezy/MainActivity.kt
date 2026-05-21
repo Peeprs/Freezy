@@ -28,6 +28,8 @@ import android.content.SharedPreferences
 import android.view.LayoutInflater
 import android.os.Process
 import android.net.VpnService
+import android.os.Handler
+import android.os.Looper
 
 class MainActivity : AppCompatActivity() {
 
@@ -148,6 +150,27 @@ class MainActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
+
+        val switchAutoLag = findViewById<Switch>(R.id.switch_autolag)
+        switchAutoLag.isChecked = prefs.getBoolean("auto_lag_enabled", false)
+
+        switchAutoLag.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("auto_lag_enabled", isChecked).apply()
+            if (isChecked) {
+                AlertDialog.Builder(this)
+                    .setTitle("Modo Auto-Lag")
+                    .setMessage("Deberá colocar el círculo sobre su botón de disparo en el juego. Ajústelo al tamaño lo más preciso posible.")
+                    .setCancelable(false)
+                    .setPositiveButton("Entendido") { _, _ ->
+                        iniciarCuentaRegresivaAutoLag()
+                    }
+                    .setNegativeButton("Cancelar") { dialog, _ ->
+                        switchAutoLag.isChecked = false
+                        dialog.dismiss()
+                    }
+                    .show()
+            }
+        }
 
         btnFreezy.setOnClickListener {
             if (!Settings.canDrawOverlays(this)) {
@@ -512,6 +535,33 @@ class MainActivity : AppCompatActivity() {
             getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
                 .getString("server_base_url", "https://licencias-freezy.onrender.com/api") ?: ""
         }
+    }
+
+    private fun iniciarCuentaRegresivaAutoLag() {
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle("Iniciando")
+            .setMessage("Abriendo Free Fire en 3 segundos...")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
+
+        var count = 3
+        val handler = Handler(Looper.getMainLooper())
+        handler.post(object : Runnable {
+            override fun run() {
+                if (count > 0) {
+                    progressDialog.setMessage("Abriendo Free Fire en $count segundos...")
+                    count--
+                    handler.postDelayed(this, 1000)
+                } else {
+                    progressDialog.dismiss()
+                    getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
+                        .putBoolean("modo_mapeo_activo", true)
+                        .apply()
+                    checkLicenseAndLaunch()
+                }
+            }
+        })
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
