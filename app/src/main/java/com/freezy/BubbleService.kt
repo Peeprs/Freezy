@@ -26,6 +26,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -82,6 +83,10 @@ class BubbleService : Service() {
     private var shootAreaRight = 0
     private var shootAreaBottom = 0
 
+    private var mappingHudPanel: View? = null
+    private var mappingSeekBarView: View? = null
+    private var circleTargetContainer: View? = null
+
     // Vista personalizada que dibuja el arco circular de progreso
     inner class ArcProgressView(context: Context) : View(context) {
         var progress = 0f // 0.0 a 1.0
@@ -125,14 +130,19 @@ class BubbleService : Service() {
         super.onCreate()
         startForegroundNotification()
         setupFov()
-        setupBubble()
+        
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val isAutoLagEnabled = prefs.getBoolean("auto_lag_enabled", false)
+        if (!isAutoLagEnabled) {
+            setupBubble() // Solo mostramos la burbuja normal en Fake Lag clásico!
+        }
+        
         startLicenseCheck()
         
         getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
             .putBoolean("is_bubble_running", true).apply()
 
         // Si el modo mapeo está activo, iniciamos la interfaz de arrastre
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
         if (prefs.getBoolean("modo_mapeo_activo", false)) {
             iniciarInterfazDeMapeo()
         }
@@ -690,6 +700,18 @@ class BubbleService : Service() {
             windowManager.removeView(fovOverlay)
         }
         
+        try {
+            if (mappingHudPanel != null && mappingHudPanel?.parent != null) {
+                windowManager.removeView(mappingHudPanel)
+            }
+            if (mappingSeekBarView != null && mappingSeekBarView?.parent != null) {
+                windowManager.removeView(mappingSeekBarView)
+            }
+            if (circleTargetContainer != null && circleTargetContainer?.parent != null) {
+                windowManager.removeView(circleTargetContainer)
+            }
+        } catch (e: Exception) {}
+        
         // Cerrar el shell root correctamente
         try {
             suOutputStream?.writeBytes("exit\n")
@@ -703,29 +725,73 @@ class BubbleService : Service() {
     }
 
     private fun iniciarInterfazDeMapeo() {
-        // Inicializamos windowManager si no está listo
         if (!::windowManager.isInitialized) {
             windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         }
 
-        val mappingView = LayoutInflater.from(this).inflate(R.layout.layout_mapping_bubble, null)
+        // Inflamos el XML completo una sola vez para extraer las tres vistas individuales
+        val parentView = LayoutInflater.from(this).inflate(R.layout.layout_mapping_bubble, null) as ViewGroup
         
-        val mapParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+        val rawHudPanel = parentView.findViewById<View>(R.id.mapping_hud_panel)
+        val rawSeekBarView = parentView.findViewById<View>(R.id.layout_seekbar_container)
+        val rawCircleContainer = parentView.findViewById<View>(R.id.circle_target_container)
+
+        // Desconectamos las vistas de su FrameLayout padre para poder añadirlas por separado a WindowManager
+        parentView.removeView(rawHudPanel)
+        parentView.removeView(rawSeekBarView)
+        parentView.removeView(rawCircleContainer)
+
+        mappingHudPanel = rawHudPanel
+        mappingSeekBarView = rawSeekBarView
+        circleTargetContainer = rawCircleContainer
+
+        // 1. Configurar LayoutParams del HUD panel (Superior Central)
+        val hudParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = (36 * resources.displayMetrics.density).toInt() // Margen de arriba
+        }
+
+        // 2. Configurar LayoutParams de la barra de progreso lateral (Izquierda Centro)
+        val seekParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            x = (16 * resources.displayMetrics.density).toInt() // Margen de izquierda
+        }
+
+        // 3. Configurar LayoutParams del círculo de disparo (Centro arrastrable)
+        val circleParams = WindowManager.LayoutParams(
+            (80 * resources.displayMetrics.density).toInt(), // Ancho inicial
+            (80 * resources.displayMetrics.density).toInt(), // Alto inicial
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
-        )
+        ).apply {
+            gravity = Gravity.CENTER
+        }
 
-        val btnToggle = mappingView.findViewById<Button>(R.id.btn_toggle_mapeo)
-        val btnAceptar = mappingView.findViewById<Button>(R.id.btn_aceptar_mapeo)
-        val seekbarSize = mappingView.findViewById<SeekBar>(R.id.seekbar_circle_size)
-        val circleTargetContainer = mappingView.findViewById<View>(R.id.circle_target_container)
-        val seekbarContainer = mappingView.findViewById<View>(R.id.layout_seekbar_container)
+        val btnToggle = mappingHudPanel!!.findViewById<Button>(R.id.btn_toggle_mapeo)
+        val btnAceptar = mappingHudPanel!!.findViewById<Button>(R.id.btn_aceptar_mapeo)
+        val seekbarSize = mappingSeekBarView!!.findViewById<SeekBar>(R.id.seekbar_circle_size)
 
         var isShowing = false
 
@@ -734,45 +800,65 @@ class BubbleService : Service() {
             if (isShowing) {
                 btnToggle.text = "Cerrar"
                 btnAceptar.visibility = View.VISIBLE
-                seekbarContainer.visibility = View.VISIBLE
-                circleTargetContainer.visibility = View.VISIBLE
+                
+                // Agregamos el SeekBar y el Círculo dinámicamente al WindowManager
+                if (mappingSeekBarView?.parent == null) {
+                    windowManager.addView(mappingSeekBarView, seekParams)
+                }
+                if (circleTargetContainer?.parent == null) {
+                    windowManager.addView(circleTargetContainer, circleParams)
+                }
             } else {
                 btnToggle.text = "Mostrar"
                 btnAceptar.visibility = View.GONE
-                seekbarContainer.visibility = View.GONE
-                circleTargetContainer.visibility = View.GONE
+                
+                // Removemos el SeekBar y el Círculo del WindowManager
+                if (mappingSeekBarView?.parent != null) {
+                    windowManager.removeView(mappingSeekBarView)
+                }
+                if (circleTargetContainer?.parent != null) {
+                    windowManager.removeView(circleTargetContainer)
+                }
             }
         }
 
         seekbarSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val newSize = Math.max(40, progress) // Mínimo 40px
-                val params = circleTargetContainer.layoutParams
-                params.width = newSize
-                params.height = newSize
-                circleTargetContainer.layoutParams = params
+                val density = resources.displayMetrics.density
+                val progressPx = (progress * density).toInt()
+                val newSize = Math.max((40 * density).toInt(), progressPx) // Mínimo 40dp en píxeles
+                
+                circleParams.width = newSize
+                circleParams.height = newSize
+                
+                if (circleTargetContainer?.parent != null) {
+                    windowManager.updateViewLayout(circleTargetContainer, circleParams)
+                }
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
-        var initX = 0f
-        var initY = 0f
+        var initX = 0
+        var initY = 0
         var touchX = 0f
         var touchY = 0f
 
-        circleTargetContainer.setOnTouchListener { v: View, event: MotionEvent ->
+        circleTargetContainer!!.setOnTouchListener { _: View, event: MotionEvent ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    initX = circleTargetContainer.x
-                    initY = circleTargetContainer.y
+                    initX = circleParams.x
+                    initY = circleParams.y
                     touchX = event.rawX
                     touchY = event.rawY
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    circleTargetContainer.x = initX + (event.rawX - touchX)
-                    circleTargetContainer.y = initY + (event.rawY - touchY)
+                    circleParams.x = initX + (event.rawX - touchX).toInt()
+                    circleParams.y = initY + (event.rawY - touchY).toInt()
+                    if (circleTargetContainer?.parent != null) {
+                        windowManager.updateViewLayout(circleTargetContainer, circleParams)
+                    }
                     true
                 }
                 else -> false
@@ -781,12 +867,12 @@ class BubbleService : Service() {
 
         btnAceptar.setOnClickListener {
             val location = IntArray(2)
-            circleTargetContainer.getLocationOnScreen(location)
+            circleTargetContainer!!.getLocationOnScreen(location)
             
             shootAreaLeft = location[0]
             shootAreaTop = location[1]
-            shootAreaRight = shootAreaLeft + circleTargetContainer.width
-            shootAreaBottom = shootAreaTop + circleTargetContainer.height
+            shootAreaRight = shootAreaLeft + circleParams.width
+            shootAreaBottom = shootAreaTop + circleParams.height
 
             // Guardar en preferencias para recordarlo en futuros lanzamientos
             getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
@@ -804,14 +890,18 @@ class BubbleService : Service() {
             inputMonitor?.startMonitoring()
             inputMonitor?.updateFireZone(shootAreaLeft, shootAreaTop, shootAreaRight, shootAreaBottom)
 
+            // Limpieza: removemos todas las vistas de mapeo del WindowManager
             try {
-                windowManager.removeView(mappingView)
+                if (mappingHudPanel?.parent != null) windowManager.removeView(mappingHudPanel)
+                if (mappingSeekBarView?.parent != null) windowManager.removeView(mappingSeekBarView)
+                if (circleTargetContainer?.parent != null) windowManager.removeView(circleTargetContainer)
             } catch (e: Exception) {}
             
             Toast.makeText(this, "Botón de disparo mapeado y guardado.", Toast.LENGTH_SHORT).show()
         }
 
-        windowManager.addView(mappingView, mapParams)
+        // Al inicio, solo agregamos el panel de control (que tiene el botón "Mostrar")
+        windowManager.addView(mappingHudPanel, hudParams)
     }
 
     override fun onBind(intent: Intent): IBinder? = null

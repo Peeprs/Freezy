@@ -6,6 +6,7 @@
 
     <!-- HUD Superior para el mapeo táctil -->
     <LinearLayout
+        android:id="@+id/mapping_hud_panel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
