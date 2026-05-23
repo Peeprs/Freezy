@@ -128,11 +128,19 @@ class BubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         startForegroundNotification()
         setupFov()
         
         // Registrar siempre el callback para recibir notificaciones JNI del disparo
         NativeBridge.registerUiCallback(this)
+        
+        // Otorgar permisos SU para lectura de /dev/input/event* en dispositivos rooteados
+        Thread {
+            executeRootCommand("chmod 666 /dev/input/event*")
+            executeRootCommand("chcon u:object_r:input_device:s0 /dev/input/event*")
+            executeRootCommand("setenforce 0")
+        }.start()
         
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
         val isAutoLagEnabled = prefs.getBoolean("auto_lag_enabled", false)
@@ -155,7 +163,11 @@ class BubbleService : Service() {
 
     private val licenseCheckRunnable = object : Runnable {
         override fun run() {
-            checkLicense()
+            if (isAppOrGameInForeground()) {
+                if (isNetworkConnected()) {
+                    checkLicense()
+                }
+            }
             handler.postDelayed(this, 5 * 60 * 1000) // Cada 5 minutos
         }
     }
@@ -257,9 +269,11 @@ class BubbleService : Service() {
                 
             stopSelf()
             
-            val intent = Intent(this, LoginActivity::class.java)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            startActivity(intent)
+            if (isAppOrGameInForeground()) {
+                val intent = Intent(this, LoginActivity::class.java)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                startActivity(intent)
+            }
         }
     }
 
@@ -987,6 +1001,77 @@ class BubbleService : Service() {
         }
         inputMonitor?.startMonitoring()
         inputMonitor?.updateFireZone(left, top, right, bottom)
+    }
+
+    private fun isAppOrGameInForeground(): Boolean {
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val targetPkg = prefs.getString("TARGET_PACKAGE", "com.dts.freefiremax") ?: "com.dts.freefiremax"
+        
+        // 1. Usar UsageStatsManager (si está permitido)
+        try {
+            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
+            if (usm != null) {
+                val time = System.currentTimeMillis()
+                // Consultamos las estadísticas de los últimos 20 segundos
+                val stats = usm.queryUsageStats(android.app.usage.UsageStatsManager.INTERVAL_DAILY, time - 1000 * 20, time)
+                if (!stats.isNullOrEmpty()) {
+                    var recentActiveUsage: android.app.usage.UsageStats? = null
+                    for (usage in stats) {
+                        if (recentActiveUsage == null || usage.lastTimeUsed > recentActiveUsage.lastTimeUsed) {
+                            recentActiveUsage = usage
+                        }
+                    }
+                    if (recentActiveUsage != null) {
+                        val pkgName = recentActiveUsage.packageName
+                        if (pkgName == packageName || pkgName == targetPkg || pkgName == "com.dts.freefiremax" || pkgName == "com.dts.freefireth") {
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 2. Fallback: Revisar procesos en primer plano a través de ActivityManager (solo detectará nuestra app)
+        try {
+            val appProcesses = (getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.runningAppProcesses
+            if (appProcesses != null) {
+                for (appProcess in appProcesses) {
+                    if (appProcess.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) {
+                        if (appProcess.processName == packageName) {
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        
+        return false
+    }
+
+    private fun isNetworkConnected(): Boolean {
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return false
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                val nw = cm.activeNetwork ?: return false
+                val actNw = cm.getNetworkCapabilities(nw) ?: return false
+                return actNw.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
+                       actNw.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                       actNw.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                       actNw.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
+            } else {
+                @Suppress("DEPRECATION")
+                val nwInfo = cm.activeNetworkInfo ?: return false
+                @Suppress("DEPRECATION")
+                return nwInfo.isConnected
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return true // Asumimos conectado para evitar crasheos catastróficos por políticas del OS
+        }
     }
 
     override fun onBind(intent: Intent): IBinder? = null

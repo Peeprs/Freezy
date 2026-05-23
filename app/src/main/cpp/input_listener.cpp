@@ -39,6 +39,21 @@ std::string find_touch_event_node() {
 
 int max_raw_x = 4095; // Fallback
 int max_raw_y = 4095; // Fallback
+int g_screen_width = 1080;
+int g_screen_height = 2400;
+int g_rotation = 0;
+
+struct TouchSlot {
+    int id = -1;
+    int raw_x = 0;
+    int raw_y = 0;
+    bool started_in_fire_zone = false;
+    bool new_touch = false;
+};
+
+const int MAX_SLOTS = 10;
+TouchSlot g_slots[MAX_SLOTS];
+int g_current_slot = 0;
 
 void calibrate_touch_node(int fd) {
     struct input_absinfo abs_info;
@@ -53,12 +68,32 @@ void calibrate_touch_node(int fd) {
     }
 }
 
-int raw_to_pixel_x(int raw_x, int screen_width) {
-    return (raw_x * screen_width) / max_raw_x;
-}
-
-int raw_to_pixel_y(int raw_y, int screen_height) {
-    return (raw_y * screen_height) / max_raw_y;
+void raw_to_pixel(int raw_x, int raw_y, int& pixel_x, int& pixel_y) {
+    if (max_raw_x <= 0 || max_raw_y <= 0) {
+        pixel_x = raw_x;
+        pixel_y = raw_y;
+        return;
+    }
+    
+    switch (g_rotation) {
+        case 1: // Surface.ROTATION_90 (Landscape izquierdo)
+            pixel_x = (raw_y * g_screen_width) / max_raw_y;
+            pixel_y = ((max_raw_x - raw_x) * g_screen_height) / max_raw_x;
+            break;
+        case 2: // Surface.ROTATION_180
+            pixel_x = ((max_raw_x - raw_x) * g_screen_width) / max_raw_x;
+            pixel_y = ((max_raw_y - raw_y) * g_screen_height) / max_raw_y;
+            break;
+        case 3: // Surface.ROTATION_270 (Landscape derecho)
+            pixel_x = ((max_raw_y - raw_y) * g_screen_width) / max_raw_y;
+            pixel_y = (raw_x * g_screen_height) / max_raw_x;
+            break;
+        case 0: // Surface.ROTATION_0 (Portrait)
+        default:
+            pixel_x = (raw_x * g_screen_width) / max_raw_x;
+            pixel_y = (raw_y * g_screen_height) / max_raw_y;
+            break;
+    }
 }
 
 // Variables de control
@@ -108,6 +143,8 @@ void* touch_monitor_thread(void* arg) {
     }
 
     LOGI("Monitoreando toques en %s...", node.c_str());
+    calibrate_touch_node(fd);
+    
     struct input_event ev;
 
     while (monitor_running) {
@@ -116,34 +153,94 @@ void* touch_monitor_thread(void* arg) {
             continue;
         }
         
-        // Detectar tipo de evento
         if (ev.type == EV_ABS) {
-            LOGD("Raw Value: %d, Code: %d", ev.value, ev.code);
-            if (ev.code == ABS_MT_POSITION_X) {
+            if (ev.code == ABS_MT_SLOT) {
+                if (ev.value >= 0 && ev.value < MAX_SLOTS) {
+                    g_current_slot = ev.value;
+                }
+            } else if (ev.code == ABS_MT_TRACKING_ID) {
+                g_slots[g_current_slot].id = ev.value;
+                if (ev.value == -1) {
+                    // Finger lifted
+                    if (g_slots[g_current_slot].started_in_fire_zone) {
+                        g_slots[g_current_slot].started_in_fire_zone = false;
+                        
+                        // Check if any other slot is still firing
+                        bool any_active_fire = false;
+                        for (int i = 0; i < MAX_SLOTS; i++) {
+                            if (g_slots[i].id != -1 && g_slots[i].started_in_fire_zone) {
+                                any_active_fire = true;
+                                break;
+                            }
+                        }
+                        if (!any_active_fire) {
+                            set_firing(false);
+                            notify_ui_firing_state(false);
+                            LOGI("Disparo AUTO-LAG finalizado (dedo levantado)");
+                        }
+                    }
+                    g_slots[g_current_slot].new_touch = false;
+                    touch_pressed = false;
+                } else {
+                    // New finger touch down
+                    g_slots[g_current_slot].started_in_fire_zone = false;
+                    g_slots[g_current_slot].new_touch = true;
+                    touch_pressed = true;
+                }
+            } else if (ev.code == ABS_MT_POSITION_X) {
+                g_slots[g_current_slot].raw_x = ev.value;
                 current_x = ev.value;
             } else if (ev.code == ABS_MT_POSITION_Y) {
+                g_slots[g_current_slot].raw_y = ev.value;
                 current_y = ev.value;
-            } else if (ev.code == ABS_MT_TRACKING_ID) {
-                if (ev.value == -1) {
-                    touch_pressed = false; // Dedo levantado
-                } else {
-                    touch_pressed = true;  // Dedo en pantalla
-                }
             }
         } else if (ev.type == EV_KEY && ev.code == BTN_TOUCH) {
             if (ev.value == 1) {
-                // Toque iniciado - verificar si está dentro del FOV
-                if (is_inside_fov(current_x, current_y)) {
-                    set_firing(true);
-                    notify_ui_firing_state(true); // Avisa a Kotlin: PONLO ROJO
-                    LOGD("Disparo detectado dentro del FOV");
-                }
                 touch_pressed = true;
             } else {
-                // Toque finalizado
                 touch_pressed = false;
-                set_firing(false);
-                notify_ui_firing_state(false); // Avisa a Kotlin: REGRESA A BLANCO
+                // Fallback: If all touches are released, force stop everything just in case
+                bool was_firing = false;
+                for (int i = 0; i < MAX_SLOTS; i++) {
+                    if (g_slots[i].started_in_fire_zone) {
+                        was_firing = true;
+                    }
+                    g_slots[i].id = -1;
+                    g_slots[i].started_in_fire_zone = false;
+                    g_slots[i].new_touch = false;
+                }
+                if (was_firing) {
+                    set_firing(false);
+                    notify_ui_firing_state(false);
+                    LOGI("Disparo AUTO-LAG finalizado por BTN_TOUCH = 0");
+                }
+            }
+        } else if (ev.type == EV_SYN && ev.code == SYN_REPORT) {
+            // Process slots that just started touching
+            for (int i = 0; i < MAX_SLOTS; i++) {
+                if (g_slots[i].id != -1 && g_slots[i].new_touch) {
+                    g_slots[i].new_touch = false;
+                    
+                    int pixel_x, pixel_y;
+                    raw_to_pixel(g_slots[i].raw_x, g_slots[i].raw_y, pixel_x, pixel_y);
+                    
+                    LOGD("Slot %d Touch DOWN: raw(%d, %d) -> pixel(%d, %d)", i, g_slots[i].raw_x, g_slots[i].raw_y, pixel_x, pixel_y);
+                    
+                    // 1. Check mapped Auto-Lag zone
+                    if (is_in_fire_zone(pixel_x, pixel_y)) {
+                        g_slots[i].started_in_fire_zone = true;
+                        set_firing(true);
+                        notify_ui_firing_state(true);
+                        LOGI("Disparo AUTO-LAG detectado en Slot %d", i);
+                    }
+                    
+                    // 2. Check FOV overlay
+                    if (is_inside_fov(pixel_x, pixel_y)) {
+                        set_firing(true);
+                        notify_ui_firing_state(true);
+                        LOGD("Disparo detectado dentro del FOV");
+                    }
+                }
             }
         }
     }
@@ -153,13 +250,27 @@ void* touch_monitor_thread(void* arg) {
     return NULL;
 }
 
-bool start_touch_monitor(const char* device_path, int x1, int y1, int x2, int y2) {
+bool start_touch_monitor(const char* device_path, int x1, int y1, int x2, int y2, int screen_w, int screen_h, int rotation) {
     if (monitor_running) return false;
 
     fire_zone_x1 = x1;
     fire_zone_y1 = y1;
     fire_zone_x2 = x2;
     fire_zone_y2 = y2;
+
+    g_screen_width = screen_w;
+    g_screen_height = screen_h;
+    g_rotation = rotation;
+
+    screen_cx = screen_w / 2;
+    screen_cy = screen_h / 2;
+
+    // Reset slots
+    for (int i = 0; i < MAX_SLOTS; i++) {
+        g_slots[i].id = -1;
+        g_slots[i].started_in_fire_zone = false;
+        g_slots[i].new_touch = false;
+    }
 
     monitor_running = true;
     

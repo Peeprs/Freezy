@@ -42,7 +42,7 @@ extern int init_virtual_device();
 extern void destroy_virtual_device(int fd);
 extern void apply_progressive_recoil(int fd);
 extern void set_firing(bool firing);
-extern bool start_touch_monitor(const char* device_path, int x1, int y1, int x2, int y2);
+extern bool start_touch_monitor(const char* device_path, int x1, int y1, int x2, int y2, int screen_w, int screen_h, int rotation);
 extern void stop_touch_monitor();
 extern void update_fire_zone(int x1, int y1, int x2, int y2);
 
@@ -77,10 +77,10 @@ Java_com_freezy_network_RecoilService_stopRecoil(JNIEnv *env, jobject thiz) {
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_freezy_network_InputMonitor_startTouchMonitor(JNIEnv *env, jobject thiz, jstring device_path, jint x1, jint y1, jint x2, jint y2) {
+Java_com_freezy_network_InputMonitor_startTouchMonitor(JNIEnv *env, jobject thiz, jstring device_path, jint x1, jint y1, jint x2, jint y2, jint screenWidth, jint screenHeight, jint rotation) {
     const char *path = env->GetStringUTFChars(device_path, 0);
-    LOGI("Iniciando monitoreo de toques en %s", path);
-    bool result = start_touch_monitor(path, x1, y1, x2, y2);
+    LOGI("Iniciando monitoreo de toques en %s con pantalla %dx%d rotacion %d", path, screenWidth, screenHeight, rotation);
+    bool result = start_touch_monitor(path, x1, y1, x2, y2, screenWidth, screenHeight, rotation);
     env->ReleaseStringUTFChars(device_path, path);
     return result;
 }

@@ -213,6 +213,16 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
+            val isAutoLag = prefs.getBoolean("auto_lag_enabled", false)
+            if (isAutoLag) {
+                // El modo Auto-Lag requiere Root obligatorio para leer /dev/input/event* y bloquear udp
+                if (!hasRootAccess()) {
+                    Toast.makeText(this, "El modo Auto-Lag requiere permisos de Root obligatorios.", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                prefs.edit().putBoolean("use_root", true).apply()
+            }
+
             val useRoot = prefs.getBoolean("use_root", false)
             if (useRoot && !hasRootAccess()) {
                 Toast.makeText(this, "Permiso Root no disponible o denegado.", Toast.LENGTH_SHORT).show()
