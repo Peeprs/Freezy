@@ -19,22 +19,44 @@ extern void notify_ui_firing_state(bool is_firing);
 
 std::string find_touch_event_node() {
     char name[256];
+    struct input_absinfo abs_x;
+    
+    // Intento 1: Buscar dispositivo que soporte ABS_MT_POSITION_X (100% fiable para pantallas multitáctiles)
     for (int i = 0; i < 32; i++) {
         std::string path = "/dev/input/event" + std::to_string(i);
         int fd = open(path.c_str(), O_RDONLY);
         if (fd >= 0) {
-            ioctl(fd, EVIOCGNAME(sizeof(name)), name);
-            // Buscamos descriptores comunes de pantallas táctiles
-            if (strstr(name, "touch") || strstr(name, "Touch")) {
+            if (ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &abs_x) >= 0) {
+                ioctl(fd, EVIOCGNAME(sizeof(name)), name);
                 close(fd);
-                LOGI("Dispositivo de toque encontrado: %s (%s)", path.c_str(), name);
+                LOGI("Dispositivo multitáctil detectado por ioctl ABS_MT_POSITION_X: %s (%s)", path.c_str(), name);
                 return path;
             }
             close(fd);
         }
     }
-    LOGI("No se encontró dispositivo de toque por nombre. Usando /dev/input/event2 como fallback.");
-    return "/dev/input/event2"; // Fallback común
+
+    // Intento 2: Búsqueda por palabras clave en el nombre si no responde ioctl
+    for (int i = 0; i < 32; i++) {
+        std::string path = "/dev/input/event" + std::to_string(i);
+        int fd = open(path.c_str(), O_RDONLY);
+        if (fd >= 0) {
+            ioctl(fd, EVIOCGNAME(sizeof(name)), name);
+            std::string dev_name(name);
+            if (dev_name.find("touch") != std::string::npos || 
+                dev_name.find("Touch") != std::string::npos ||
+                dev_name.find("ts") != std::string::npos ||
+                dev_name.find("TS") != std::string::npos) {
+                close(fd);
+                LOGI("Dispositivo de toque detectado por nombre: %s (%s)", path.c_str(), name);
+                return path;
+            }
+            close(fd);
+        }
+    }
+
+    LOGI("No se encontró dispositivo de toque por nombre o ioctl. Usando /dev/input/event4 como fallback.");
+    return "/dev/input/event4"; // Fallback en Redmi K30 Pro
 }
 
 int max_raw_x = 4095; // Fallback
