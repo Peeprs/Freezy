@@ -8,10 +8,46 @@
 #include <cstdlib>
 #include <string>
 
+#include <stdarg.h>
+#include <time.h>
+
 #define LOG_TAG "InputListener"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, "FreezyDebug", __VA_ARGS__)
+
+inline void write_native_log(const char* level, const char* format, ...) {
+    char msg[1024];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(msg, sizeof(msg), format, args);
+    va_end(args);
+    
+    // 1. Imprimir a Logcat
+    if (strcmp(level, "ERROR") == 0) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "%s", msg);
+    } else if (strcmp(level, "DEBUG") == 0) {
+        __android_log_print(ANDROID_LOG_DEBUG, "FreezyDebug", "%s", msg);
+    } else {
+        __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "%s", msg);
+    }
+
+    // 2. Escribir al archivo de logs de la app (/data/data/com.system.network.ui/files/app_logs.txt)
+    FILE* f = fopen("/data/data/com.system.network.ui/files/app_logs.txt", "a");
+    if (f) {
+        time_t rawtime;
+        struct tm * timeinfo;
+        char buffer[80];
+
+        time(&rawtime);
+        timeinfo = localtime(&rawtime);
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+
+        fprintf(f, "[%s] [NATIVE_%s] %s\n", buffer, level, msg);
+        fclose(f);
+    }
+}
+
+#define LOGI(...) write_native_log("INFO", __VA_ARGS__)
+#define LOGE(...) write_native_log("ERROR", __VA_ARGS__)
+#define LOGD(...) write_native_log("DEBUG", __VA_ARGS__)
 
 // Declaraciones externas (de recoil_engine.cpp)
 extern void set_firing(bool firing);

@@ -163,7 +163,8 @@ class LoginActivity : AppCompatActivity() {
                     challengeConn.readTimeout = 30000
                     challengeConn.doOutput = true
 
-                    val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\"}"
+                    val currentAppVersion = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "1.08" }
+                    val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
                     challengeConn.outputStream.use { os ->
                         val input = challengeJson.toByteArray(Charsets.UTF_8)
                         os.write(input, 0, input.size)
@@ -208,7 +209,7 @@ class LoginActivity : AppCompatActivity() {
                     verifyConn.readTimeout = 30000
                     verifyConn.doOutput = true
 
-                    val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\"}"
+                    val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\", \"app_version\": \"$currentAppVersion\"}"
                     verifyConn.outputStream.use { os ->
                         val input = verifyJson.toByteArray(Charsets.UTF_8)
                         os.write(input, 0, input.size)
@@ -266,10 +267,24 @@ class LoginActivity : AppCompatActivity() {
                                                 Toast.LENGTH_SHORT
                                         )
                                         .show()
-                                startActivity(
-                                        Intent(this@LoginActivity, MainActivity::class.java)
-                                )
-                                finish()
+
+                                val warning = jsonObject.optString("update_warning", "")
+                                if (warning.isNotEmpty()) {
+                                    AlertDialog.Builder(this@LoginActivity)
+                                        .setTitle("Aviso de Actualización")
+                                        .setMessage(warning)
+                                        .setPositiveButton("Entendido") { _, _ ->
+                                            startActivity(Intent(this@LoginActivity, MainActivity::class.java))
+                                            finish()
+                                        }
+                                        .setCancelable(false)
+                                        .show()
+                                } else {
+                                    startActivity(
+                                            Intent(this@LoginActivity, MainActivity::class.java)
+                                    )
+                                    finish()
+                                }
                             }
                         } else {
                             val message = jsonObject.optString("message", NativeBridge.getNativeString(NativeBridge.STRING_INVALID_LICENSE))

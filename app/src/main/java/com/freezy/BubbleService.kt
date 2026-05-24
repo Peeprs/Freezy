@@ -143,6 +143,34 @@ class BubbleService : Service() {
         }.start()
         
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        
+        var isPremiumLicense = false
+        val actDate = prefs.getString("activation_date", "")
+        val expDate = prefs.getString("expiration_date", "")
+        if (!actDate.isNullOrEmpty() && !expDate.isNullOrEmpty() && actDate != "--" && expDate != "--") {
+            try {
+                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                val d1 = sdf.parse(actDate)
+                val d2 = sdf.parse(expDate)
+                if (d1 != null && d2 != null) {
+                    val diffMs = d2.time - d1.time
+                    val diffDays = java.util.concurrent.TimeUnit.DAYS.convert(diffMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    if (diffDays >= 14) { // 14 días de diferencia para abarcar licencias de 15 días
+                        isPremiumLicense = true
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        if (!isPremiumLicense) {
+            prefs.edit()
+                .putBoolean("auto_lag_enabled", false)
+                .putBoolean("modo_mapeo_activo", false)
+                .commit()
+        }
+
         val isAutoLagEnabled = prefs.getBoolean("auto_lag_enabled", false)
         if (!isAutoLagEnabled) {
             setupBubble() // Solo mostramos la burbuja normal en Fake Lag clásico!
@@ -198,7 +226,8 @@ class BubbleService : Service() {
                 challengeConn.readTimeout = 10000
                 challengeConn.doOutput = true
 
-                val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\"}"
+                val currentAppVersion = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "1.08" }
+                val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
                 challengeConn.outputStream.write(challengeJson.toByteArray(Charsets.UTF_8))
 
                 if (challengeConn.responseCode != 200) {
@@ -224,7 +253,7 @@ class BubbleService : Service() {
                 verifyConn.readTimeout = 10000
                 verifyConn.doOutput = true
 
-                val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\"}"
+                val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\", \"app_version\": \"$currentAppVersion\"}"
                 verifyConn.outputStream.write(verifyJson.toByteArray(Charsets.UTF_8))
 
                 val responseCode = verifyConn.responseCode
@@ -238,6 +267,12 @@ class BubbleService : Service() {
                         handleLicenseExpired(message)
                     } else {
                         licenseCheckFailCount = 0
+                        val warning = jsonObject.optString("update_warning", "")
+                        if (warning.isNotEmpty()) {
+                            handler.post {
+                                Toast.makeText(this@BubbleService, warning, Toast.LENGTH_LONG).show()
+                            }
+                        }
                     }
                 } else {
                     val errorBody = verifyConn.errorStream?.bufferedReader()?.readText() ?: ""
@@ -633,7 +668,7 @@ class BubbleService : Service() {
     }
 
     private fun startFreeze(useRoot: Boolean) {
-        playSound(android.media.ToneGenerator.TONE_PROP_BEEP)
+        playSoundFromRes(R.raw.coin_on)
         Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_ACTIVE) + " (Root: $useRoot)")
         
         // Brillo visual de disparo: cambiar círculo a rojo translúcido si está visible
@@ -653,7 +688,7 @@ class BubbleService : Service() {
     }
 
     private fun stopFreeze(useRoot: Boolean) {
-        playSound(android.media.ToneGenerator.TONE_PROP_BEEP2)
+        playSoundFromRes(R.raw.coin_off)
         Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_DEACTIVATED))
         isFreezing = false
         
@@ -681,10 +716,13 @@ class BubbleService : Service() {
         }
     }
 
-    private fun playSound(type: Int) {
+    private fun playSoundFromRes(resId: Int) {
         try {
-            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 65)
-            toneGen.startTone(type, 100)
+            val mediaPlayer = android.media.MediaPlayer.create(this, resId)
+            mediaPlayer?.setOnCompletionListener { mp ->
+                mp.release()
+            }
+            mediaPlayer?.start()
         } catch (e: Exception) {
             e.printStackTrace()
         }

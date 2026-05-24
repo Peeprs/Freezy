@@ -154,10 +154,23 @@ class MainActivity : AppCompatActivity() {
         val switchAutoLag = findViewById<Switch>(R.id.switch_autolag)
         val btnResetAutoLag = findViewById<Button>(R.id.btn_reset_autolag)
         
+        val isPremium = checkIsPremiumLicense(prefs)
+        if (!isPremium) {
+            prefs.edit()
+                .putBoolean("auto_lag_enabled", false)
+                .putBoolean("modo_mapeo_activo", false)
+                .apply()
+        }
+
         switchAutoLag.isChecked = prefs.getBoolean("auto_lag_enabled", false)
         btnResetAutoLag.visibility = if (switchAutoLag.isChecked) View.VISIBLE else View.GONE
 
-        switchAutoLag.setOnCheckedChangeListener { _, isChecked ->
+        switchAutoLag.setOnCheckedChangeListener { buttonView, isChecked ->
+            if (isChecked && !checkIsPremiumLicense(prefs)) {
+                buttonView.isChecked = false
+                Toast.makeText(this, "El modo Auto-Lag requiere una licencia Premium (mínimo 15 días).", Toast.LENGTH_LONG).show()
+                return@setOnCheckedChangeListener
+            }
             prefs.edit().putBoolean("auto_lag_enabled", isChecked).apply()
             btnResetAutoLag.visibility = if (isChecked) View.VISIBLE else View.GONE
             if (isChecked) {
@@ -239,6 +252,7 @@ class MainActivity : AppCompatActivity() {
             btnCloseBubble.visibility = View.GONE
             Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_BTN_CLOSE_BUBBLE), Toast.LENGTH_SHORT).show()
         }
+        
     }
 
     override fun onResume() {
@@ -388,7 +402,8 @@ class MainActivity : AppCompatActivity() {
                 challengeConn.readTimeout = 30000
                 challengeConn.doOutput = true
 
-                val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\"}"
+                val currentAppVersion = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "1.08" }
+                val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
                 challengeConn.outputStream.write(challengeJson.toByteArray(Charsets.UTF_8))
 
                 if (challengeConn.responseCode != 200) {
@@ -415,7 +430,7 @@ class MainActivity : AppCompatActivity() {
                 verifyConn.readTimeout = 30000
                 verifyConn.doOutput = true
 
-                val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\"}"
+                val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\", \"app_version\": \"$currentAppVersion\"}"
                 verifyConn.outputStream.write(verifyJson.toByteArray(Charsets.UTF_8))
 
                 val responseCode = verifyConn.responseCode
@@ -429,7 +444,20 @@ class MainActivity : AppCompatActivity() {
                         btnFreezy.alpha = 1.0f
                         if (isValid) {
                             Logger.log(this@MainActivity, "Licencia Validada al iniciar")
-                            proceedWithLaunch()
+                            
+                            val warning = jsonResponse.optString("update_warning", "")
+                            if (warning.isNotEmpty()) {
+                                AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("Aviso de Actualización")
+                                    .setMessage(warning)
+                                    .setPositiveButton("Entendido") { _, _ ->
+                                        proceedWithLaunch()
+                                    }
+                                    .setCancelable(false)
+                                    .show()
+                            } else {
+                                proceedWithLaunch()
+                            }
                         } else {
                             val message = jsonResponse.optString("message", "Licencia inválida")
                             android.widget.Toast.makeText(this@MainActivity, message, android.widget.Toast.LENGTH_LONG).show()
@@ -624,6 +652,29 @@ class MainActivity : AppCompatActivity() {
             return true
         }
         return super.onOptionsItemSelected(item)
+    }
+
+    private fun checkIsPremiumLicense(prefs: SharedPreferences): Boolean {
+        var isPremiumLicense = false
+        val actDate = prefs.getString("activation_date", "")
+        val expDate = prefs.getString("expiration_date", "")
+        if (!actDate.isNullOrEmpty() && !expDate.isNullOrEmpty() && actDate != "--" && expDate != "--") {
+            try {
+                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                val d1 = sdf.parse(actDate)
+                val d2 = sdf.parse(expDate)
+                if (d1 != null && d2 != null) {
+                    val diffMs = d2.time - d1.time
+                    val diffDays = java.util.concurrent.TimeUnit.DAYS.convert(diffMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    if (diffDays >= 14) { // 14 días de diferencia para abarcar licencias de 15 días
+                        isPremiumLicense = true
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        return isPremiumLicense
     }
 
     // Carga librería nativa para obtener el endpoint ofuscado

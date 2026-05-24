@@ -16,8 +16,8 @@ android {
         applicationId = "com.system.network.ui" // Nombre camuflado contra Anti-Cheats
         minSdk = 29 // Android 10
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.06"
+        versionCode = 8
+        versionName = "1.08"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
