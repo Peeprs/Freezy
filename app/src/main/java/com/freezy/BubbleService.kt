@@ -48,8 +48,10 @@ class BubbleService : Service() {
     private lateinit var bubbleView: View
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var bubbleIcon: ImageView
+    private lateinit var btnFakeLag: ImageView
+    private lateinit var btnFantasma: ImageView
     private lateinit var arcOverlay: ArcProgressView
-    private lateinit var caraFakeLag: FrameLayout
+    private lateinit var caraFakeLag: View
     private lateinit var recoilMenu: LinearLayout
     private var isMenuExpanded = false
     private val longClickRunnable = Runnable { 
@@ -58,6 +60,13 @@ class BubbleService : Service() {
     }
     private lateinit var fovOverlay: FovOverlay
     private var fovParams = WindowManager.LayoutParams()
+    private lateinit var bubbleFantasmaView: View
+    private lateinit var paramsFantasma: WindowManager.LayoutParams
+    private lateinit var bubbleIconFantasma: ImageView
+    private lateinit var caraFantasma: View
+    private var initialXFantasma = 0
+    private var initialYFantasma = 0
+
     private var suProcess: Process? = null
     private var suOutputStream: java.io.DataOutputStream? = null
 
@@ -88,7 +97,11 @@ class BubbleService : Service() {
     private var circleTargetContainer: View? = null
 
     // Vista personalizada que dibuja el arco circular de progreso
-    inner class ArcProgressView(context: Context) : View(context) {
+    inner class ArcProgressView(context: Context, var isRootMode: Boolean) : View(context) {
+        fun updateMode(rootMode: Boolean) {
+            this.isRootMode = rootMode
+            invalidate()
+        }
         var progress = 0f // 0.0 a 1.0
         
         init {
@@ -99,16 +112,16 @@ class BubbleService : Service() {
         }
 
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#FFFFFF")
+            color = if (isRootMode) Color.parseColor("#D500F9") else Color.WHITE
             style = Paint.Style.STROKE
-            strokeWidth = 16f // Mucho más gruesa para que sea súper blanca
+            strokeWidth = 16f
             strokeCap = Paint.Cap.ROUND
-            alpha = 255 // Opacidad total
+            alpha = 255
         }
         private val rect = RectF()
 
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            val size = (56 * resources.displayMetrics.density).toInt()
+            val size = (59 * resources.displayMetrics.density).toInt()
             setMeasuredDimension(size, size)
         }
 
@@ -117,17 +130,58 @@ class BubbleService : Service() {
             val pad = paint.strokeWidth / 2f + 2f
             rect.set(pad, pad, width - pad, height - pad)
             
-            // Dibujar arco de progreso (blanco puro)
-            paint.color = Color.WHITE
+            paint.color = if (isRootMode) Color.parseColor("#D500F9") else Color.WHITE
             paint.alpha = 255
             canvas.drawArc(rect, -90f, 360f * progress, false, paint)
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    private var targetPackage: String? = null
+
+    private fun recreateBubbles() {
+        if (::windowManager.isInitialized) {
+            try {
+                if (::bubbleView.isInitialized && bubbleView.parent != null) {
+                    windowManager.removeView(bubbleView)
+                }
+            } catch (e: Exception) {}
+            try {
+                if (::bubbleFantasmaView.isInitialized && bubbleFantasmaView.parent != null) {
+                    windowManager.removeView(bubbleFantasmaView)
+                }
+            } catch (e: Exception) {}
+            setupBubble()
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent != null) {
+            targetPackage = intent.getStringExtra("TARGET_PACKAGE")
+            if (intent.action == "UPDATE_BUBBLE_MODE") {
+                recreateBubbles()
+                return START_STICKY
+            }
+        }
+        
+        // Actualizar el color de la burbuja por si el usuario cambió el modo Root sin matar el servicio
+        if (this::bubbleIcon.isInitialized) {
+            val isRootMode = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false)
+            if (isRootMode) {
+                bubbleIcon.setColorFilter(Color.parseColor("#D500F9"), android.graphics.PorterDuff.Mode.SRC_IN)
+            } else {
+                bubbleIcon.setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
+            }
+            if (this::arcOverlay.isInitialized) {
+                arcOverlay.updateMode(isRootMode)
+            }
+        }
+        
+        return START_STICKY
+    }
 
     override fun onCreate() {
         super.onCreate()
+        LagController.initLicencia(this)
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         startForegroundNotification()
         setupFov()
@@ -135,15 +189,19 @@ class BubbleService : Service() {
         // Registrar siempre el callback para recibir notificaciones JNI del disparo
         NativeBridge.registerUiCallback(this)
         
-        // Otorgar permisos SU para lectura de /dev/input/event* en dispositivos rooteados
-        Thread {
-            executeRootCommand("chmod 666 /dev/input/event*")
-            executeRootCommand("chcon u:object_r:input_device:s0 /dev/input/event*")
-            executeRootCommand("setenforce 0")
-        }.start()
-        
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val useRoot = prefs.getBoolean("use_root", false)
+
+        // Otorgar permisos SU para lectura de /dev/input/event* SOLO si el usuario activó el modo root
+        if (useRoot) {
+            Thread {
+                executeRootCommand("chmod 666 /dev/input/event*")
+                executeRootCommand("chcon u:object_r:input_device:s0 /dev/input/event*")
+                executeRootCommand("setenforce 0")
+            }.start()
+        }
         
+        // Variables eliminadas por duplicado
         var isPremiumLicense = false
         val actDate = prefs.getString("activation_date", "")
         val expDate = prefs.getString("expiration_date", "")
@@ -344,209 +402,307 @@ class BubbleService : Service() {
 
     private fun setupBubble() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        bubbleView = LayoutInflater.from(this).inflate(R.layout.bubble_layout, null)
-        bubbleIcon = bubbleView.findViewById(R.id.bubble_icon)
-        caraFakeLag = bubbleView.findViewById(R.id.cara_fake_lag)
-        recoilMenu = bubbleView.findViewById(R.id.recoil_menu)
-
-        // Agregar la vista de arco circular programáticamente encima del ícono (en caraFakeLag)
-        arcOverlay = ArcProgressView(this)
-        arcOverlay.visibility = View.GONE
-        val size = (56 * resources.displayMetrics.density).toInt()
-        caraFakeLag.addView(
-            arcOverlay,
-            FrameLayout.LayoutParams(size, size, Gravity.CENTER)
-        )
-
-        // Set obfuscated strings for the bubble menu
-        bubbleView.findViewById<android.widget.TextView>(R.id.tv_bubble_title)?.text = NativeBridge.getNativeString(NativeBridge.STRING_BUBBLE_TITLE)
-
-        // Configurar clics del menú
-        val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
-        btnBackToLag.setOnClickListener { returnToFakeLag() }
-
-        // 2. Hacer el menú arrastrable usando el header
-        val menuHeader = bubbleView.findViewById<LinearLayout>(R.id.menu_header)
-        menuHeader.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = params.x; initialY = params.y
-                    initialTouchX = event.rawX; initialTouchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - initialTouchX
-                    val dy = event.rawY - initialTouchY
-                    params.x = initialX + dx.toInt()
-                    params.y = initialY + dy.toInt()
-                    windowManager.updateViewLayout(bubbleView, params)
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
-                        .putInt("bubble_x", params.x).putInt("bubble_y", params.y).apply()
-                    true
-                }
-                else -> false
-            }
-        }
-
-        // 3. Configurar SeekBar y Switch
-        val recoilSeekbar = bubbleView.findViewById<SeekBar>(R.id.recoil_seekbar)
-        val recoilPercentage = bubbleView.findViewById<TextView>(R.id.recoil_percentage)
-        val recoilSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
-
-        recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}50%"
-        recoilSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_EXTERNAL)
-
-
-
-        recoilSwitch.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                // Los permisos se otorgan dentro de RecoilService al iniciar
-
-                val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
-                    action = "START_RECOIL"
-                }
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    startForegroundService(intent)
-                } else {
-                    startService(intent)
-                }
-                
-                if (inputMonitor == null) {
-                    inputMonitor = com.freezy.network.InputMonitor(this)
-                }
-                inputMonitor?.startMonitoring()
-                
-            } else {
-                val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
-                    action = "STOP_RECOIL"
-                }
-                startService(intent)
-                inputMonitor?.stopMonitoring()
-                Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_OFF), Toast.LENGTH_SHORT).show()
-            }
-        }
-        
-        recoilSeekbar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}$progress%"
-            }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                val progress = seekBar?.progress ?: 0
-                // Calculamos los valores del perfil basados en el porcentaje (Aumentado para máxima fuerza)
-                val baseStrength = (progress * 0.5).toInt() // 0 a 50
-                val maxStrength = (progress * 1.5).toInt()  // 0 a 150
-                
-                val intent = Intent(this@BubbleService, com.freezy.network.RecoilService::class.java).apply {
-                    action = "SET_PROFILE"
-                    putExtra("base", baseStrength)
-                    putExtra("inc", 1.2f)
-                    putExtra("max", maxStrength)
-                }
-                startService(intent)
-            }
-        })
-
-        val fovSwitch = bubbleView.findViewById<Switch>(R.id.fov_switch)
-        
-
-
-        val fovSeekBar = bubbleView.findViewById<SeekBar>(R.id.fov_seekbar)
-        val fovText = bubbleView.findViewById<TextView>(R.id.fov_size_text)
-
-        fovSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_FOV_EXTERNAL)
-        fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}0px"
-
-        fovSwitch.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                windowManager.addView(fovOverlay, fovParams)
-                NativeBridge.setFovEnabled(true)
-            } else {
-                windowManager.removeView(fovOverlay)
-                NativeBridge.setFovEnabled(false)
-            }
-        }
-
-        fovSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}${progress}px"
-                
-                if (progress > 0 && fovSwitch.isChecked) {
-                    // Si es la primera vez que sube de 0, mostramos el overlay
-                    if (fovOverlay.parent == null) {
-                        windowManager.addView(fovOverlay, fovParams)
-                    }
-                    fovOverlay.updateRadius(progress)
-                    NativeBridge.setFovRadius(progress)
-                    NativeBridge.setFovEnabled(true)
-                } else if (progress == 0) {
-                    // Si baja a 0, lo quitamos de la vista para limpieza
-                    if (fovOverlay.parent != null) {
-                        windowManager.removeView(fovOverlay)
-                    }
-                    NativeBridge.setFovEnabled(false)
-                }
-            }
-            override fun onStartTrackingTouch(p0: SeekBar?) {}
-            override fun onStopTrackingTouch(p0: SeekBar?) {}
-        })
-
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
-        params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = prefs.getInt("bubble_x", 100)
-            y = prefs.getInt("bubble_y", 200)
-        }
-        windowManager.addView(bubbleView, params)
-        setupTouchListener()
-    }
+        val useRoot = prefs.getBoolean("use_root", false)
+        val rootModeType = prefs.getInt("root_mode_type", 0)
 
-    private fun setupTouchListener() {
-        // Solo escuchamos toques en la burbuja (Face 1) para permitir clics en el menú (Face 2)
-        caraFakeLag.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    isDragging = false
-                    isLongClickTriggered = false
-                    initialX = params.x; initialY = params.y
-                    initialTouchX = event.rawX; initialTouchY = event.rawY
-                    handler.postDelayed(longClickRunnable, 1000) // 1 segundo para que no sea tan sensible
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - initialTouchX
-                    val dy = event.rawY - initialTouchY
-                    if (abs(dx) > 8 || abs(dy) > 8) {
-                        isDragging = true
-                        handler.removeCallbacks(longClickRunnable)
+        val showFakeLag = !useRoot || rootModeType == 0
+        val showFantasma = useRoot && rootModeType == 1
+
+        if (showFakeLag) {
+            bubbleView = LayoutInflater.from(this).inflate(R.layout.bubble_layout, null)
+            bubbleIcon = bubbleView.findViewById(R.id.bubble_icon)
+            btnFakeLag = bubbleView.findViewById(R.id.btn_fake_lag)
+            caraFakeLag = bubbleView.findViewById(R.id.cara_fake_lag)
+            recoilMenu = bubbleView.findViewById(R.id.recoil_menu)
+
+            btnFakeLag.isClickable = false
+            btnFakeLag.isFocusable = false
+
+            // Aplicar tinte distintivo al ícono de Play según el modo
+            if (useRoot) {
+                bubbleIcon.setColorFilter(Color.parseColor("#D500F9"), android.graphics.PorterDuff.Mode.SRC_IN)
+            } else {
+                bubbleIcon.setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
+            }
+
+            // Agregar la vista de arco circular programáticamente encima del ícono (en bubbleView)
+            arcOverlay = ArcProgressView(this, useRoot)
+            arcOverlay.visibility = View.GONE
+            val size = (59 * resources.displayMetrics.density).toInt()
+            (bubbleView as ViewGroup).addView(
+                arcOverlay,
+                FrameLayout.LayoutParams(size, size, Gravity.CENTER)
+            )
+
+            // Set obfuscated strings for the bubble menu
+            bubbleView.findViewById<android.widget.TextView>(R.id.tv_bubble_title)?.text = NativeBridge.getNativeString(NativeBridge.STRING_BUBBLE_TITLE)
+
+            // Configurar clics del menú
+            val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
+            btnBackToLag.setOnClickListener { returnToFakeLag() }
+
+            // Hacer el menú arrastrable usando el header
+            val menuHeader = bubbleView.findViewById<LinearLayout>(R.id.menu_header)
+            menuHeader.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x; initialY = params.y
+                        initialTouchX = event.rawX; initialTouchY = event.rawY
+                        true
                     }
-                    if (isDragging) {
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - initialTouchX
+                        val dy = event.rawY - initialTouchY
                         params.x = initialX + dx.toInt()
                         params.y = initialY + dy.toInt()
                         windowManager.updateViewLayout(bubbleView, params)
+                        true
                     }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    handler.removeCallbacks(longClickRunnable)
-                    if (!isDragging && !isLongClickTriggered) {
-                        onBubbleTapped()
-                    } else if (isDragging) {
+                    MotionEvent.ACTION_UP -> {
                         getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
                             .putInt("bubble_x", params.x).putInt("bubble_y", params.y).apply()
+                        true
                     }
-                    true
+                    else -> false
                 }
-                else -> false
+            }
+
+            // Configurar SeekBar y Switch
+            val recoilSeekbar = bubbleView.findViewById<SeekBar>(R.id.recoil_seekbar)
+            val recoilPercentage = bubbleView.findViewById<TextView>(R.id.recoil_percentage)
+            val recoilSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
+
+            recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}50%"
+            recoilSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_EXTERNAL)
+
+            recoilSwitch.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
+                        action = "START_RECOIL"
+                    }
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        startForegroundService(intent)
+                    } else {
+                        startService(intent)
+                    }
+                    
+                    if (inputMonitor == null) {
+                        inputMonitor = com.freezy.network.InputMonitor(this)
+                    }
+                    inputMonitor?.startMonitoring()
+                } else {
+                    val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
+                        action = "STOP_RECOIL"
+                    }
+                    startService(intent)
+                    inputMonitor?.stopMonitoring()
+                    Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_OFF), Toast.LENGTH_SHORT).show()
+                }
+            }
+            
+            recoilSeekbar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}$progress%"
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    val progress = seekBar?.progress ?: 0
+                    val baseStrength = (progress * 0.5).toInt()
+                    val maxStrength = (progress * 1.5).toInt()
+                    
+                    val intent = Intent(this@BubbleService, com.freezy.network.RecoilService::class.java).apply {
+                        action = "SET_PROFILE"
+                        putExtra("base", baseStrength)
+                        putExtra("inc", 1.2f)
+                        putExtra("max", maxStrength)
+                    }
+                    startService(intent)
+                }
+            })
+
+            val fovSwitch = bubbleView.findViewById<Switch>(R.id.fov_switch)
+            val fovSeekBar = bubbleView.findViewById<SeekBar>(R.id.fov_seekbar)
+            val fovText = bubbleView.findViewById<TextView>(R.id.fov_size_text)
+
+            fovSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_FOV_EXTERNAL)
+            fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}0px"
+
+            fovSwitch.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    windowManager.addView(fovOverlay, fovParams)
+                    NativeBridge.setFovEnabled(true)
+                } else {
+                    windowManager.removeView(fovOverlay)
+                    NativeBridge.setFovEnabled(false)
+                }
+            }
+
+            fovSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}${progress}px"
+                    
+                    if (progress > 0 && fovSwitch.isChecked) {
+                        if (fovOverlay.parent == null) {
+                            windowManager.addView(fovOverlay, fovParams)
+                        }
+                        fovOverlay.updateRadius(progress)
+                        NativeBridge.setFovRadius(progress)
+                        NativeBridge.setFovEnabled(true)
+                    } else if (progress == 0) {
+                        if (fovOverlay.parent != null) {
+                            windowManager.removeView(fovOverlay)
+                        }
+                        NativeBridge.setFovEnabled(false)
+                    }
+                }
+                override fun onStartTrackingTouch(p0: SeekBar?) {}
+                override fun onStopTrackingTouch(p0: SeekBar?) {}
+            })
+
+            params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = prefs.getInt("bubble_x", 100)
+                y = prefs.getInt("bubble_y", 200)
+            }
+            windowManager.addView(bubbleView, params)
+        }
+
+        if (showFantasma) {
+            bubbleFantasmaView = LayoutInflater.from(this).inflate(R.layout.bubble_fantasma_layout, null)
+            bubbleIconFantasma = bubbleFantasmaView.findViewById(R.id.bubble_icon_fantasma)
+            btnFantasma = bubbleFantasmaView.findViewById(R.id.btn_fantasma)
+            caraFantasma = bubbleFantasmaView.findViewById(R.id.cara_fantasma)
+
+            btnFantasma.isClickable = false
+            btnFantasma.isFocusable = false
+
+            paramsFantasma = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = prefs.getInt("bubble_fantasma_x", 100)
+                y = prefs.getInt("bubble_fantasma_y", 300)
+            }
+            windowManager.addView(bubbleFantasmaView, paramsFantasma)
+        }
+
+        setupTouchListener()
+        actualizarUI()
+    }
+
+    private fun actualizarUI() {
+        val useRoot = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false)
+        if (::btnFakeLag.isInitialized) {
+            btnFakeLag.alpha = if (LagController.fakeLagActivo) 1.0f else 0.5f
+            val colorStr = if (useRoot) "#D500F9" else "#FFFFFF"
+            btnFakeLag.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
+        }
+
+        if (::btnFantasma.isInitialized) {
+            btnFantasma.alpha = if (LagController.fantasmaActivo) 1.0f else 0.5f
+            val colorStr = if (useRoot) "#D500F9" else "#FFFFFF"
+            btnFantasma.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
+        }
+
+        if (::arcOverlay.isInitialized) {
+            arcOverlay.updateMode(useRoot)
+        }
+    }
+
+    private fun setupTouchListener() {
+        if (::caraFakeLag.isInitialized) {
+            caraFakeLag.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        isDragging = false
+                        isLongClickTriggered = false
+                        initialX = params.x; initialY = params.y
+                        initialTouchX = event.rawX; initialTouchY = event.rawY
+                        if (getSharedPreferences("FreezyPrefs", android.content.Context.MODE_PRIVATE).getBoolean("use_root", false)) {
+                            handler.postDelayed(longClickRunnable, 1000)
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - initialTouchX
+                        val dy = event.rawY - initialTouchY
+                        if (abs(dx) > 8 || abs(dy) > 8) {
+                            isDragging = true
+                            handler.removeCallbacks(longClickRunnable)
+                        }
+                        if (isDragging) {
+                            params.x = initialX + dx.toInt()
+                            params.y = initialY + dy.toInt()
+                            windowManager.updateViewLayout(bubbleView, params)
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        handler.removeCallbacks(longClickRunnable)
+                        if (!isDragging && !isLongClickTriggered) {
+                            val nuevoEstado = !LagController.fakeLagActivo
+                            LagController.toggleFakeLag(nuevoEstado)
+                            actualizarUI()
+                            playSoundFromRes(if (nuevoEstado) R.raw.coin_on else R.raw.coin_off)
+                        } else if (isDragging) {
+                            getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
+                                .putInt("bubble_x", params.x).putInt("bubble_y", params.y).apply()
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+
+        if (::caraFantasma.isInitialized) {
+            var isDraggingFantasma = false
+            caraFantasma.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        isDraggingFantasma = false
+                        initialXFantasma = paramsFantasma.x; initialYFantasma = paramsFantasma.y
+                        initialTouchX = event.rawX; initialTouchY = event.rawY
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - initialTouchX
+                        val dy = event.rawY - initialTouchY
+                        if (abs(dx) > 8 || abs(dy) > 8) {
+                            isDraggingFantasma = true
+                        }
+                        if (isDraggingFantasma) {
+                            paramsFantasma.x = initialXFantasma + dx.toInt()
+                            paramsFantasma.y = initialYFantasma + dy.toInt()
+                            windowManager.updateViewLayout(bubbleFantasmaView, paramsFantasma)
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!isDraggingFantasma) {
+                            val nuevoEstado = !LagController.fantasmaActivo
+                            LagController.toggleFantasma(nuevoEstado)
+                            actualizarUI()
+                            playGhostSound()
+                        } else {
+                            getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
+                                .putInt("bubble_fantasma_x", paramsFantasma.x).putInt("bubble_fantasma_y", paramsFantasma.y).apply()
+                        }
+                        true
+                    }
+                    else -> false
+                }
             }
         }
     }
@@ -567,11 +723,11 @@ class BubbleService : Service() {
         caraFakeLag.visibility = View.VISIBLE
         isMenuExpanded = false
 
-        // Volver al tamaño de la burbuja (56dp)
+        // Volver al tamaño de la burbuja (59dp)
         val density = resources.displayMetrics.density
-        val size56dp = (56 * density).toInt()
-        params.width = size56dp
-        params.height = size56dp
+        val size59dp = (59 * density).toInt()
+        params.width = size59dp
+        params.height = WindowManager.LayoutParams.WRAP_CONTENT
         windowManager.updateViewLayout(bubbleView, params)
 
         // Recuperar animación de llenado si estaba activa
@@ -681,9 +837,28 @@ class BubbleService : Service() {
         }
         
         if (useRoot) {
+            val rootModeType = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getInt("root_mode_type", 0)
             Thread {
-                executeRootCommand("iptables -I INPUT 1 -p udp -j DROP")
+                if (rootModeType == 1) {
+                    executeRootCommand("iptables -I OUTPUT -p udp --dport 7000:25000 -j DROP")
+                    executeRootCommand("iptables -I OUTPUT -p udp --dport 7000:25000 -m length --length 80:1500 -j ACCEPT")
+                    executeRootCommand("iptables -I OUTPUT -p udp --dport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
+                } else {
+                    executeRootCommand("iptables -I INPUT -p udp --sport 7000:25000 -j DROP")
+                    executeRootCommand("iptables -I INPUT -p udp --sport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
+                }
             }.start()
+        } else {
+            try {
+                // Iniciar la VPN dinámicamente
+                val vpnIntent = Intent(this, AntigravityFirewall::class.java).apply {
+                    putExtra("TARGET_PACKAGE", targetPackage ?: "com.dts.freefiremax")
+                }
+                startService(vpnIntent)
+                AntigravityFirewall.setLagActive(true)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -710,9 +885,29 @@ class BubbleService : Service() {
             bubbleIcon.setImageResource(R.drawable.ic_play_white)
         }
         if (useRoot) {
+            val rootModeType = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getInt("root_mode_type", 0)
             Thread {
-                executeRootCommand("iptables -D INPUT -p udp -j DROP")
+                if (rootModeType == 1) {
+                    executeRootCommand("iptables -D OUTPUT -p udp --dport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
+                    executeRootCommand("iptables -D OUTPUT -p udp --dport 7000:25000 -m length --length 80:1500 -j ACCEPT")
+                    executeRootCommand("iptables -D OUTPUT -p udp --dport 7000:25000 -j DROP")
+                } else {
+                    executeRootCommand("iptables -D INPUT -p udp --sport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
+                    executeRootCommand("iptables -D INPUT -p udp --sport 7000:25000 -j DROP")
+                }
             }.start()
+        } else {
+            try {
+                AntigravityFirewall.setLagActive(false)
+                
+                // Detener la VPN de inmediato
+                val vpnIntent = Intent(this, AntigravityFirewall::class.java).apply {
+                    action = "STOP_VPN"
+                }
+                startService(vpnIntent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -726,6 +921,59 @@ class BubbleService : Service() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    private fun playGhostSound() {
+        Thread {
+            try {
+                val sampleRate = 44100
+                val durationS = 0.32f
+                val numSamples = (durationS * sampleRate).toInt()
+                val sample = ShortArray(numSamples)
+                
+                // Generar un barrido de frecuencia spooky corto y táctico: onda senoidal con vibrato rápido
+                for (i in 0 until numSamples) {
+                    val t = i.toFloat() / sampleRate
+                    // Envolvente de amplitud ultra-compacta para evitar chasquidos (fade-in de 40ms, fade-out de 60ms)
+                    val env = if (t < 0.04f) {
+                        t / 0.04f
+                    } else if (t > durationS - 0.06f) {
+                        (durationS - t) / 0.06f
+                    } else {
+                        1.0f
+                    }
+                    
+                    // Frecuencia instantánea
+                    val progress = t / durationS
+                    val baseFreq = 350f + 350f * Math.sin(progress * Math.PI).toFloat()
+                    val vibrato = 30f * Math.sin(2.0 * Math.PI * 12.0 * t).toFloat()
+                    val freq = baseFreq + vibrato
+                    
+                    // Fase acumulada
+                    val angle = 2.0 * Math.PI * freq * t
+                    sample[i] = (Math.sin(angle) * Short.MAX_VALUE * env * 0.5f).toInt().toShort()
+                }
+                
+                val audioTrack = android.media.AudioTrack(
+                    android.media.AudioManager.STREAM_MUSIC,
+                    sampleRate,
+                    android.media.AudioFormat.CHANNEL_OUT_MONO,
+                    android.media.AudioFormat.ENCODING_PCM_16BIT,
+                    numSamples * 2,
+                    android.media.AudioTrack.MODE_STATIC
+                )
+                audioTrack.write(sample, 0, numSamples)
+                audioTrack.play()
+                // Liberar después de reproducir
+                Thread.sleep((durationS * 1000).toLong() + 100)
+                try {
+                    audioTrack.stop()
+                } catch (e: Exception) {}
+                audioTrack.release()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }.start()
     }
 
     private fun startArcAnimation(duration: Long) {
@@ -758,6 +1006,16 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Limpieza de iptables si estaban activos en LagController
+        if (LagController.fakeLagActivo) {
+            LagController.desactivarFakeLagRoot()
+            LagController.fakeLagActivo = false
+        }
+        if (LagController.fantasmaActivo) {
+            LagController.desactivarFantasmaRoot()
+            LagController.fantasmaActivo = false
+        }
+        
         if (isFreezing) stopFreeze(getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false))
         fillAnimator?.cancel()
         
@@ -773,6 +1031,9 @@ class BubbleService : Service() {
         // Limpieza de Overlays para evitar que queden pegados en pantalla
         if (::bubbleView.isInitialized && bubbleView.parent != null) {
             windowManager.removeView(bubbleView)
+        }
+        if (::bubbleFantasmaView.isInitialized && bubbleFantasmaView.parent != null) {
+            windowManager.removeView(bubbleFantasmaView)
         }
         if (::fovOverlay.isInitialized && fovOverlay.parent != null) {
             windowManager.removeView(fovOverlay)

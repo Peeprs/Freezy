@@ -32,6 +32,7 @@ import android.os.Handler
 import android.os.Looper
 
 class MainActivity : AppCompatActivity() {
+    private var rootGlowAnimator: android.animation.ValueAnimator? = null
 
     private var targetPackageToLaunch: String? = null
 
@@ -101,6 +102,160 @@ class MainActivity : AppCompatActivity() {
         seekbarTime.progress = (customTimeFloat * 10).toInt()
         tvTimeLabel.text = String.format("%.1f Segundos", customTimeFloat)
 
+        // Root/No Root Selector Logic
+        val btnModeNoroot = findViewById<TextView>(R.id.btn_mode_noroot)
+        val btnModeRoot = findViewById<TextView>(R.id.btn_mode_root)
+        val indicatorRootView = findViewById<View>(R.id.indicator_root_view)
+        val cardAutoLag = findViewById<View>(R.id.card_autolag)
+        val cardRootOptions = findViewById<View>(R.id.card_root_options)
+        val rgRootMode = findViewById<android.widget.RadioGroup>(R.id.rg_root_mode)
+
+        rgRootMode.check(if (prefs.getInt("root_mode_type", 0) == 1) R.id.rb_fantasma else R.id.rb_fake_lag)
+        rgRootMode.setOnCheckedChangeListener { _, checkedId ->
+            prefs.edit().putInt("root_mode_type", if (checkedId == R.id.rb_fantasma) 1 else 0).apply()
+            if (isServiceRunning(BubbleService::class.java)) {
+                val serviceIntent = Intent(this, BubbleService::class.java).apply {
+                    action = "UPDATE_BUBBLE_MODE"
+                }
+                startService(serviceIntent)
+            }
+        }
+
+        fun updateRootUI(useRoot: Boolean, animate: Boolean) {
+            val width = (btnModeNoroot.parent as View).width / 2
+            indicatorRootView.layoutParams.width = width
+            indicatorRootView.requestLayout()
+
+            val targetX = if (useRoot) width.toFloat() else 0f
+            if (animate) {
+                android.animation.ObjectAnimator.ofFloat(indicatorRootView, "translationX", targetX).apply {
+                    duration = 300
+                    start()
+                }
+            } else {
+                indicatorRootView.translationX = targetX
+            }
+
+            val currentMode = prefs.getInt("mode", 0)
+
+            if (useRoot) {
+                btnModeNoroot.setTextColor(Color.parseColor("#888888"))
+                btnModeRoot.setTextColor(Color.WHITE)
+                // cardAutoLag.visibility = View.VISIBLE
+                cardRootOptions.visibility = View.VISIBLE
+                
+                btnFreezy.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#9C27B0")))
+                btnFreezy.setTextColor(Color.WHITE)
+                
+                if (rootGlowAnimator == null) {
+                    val rootDrawable = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                        cornerRadius = 25f * resources.displayMetrics.density
+                    }
+                    indicatorRootView.background = rootDrawable
+                    
+                    rootGlowAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                        duration = 800
+                        repeatCount = android.animation.ValueAnimator.INFINITE
+                        repeatMode = android.animation.ValueAnimator.REVERSE
+                        addUpdateListener { anim ->
+                            val fraction = anim.animatedFraction
+                            
+                            // Fondo: Morado profundo a Morado brillante
+                            val solidColor = androidx.core.graphics.ColorUtils.blendARGB(
+                                Color.parseColor("#4A0072"), 
+                                Color.parseColor("#9C27B0"), 
+                                fraction
+                            )
+                            rootDrawable.setColor(solidColor)
+                            
+                            // Outline: Neon purple a light neon purple
+                            val strokeWidth = (1 + fraction * 3).toInt() * resources.displayMetrics.density.toInt()
+                            val strokeColor = androidx.core.graphics.ColorUtils.blendARGB(
+                                Color.parseColor("#D500F9"), 
+                                Color.parseColor("#E040FB"), 
+                                fraction
+                            )
+                            rootDrawable.setStroke(strokeWidth, strokeColor)
+                            
+                            // Aseguramos que la escala se mantenga en 1 y sin elevación 
+                            // para que no sobrepase su contenedor ni oculte el texto
+                            indicatorRootView.scaleX = 1f
+                            indicatorRootView.scaleY = 1f
+                            indicatorRootView.elevation = 0f
+                        }
+                        start()
+                    }
+                }
+            } else {
+                btnModeRoot.setTextColor(Color.parseColor("#888888"))
+                btnModeNoroot.setTextColor(Color.BLACK)
+                cardAutoLag.visibility = View.GONE
+                cardRootOptions.visibility = View.GONE
+                
+                btnFreezy.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.WHITE))
+                btnFreezy.setTextColor(Color.BLACK)
+                
+                // Forzar desactivación de Auto-Lag para que no interfiera y no fuerce Root
+                getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit().putBoolean("auto_lag_enabled", false).apply()
+                findViewById<Switch>(R.id.switch_autolag)?.isChecked = false
+                findViewById<Button>(R.id.btn_reset_autolag)?.visibility = View.GONE
+                
+                rootGlowAnimator?.cancel()
+                rootGlowAnimator = null
+                
+                indicatorRootView.background = androidx.core.content.ContextCompat.getDrawable(this@MainActivity, R.drawable.shape_pill_white)
+                indicatorRootView.scaleX = 1f
+                indicatorRootView.scaleY = 1f
+                indicatorRootView.elevation = 0f
+            }
+
+            // Actualizar la interfaz de los selectores de modo (auto/custom/manual) inmediatamente para que coincidan los colores
+            updateModeUI(currentMode, btnModeAuto, btnModeCustom, btnModeManual, indicatorView, layoutCustomTime, false)
+        }
+
+        indicatorRootView.post {
+            val useRoot = prefs.getBoolean("use_root", false)
+            updateRootUI(useRoot, false)
+        }
+
+        btnModeNoroot.setOnClickListener {
+            prefs.edit().putBoolean("use_root", false).apply()
+            updateRootUI(false, true)
+            if (isServiceRunning(BubbleService::class.java)) {
+                val serviceIntent = Intent(this, BubbleService::class.java).apply {
+                    action = "UPDATE_BUBBLE_MODE"
+                }
+                startService(serviceIntent)
+            }
+        }
+
+        btnModeRoot.setOnClickListener {
+            if (hasRootAccess()) {
+                prefs.edit().putBoolean("use_root", true).apply()
+                updateRootUI(true, true)
+                Toast.makeText(this, "Modo Root activado", Toast.LENGTH_SHORT).show()
+                if (isServiceRunning(BubbleService::class.java)) {
+                    val serviceIntent = Intent(this, BubbleService::class.java).apply {
+                        action = "UPDATE_BUBBLE_MODE"
+                    }
+                    startService(serviceIntent)
+                }
+            } else {
+                prefs.edit().putBoolean("use_root", false).apply()
+                updateRootUI(false, true)
+                
+                // Mostrar texto de error en rojo inline usando NativeBridge para seguridad XOR
+                val tvRootError = findViewById<TextView>(R.id.tv_root_error)
+                tvRootError?.text = NativeBridge.getNativeString(NativeBridge.STRING_ROOT_REQ)
+                tvRootError?.visibility = View.VISIBLE
+                
+                Handler(Looper.getMainLooper()).postDelayed({
+                    tvRootError.visibility = View.GONE
+                }, 3500)
+            }
+        }
+
         // Mostrar fechas de licencia
         val tvActivationDate = findViewById<TextView>(R.id.tv_activation_date)
         val tvExpirationDate = findViewById<TextView>(R.id.tv_expiration_date)
@@ -151,6 +306,7 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
+        /*
         val switchAutoLag = findViewById<Switch>(R.id.switch_autolag)
         val btnResetAutoLag = findViewById<Button>(R.id.btn_reset_autolag)
         
@@ -215,6 +371,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 .show()
         }
+        */
 
         btnFreezy.setOnClickListener {
             if (!Settings.canDrawOverlays(this)) {
@@ -226,6 +383,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
+            /*
             val isAutoLag = prefs.getBoolean("auto_lag_enabled", false)
             if (isAutoLag) {
                 // El modo Auto-Lag requiere Root obligatorio para leer /dev/input/event* y bloquear udp
@@ -235,6 +393,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 prefs.edit().putBoolean("use_root", true).apply()
             }
+            */
 
             val useRoot = prefs.getBoolean("use_root", false)
             if (useRoot && !hasRootAccess()) {
@@ -274,13 +433,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showSettingsDialog(prefs: android.content.SharedPreferences) {
         val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null)
-        val switchRoot = dialogView.findViewById<Switch>(R.id.switch_root)
         val tvVersion = dialogView.findViewById<TextView>(R.id.tv_version)
         
         // Cargar strings ofuscados
         dialogView.findViewById<TextView>(R.id.tv_title_settings)?.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_SETTINGS)
-        dialogView.findViewById<TextView>(R.id.tv_label_system)?.text = NativeBridge.getNativeString(NativeBridge.STRING_SYSTEM)
-        dialogView.findViewById<Switch>(R.id.switch_root)?.text = NativeBridge.getNativeString(NativeBridge.STRING_ALLOW_ROOT)
         dialogView.findViewById<TextView>(R.id.tv_label_info)?.text = NativeBridge.getNativeString(NativeBridge.STRING_INFO)
         dialogView.findViewById<TextView>(R.id.tv_version)?.text = "${NativeBridge.getNativeString(NativeBridge.STRING_APP_VERSION)}: v2.2"
         dialogView.findViewById<TextView>(R.id.tv_label_support)?.text = NativeBridge.getNativeString(NativeBridge.STRING_SUPPORT)
@@ -315,23 +471,7 @@ class MainActivity : AppCompatActivity() {
             tvVersion.text = "${NativeBridge.getNativeString(NativeBridge.STRING_APP_VERSION)}v1.0"
         }
 
-        switchRoot.isChecked = prefs.getBoolean("use_root", false)
 
-        switchRoot.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                if (hasRootAccess()) {
-                    Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_DETECTED))
-                    prefs.edit().putBoolean("use_root", true).apply()
-                    Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_ENABLED), Toast.LENGTH_SHORT).show()
-                } else {
-                    Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_NOT_DETECTED))
-                    switchRoot.isChecked = false
-                    Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_DENIED), Toast.LENGTH_SHORT).show()
-                }
-            } else {
-                prefs.edit().putBoolean("use_root", false).apply()
-            }
-        }
 
         val dialog = AlertDialog.Builder(this)
             .setView(dialogView)
@@ -525,9 +665,22 @@ class MainActivity : AppCompatActivity() {
             indicator.translationX = targetX
         }
 
-        btnA.setTextColor(if (mode == 0) Color.WHITE else Color.parseColor("#888888"))
-        btnC.setTextColor(if (mode == 1) Color.WHITE else Color.parseColor("#888888"))
-        btnM.setTextColor(if (mode == 2) Color.WHITE else Color.parseColor("#888888"))
+        val useRoot = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false)
+        if (useRoot) {
+            indicator.background = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.shape_pill_purple)
+            findViewById<TextView>(R.id.tv_time_label)?.setTextColor(Color.parseColor("#D500F9"))
+            
+            btnA.setTextColor(if (mode == 0) Color.WHITE else Color.parseColor("#888888"))
+            btnC.setTextColor(if (mode == 1) Color.WHITE else Color.parseColor("#888888"))
+            btnM.setTextColor(if (mode == 2) Color.WHITE else Color.parseColor("#888888"))
+        } else {
+            indicator.background = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.shape_pill_white)
+            findViewById<TextView>(R.id.tv_time_label)?.setTextColor(Color.WHITE)
+            
+            btnA.setTextColor(if (mode == 0) Color.BLACK else Color.parseColor("#888888"))
+            btnC.setTextColor(if (mode == 1) Color.BLACK else Color.parseColor("#888888"))
+            btnM.setTextColor(if (mode == 2) Color.BLACK else Color.parseColor("#888888"))
+        }
 
         layoutCustomTime.visibility = if (mode == 1) View.VISIBLE else View.GONE
     }

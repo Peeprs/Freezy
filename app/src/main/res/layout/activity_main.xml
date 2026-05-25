@@ -9,7 +9,7 @@
         android:layout_height="match_parent"
         android:gravity="center"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:padding="16dp">
 
         <!-- Card elevado 3D -->
     <LinearLayout
@@ -18,8 +18,8 @@
         android:background="@drawable/shape_card_dark"
         android:elevation="4dp"
         android:orientation="vertical"
-        android:padding="24dp"
-        android:layout_marginBottom="30dp">
+        android:padding="16dp"
+        android:layout_marginBottom="12dp">
 
         <TextView
             android:id="@+id/tv_title_activation"
@@ -29,12 +29,66 @@
             android:textSize="18sp"
             android:textStyle="bold"
             android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="24dp"/>
+            android:layout_marginBottom="12dp"/>
+
+        <!-- Root / No Root Selector -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:background="@drawable/shape_pill_dark"
+            android:padding="4dp"
+            android:layout_marginBottom="12dp">
+
+            <View
+                android:id="@+id/indicator_root_view"
+                android:layout_width="100dp"
+                android:layout_height="match_parent"
+                android:background="@drawable/shape_pill_purple" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btn_mode_noroot"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="No Root"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btn_mode_root"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="Root"
+                    android:textColor="#888888"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tv_root_error"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#FF3B30"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:visibility="gone"
+            android:layout_marginBottom="16dp"/>
 
         <!-- Custom Animated Switches -->
         <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="50dp"
+            android:layout_height="44dp"
             android:background="@drawable/shape_pill_dark"
             android:padding="4dp">
 
@@ -89,9 +143,9 @@
             android:orientation="vertical"
             android:visibility="gone"
             android:background="@drawable/shape_inner_card_dark"
-            android:padding="16dp"
+            android:padding="12dp"
             android:gravity="center_horizontal"
-            android:layout_marginTop="24dp">
+            android:layout_marginTop="12dp">
 
             <TextView
                 android:id="@+id/tv_label_seconds"
@@ -129,8 +183,8 @@
         android:background="@drawable/shape_card_dark"
         android:elevation="4dp"
         android:orientation="vertical"
-        android:padding="20dp"
-        android:layout_marginBottom="30dp">
+        android:padding="16dp"
+        android:layout_marginBottom="12dp">
 
         <TextView
             android:id="@+id/tv_title_license"
@@ -140,7 +194,7 @@
             android:textSize="16sp"
             android:textStyle="bold"
             android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="16dp"/>
+            android:layout_marginBottom="12dp"/>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -198,15 +252,64 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- Card de Auto-Lag Switch -->
+    <!-- Card de Opciones Root -->
     <LinearLayout
+        android:id="@+id/card_root_options"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@drawable/shape_card_dark"
         android:elevation="4dp"
         android:orientation="vertical"
-        android:padding="20dp"
-        android:layout_marginBottom="30dp">
+        android:padding="16dp"
+        android:visibility="gone"
+        android:layout_marginBottom="12dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tipo de Bloqueo (Root)"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="12dp" />
+
+        <RadioGroup
+            android:id="@+id/rg_root_mode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/rb_fake_lag"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Fake Lag"
+                android:textColor="#FFFFFF"
+                android:buttonTint="#D500F9" />
+
+            <RadioButton
+                android:id="@+id/rb_fantasma"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Fantasma"
+                android:textColor="#FFFFFF"
+                android:buttonTint="#00E5FF" />
+        </RadioGroup>
+    </LinearLayout>
+
+    <!-- Card de Auto-Lag Switch -->
+    <LinearLayout
+        android:id="@+id/card_autolag"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/shape_card_dark"
+        android:elevation="4dp"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp"
+        android:visibility="gone">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -276,7 +379,7 @@
         android:textColor="#FFFFFF"
         android:textSize="18sp"
         android:visibility="gone"
-        android:layout_marginTop="16dp"/>
+        android:layout_marginTop="8dp"/>
 
-</LinearLayout>
+    </LinearLayout>
 </FrameLayout>
