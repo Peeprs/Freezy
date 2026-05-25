@@ -10,6 +10,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/select.h>
+#include <sys/epoll.h>
 #include <atomic>
 #include <vector>
 #include <cstdlib>
@@ -19,6 +20,7 @@
 #include <iomanip>
 #include <thread>
 #include <chrono>
+#include <sys/resource.h>
 
 #define TAG  "FreezyNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
@@ -50,6 +52,15 @@ struct IpHdr {
     uint32_t daddr;
 } __attribute__((packed));
 
+struct Ip6Hdr {
+    uint32_t vt_tc_fl; // Version (4 bits), Traffic Class (8 bits), Flow Label (20 bits)
+    uint16_t payload_len; // Length of payload
+    uint8_t  next_hdr; // Next header (protocol)
+    uint8_t  hop_limit;
+    uint8_t  saddr[16];
+    uint8_t  daddr[16];
+} __attribute__((packed));
+
 struct UdpHdr {
     uint16_t sport;
     uint16_t dport;
@@ -69,13 +80,25 @@ struct TcpHdr {
     uint16_t urgp;
 } __attribute__((packed));
 
+/* ── Telemetry & Secure Debug System ─────────────────────────────────────── */
+#define DEBUG 1
+#ifdef DEBUG
+#define DBG_LOG(fmt, ...) LOGI("[DEBUG-NET] " fmt, ##__VA_ARGS__)
+#else
+#define DBG_LOG(fmt, ...) do {} while (0)
+#endif
+
 /* ── Per-flow state ──────────────────────────────────────────────────────── */
 struct Flow {
-    int      sock;       // protected UDP socket
-    uint32_t game_ip;    // game's source IP
-    uint16_t game_port;  // game's source port (big-endian)
-    uint32_t srv_ip;     // server IP the game was talking to
-    uint16_t srv_port;   // server port (big-endian)
+    int      sock;         // protected UDP socket
+    bool     is_ipv6;
+    uint32_t game_ip;      // game's source IP (IPv4)
+    uint16_t game_port;    // game's source port (big-endian)
+    uint32_t srv_ip;       // server IP (IPv4)
+    uint16_t srv_port;     // server port (big-endian)
+    uint8_t  game_ip6[16]; // game's source IP (IPv6)
+    uint8_t  srv_ip6[16];  // server IP (IPv6)
+    uint64_t last_activity; // Timestamp of last packet activity (POSIX monotonic)
 };
 
 struct TcpFlow {
@@ -87,23 +110,87 @@ struct TcpFlow {
     uint32_t seq_to_client;
     uint32_t seq_from_client;
     bool     connected;
+    uint64_t last_activity;
 };
 
 static const int MAX_FLOWS = 64;
 static Flow          g_flows[MAX_FLOWS];
 static int           g_flow_count = 0;
 
-static const int MAX_TCP_FLOWS = 32;
+static const int MAX_TCP_FLOWS = 256;
 static TcpFlow      g_tcp_flows[MAX_TCP_FLOWS];
 static int          g_tcp_flow_count = 0;
 
 static pthread_mutex_t g_flows_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+struct PacketBuffer {
+    uint8_t data[4096];
+    int len;
+};
+
+static const int BUFFER_POOL_SIZE = 128;
+static PacketBuffer g_buffer_pool[BUFFER_POOL_SIZE];
+static std::atomic<int> g_buffer_pool_index{0};
+
+static PacketBuffer* acquire_buffer() {
+    int idx = g_buffer_pool_index.fetch_add(1) % BUFFER_POOL_SIZE;
+    return &g_buffer_pool[idx];
+}
 
 /* ── Global engine state ─────────────────────────────────────────────────── */
 static volatile int   g_tun_fd   = -1;
 static int            g_pipe[2]  = {-1, -1};
 static pthread_t      g_thread;
 static std::atomic<bool> g_running{false};
+
+static int g_epoll_fd = -1;
+
+static bool epoll_add(int fd) {
+    if (g_epoll_fd < 0) return false;
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.events = EPOLLIN;
+    ev.data.fd = fd;
+    if (epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
+        LOGE("epoll_ctl ADD failed for fd %d: %s", fd, strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+static bool epoll_add_write(int fd) {
+    if (g_epoll_fd < 0) return false;
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.events = EPOLLIN | EPOLLOUT;
+    ev.data.fd = fd;
+    if (epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
+        LOGE("epoll_ctl ADD (write) failed for fd %d: %s", fd, strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+static bool epoll_mod_read(int fd) {
+    if (g_epoll_fd < 0) return false;
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.events = EPOLLIN;
+    ev.data.fd = fd;
+    if (epoll_ctl(g_epoll_fd, EPOLL_CTL_MOD, fd, &ev) < 0) {
+        LOGE("epoll_ctl MOD failed for fd %d: %s", fd, strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+static bool epoll_del(int fd) {
+    if (g_epoll_fd < 0) return false;
+    if (epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, fd, nullptr) < 0) {
+        return false;
+    }
+    return true;
+}
 
 // Set from Kotlin: true = drop incoming UDP (lag switch ON)
 extern "C" std::atomic<bool> gLagActive{false};
@@ -176,15 +263,176 @@ static uint16_t transport_csum(uint32_t saddr, uint32_t daddr, uint8_t proto,
     return (uint16_t)~sum;
 }
 
+static uint16_t transport_csum_v6(const uint8_t* saddr, const uint8_t* daddr, uint8_t proto,
+                                  const uint8_t* data, uint16_t len) {
+    uint32_t sum = 0;
+    
+    // Pseudo-header IPv6
+    for (int i = 0; i < 8; ++i) {
+        sum += (saddr[i*2] << 8) | saddr[i*2+1];
+        sum += (daddr[i*2] << 8) | daddr[i*2+1];
+    }
+    
+    sum += htons(proto);
+    sum += htons(len);
+
+    const uint16_t* p = (const uint16_t*)data;
+    int n = len;
+    while (n > 1) { sum += *p++; n -= 2; }
+    if (n) sum += (uint32_t)(*(const uint8_t*)p) << (htons(1) == 1 ? 0 : 8);
+
+    while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+
+/* ── Monotonic time helper ────────────────────────────────────────────────── */
+static uint64_t get_now_ms() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* ── Asymmetric Delay Queue Structure ──────────────────────────────────────── */
+static const int MAX_DELAY_QUEUE_SIZE = 512;
+struct DelayedPacket {
+    bool     is_ipv6;
+    uint32_t src_ip;
+    uint16_t src_port;
+    uint32_t dst_ip;
+    uint16_t dst_port;
+    uint8_t  src_ip6[16];
+    uint8_t  dst_ip6[16];
+    
+    uint8_t  payload[2048];
+    int      payload_len;
+    uint64_t timestamp; // Time when it was buffered
+};
+
+static DelayedPacket g_delay_queue[MAX_DELAY_QUEUE_SIZE];
+static int g_delay_queue_head = 0;
+static int g_delay_queue_tail = 0;
+static int g_delay_queue_count = 0;
+static pthread_mutex_t g_delay_queue_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+static void delay_queue_push(bool is_ipv6, 
+                             const uint8_t* src_ip, uint16_t src_port,
+                             const uint8_t* dst_ip, uint16_t dst_port,
+                             const uint8_t* payload, int plen) {
+    if (plen > 2048) return; // Supera tamaño del buffer de cola
+    
+    pthread_mutex_lock(&g_delay_queue_mtx);
+    if (g_delay_queue_count >= MAX_DELAY_QUEUE_SIZE) {
+        // Cola llena: descartamos el más antiguo (head)
+        g_delay_queue_head = (g_delay_queue_head + 1) % MAX_DELAY_QUEUE_SIZE;
+        g_delay_queue_count--;
+    }
+    
+    int idx = g_delay_queue_tail;
+    g_delay_queue[idx].is_ipv6 = is_ipv6;
+    g_delay_queue[idx].src_port = src_port;
+    g_delay_queue[idx].dst_port = dst_port;
+    if (is_ipv6) {
+        memcpy(g_delay_queue[idx].src_ip6, src_ip, 16);
+        memcpy(g_delay_queue[idx].dst_ip6, dst_ip, 16);
+    } else {
+        g_delay_queue[idx].src_ip = *(const uint32_t*)src_ip;
+        g_delay_queue[idx].dst_ip = *(const uint32_t*)dst_ip;
+    }
+    memcpy(g_delay_queue[idx].payload, payload, plen);
+    g_delay_queue[idx].payload_len = plen;
+    g_delay_queue[idx].timestamp = get_now_ms();
+    
+    g_delay_queue_tail = (g_delay_queue_tail + 1) % MAX_DELAY_QUEUE_SIZE;
+    g_delay_queue_count++;
+    pthread_mutex_unlock(&g_delay_queue_mtx);
+}
+
+static void write_to_tun(int tun_fd,
+                          uint32_t src_ip, uint16_t src_port,
+                          uint32_t dst_ip, uint16_t dst_port,
+                          const uint8_t* payload, int plen);
+
+static void write_ipv6_to_tun(int tun_fd,
+                              const uint8_t* src_ip, uint16_t src_port,
+                              const uint8_t* dst_ip, uint16_t dst_port,
+                              const uint8_t* payload, int plen);
+
+// Vaciar la cola inyectando todos los paquetes acumulados al TUN de golpe
+static void delay_queue_flush(int tun_fd) {
+    pthread_mutex_lock(&g_delay_queue_mtx);
+    int flushed_count = g_delay_queue_count;
+    uint64_t now = get_now_ms();
+    while (g_delay_queue_count > 0) {
+        int idx = g_delay_queue_head;
+        DelayedPacket& pkt = g_delay_queue[idx];
+        
+        DBG_LOG("LAG-FLUSH: Releasing packet size=%d, held for %llu ms", pkt.payload_len, now - pkt.timestamp);
+        
+        if (pkt.is_ipv6) {
+            write_ipv6_to_tun(tun_fd,
+                pkt.src_ip6, pkt.src_port,
+                pkt.dst_ip6, pkt.dst_port,
+                pkt.payload, pkt.payload_len);
+        } else {
+            write_to_tun(tun_fd,
+                pkt.src_ip, pkt.src_port,
+                pkt.dst_ip, pkt.dst_port,
+                pkt.payload, pkt.payload_len);
+        }
+        
+        g_delay_queue_head = (g_delay_queue_head + 1) % MAX_DELAY_QUEUE_SIZE;
+        g_delay_queue_count--;
+    }
+    if (flushed_count > 0) {
+        LOGI("Flushed delay queue containing %d packets.", flushed_count);
+    }
+    pthread_mutex_unlock(&g_delay_queue_mtx);
+}
+
+/* ── Jitter/Heartbeat and Anti-Detection Evasion ───────────────────────────── */
+static std::atomic<uint64_t> g_last_heartbeat_time{0};
+
+static bool handle_lag_evasion(int plen) {
+    uint64_t now = get_now_ms();
+    uint64_t last = g_last_heartbeat_time.load();
+    // Si el paquete es muy pequeño (latidos keep-alive del motor de juego)
+    // o han pasado más de 300ms, lo dejamos pasar para mantener la conexión activa.
+    if (plen <= 60 || (now - last > 300)) {
+        g_last_heartbeat_time.store(now);
+        return true; // Permitir paso (bypass)
+    }
+    return false; // Retener en cola
+}
+
+/* ── Probabilistic Packet Drop ─────────────────────────────────────────────── */
+static bool should_probabilistic_drop() {
+    uint16_t r = secure_random_u16();
+    return (r % 10 == 0); // 10% probabilidad de descarte realista
+}
+
+/* Helper para identificar puertos de servidores del juego (Free Fire) */
+static inline bool is_game_port(uint16_t port) {
+    return (port >= 7000 && port <= 25000);
+}
+
 /* ── Get or create a protected socket for a given game source port ──────── */
-static int get_or_create_flow(uint32_t game_ip, uint16_t game_port,
-                               uint32_t srv_ip,  uint16_t srv_port) {
+static int get_or_create_flow(bool is_ipv6, const uint8_t* game_ip, uint16_t game_port,
+                               const uint8_t* srv_ip, uint16_t srv_port) {
     pthread_mutex_lock(&g_flows_mtx);
     for (int i = 0; i < g_flow_count; i++) {
-        if (g_flows[i].game_port == game_port) {
-            int fd = g_flows[i].sock;
-            pthread_mutex_unlock(&g_flows_mtx);
-            return fd;
+        if (g_flows[i].is_ipv6 == is_ipv6 && g_flows[i].game_port == game_port) {
+            bool ip_match = false;
+            if (is_ipv6) {
+                ip_match = (memcmp(g_flows[i].game_ip6, game_ip, 16) == 0);
+            } else {
+                ip_match = (g_flows[i].game_ip == *(const uint32_t*)game_ip);
+            }
+            if (ip_match) {
+                int fd = g_flows[i].sock;
+                g_flows[i].last_activity = get_now_ms(); // Update activity
+                pthread_mutex_unlock(&g_flows_mtx);
+                return fd;
+            }
         }
     }
     if (g_flow_count >= MAX_FLOWS) {
@@ -193,8 +441,26 @@ static int get_or_create_flow(uint32_t game_ip, uint16_t game_port,
         return -1;
     }
 
-    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    int sock = socket(is_ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) { pthread_mutex_unlock(&g_flows_mtx); return -1; }
+
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+
+    if (!is_ipv6) {
+        sockaddr_in bind_addr{};
+        bind_addr.sin_family = AF_INET;
+        bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        bind_addr.sin_port = game_port;
+        bind(sock, (sockaddr*)&bind_addr, sizeof(bind_addr));
+    } else {
+        sockaddr_in6 bind_addr6{};
+        bind_addr6.sin6_family = AF_INET6;
+        bind_addr6.sin6_addr = in6addr_any;
+        bind_addr6.sin6_port = game_port;
+        bind(sock, (sockaddr*)&bind_addr6, sizeof(bind_addr6));
+    }
 
     if (!protect_fd(sock)) {
         LOGE("protect() failed for sock=%d", sock);
@@ -202,23 +468,82 @@ static int get_or_create_flow(uint32_t game_ip, uint16_t game_port,
         pthread_mutex_unlock(&g_flows_mtx);
         return -1;
     }
-    // Non-blocking so select() stays responsive
+    // Non-blocking so epoll wait stays responsive
     fcntl(sock, F_SETFL, fcntl(sock, F_GETFL, 0) | O_NONBLOCK);
 
-    g_flows[g_flow_count++] = {sock, game_ip, game_port, srv_ip, srv_port};
-    LOGI("New flow game_port=%u → srv %08x:%u (sock=%d)",
-         ntohs(game_port), ntohl(srv_ip), ntohs(srv_port), sock);
+    Flow new_flow{};
+    new_flow.sock = sock;
+    new_flow.is_ipv6 = is_ipv6;
+    new_flow.game_port = game_port;
+    new_flow.srv_port = srv_port;
+    if (is_ipv6) {
+        memcpy(new_flow.game_ip6, game_ip, 16);
+        memcpy(new_flow.srv_ip6, srv_ip, 16);
+    } else {
+        new_flow.game_ip = *(const uint32_t*)game_ip;
+        new_flow.srv_ip = *(const uint32_t*)srv_ip;
+    }
+    new_flow.last_activity = get_now_ms(); // Initialize activity
+
+    g_flows[g_flow_count++] = new_flow;
+    
+    if (is_ipv6) {
+        LOGI("New IPv6 flow game_port=%u → srv_port=%u (sock=%d)",
+             ntohs(game_port), ntohs(srv_port), sock);
+    } else {
+        LOGI("New IPv4 flow game_port=%u → srv %08x:%u (sock=%d)",
+             ntohs(game_port), ntohl(*(const uint32_t*)srv_ip), ntohs(srv_port), sock);
+    }
+
+    epoll_add(sock);
 
     pthread_mutex_unlock(&g_flows_mtx);
     return sock;
 }
 
-/* ── Write a reconstructed UDP/IP packet back to the tun interface ───────── */
+/* ── NAT Garbage Collector ───────────────────────────────────────────────── */
+static void nat_garbage_collector() {
+    pthread_mutex_lock(&g_flows_mtx);
+    uint64_t now = get_now_ms();
+    
+    // 1. GC para flujos UDP (60 segundos de inactividad)
+    for (int i = 0; i < g_flow_count; i++) {
+        if (now - g_flows[i].last_activity > 60000) {
+            int fd = g_flows[i].sock;
+            DBG_LOG("NAT GC: Removing inactive UDP flow game_port=%u (sock=%d) due to 60s timeout.", 
+                    ntohs(g_flows[i].game_port), fd);
+            if (fd >= 0) {
+                epoll_del(fd);
+                close(fd);
+            }
+            // Swap with the last element
+            g_flows[i] = g_flows[g_flow_count - 1];
+            g_flow_count--;
+            i--; // Re-evaluate index
+        }
+    }
+    
+    // 2. GC para flujos TCP (30 segundos de inactividad)
+    for (int i = 0; i < g_tcp_flow_count; i++) {
+        if (g_tcp_flows[i].sock >= 0 && (now - g_tcp_flows[i].last_activity > 30000)) {
+            int fd = g_tcp_flows[i].sock;
+            DBG_LOG("NAT TCP GC: Removing inactive TCP flow port=%u (sock=%d) due to 30s timeout.", 
+                    ntohs(g_tcp_flows[i].client_port), fd);
+            epoll_del(fd);
+            close(fd);
+            g_tcp_flows[i].sock = -1;
+        }
+    }
+    
+    pthread_mutex_unlock(&g_flows_mtx);
+}
+
+/* ── Write a reconstructed UDP/IP packet back to the tun interface (IPv4) ── */
 static void write_to_tun(int tun_fd,
                           uint32_t src_ip, uint16_t src_port,
                           uint32_t dst_ip, uint16_t dst_port,
                           const uint8_t* payload, int plen) {
-    if (plen > 1500) return; // Supera MTU
+    if (plen > 1480) return; // Supera MTU (1500 - 20 - 8)
 
     int udp_len = 8 + plen;
     int ip_len  = 20 + udp_len;
@@ -249,11 +574,55 @@ static void write_to_tun(int tun_fd,
     write(tun_fd, pkt, ip_len);
 }
 
+/* ── Write a reconstructed UDP/IPv6 packet back to the tun interface (IPv6) ── */
+static void write_ipv6_to_tun(int tun_fd,
+                              const uint8_t* src_ip, uint16_t src_port,
+                              const uint8_t* dst_ip, uint16_t dst_port,
+                              const uint8_t* payload, int plen) {
+    if (plen > 1460) return; // Supera MTU (1500 - 40 - 8)
+
+    int udp_len = 8 + plen;
+    int ip_len  = 40 + udp_len;
+    if (ip_len > 2000) return;
+
+    uint8_t pkt[2000];
+    memset(pkt, 0, ip_len);
+
+    // IPv6 header
+    Ip6Hdr* ip6h = (Ip6Hdr*)pkt;
+    ip6h->vt_tc_fl = htonl(0x60000000); // Version 6
+    ip6h->payload_len = htons(udp_len);
+    ip6h->next_hdr = 17; // UDP
+    ip6h->hop_limit = 64;
+    memcpy(ip6h->saddr, src_ip, 16);
+    memcpy(ip6h->daddr, dst_ip, 16);
+
+    // UDP header
+    UdpHdr* udph = (UdpHdr*)(pkt + 40);
+    udph->sport = src_port;
+    udph->dport = dst_port;
+    udph->len   = htons(udp_len);
+    memcpy(pkt + 48, payload, plen);
+    udph->check = htons(transport_csum_v6(src_ip, dst_ip, 17, (uint8_t*)udph, udp_len));
+
+    write(tun_fd, pkt, ip_len);
+}
+
 /* ── Cleanup ─────────────────────────────────────────────────────────────── */
 static void cleanup_flows() {
     pthread_mutex_lock(&g_flows_mtx);
-    for (int i = 0; i < g_flow_count; i++) close(g_flows[i].sock);
+    for (int i = 0; i < g_flow_count; i++) {
+        epoll_del(g_flows[i].sock);
+        close(g_flows[i].sock);
+    }
     g_flow_count = 0;
+    for (int i = 0; i < g_tcp_flow_count; i++) {
+        if (g_tcp_flows[i].sock >= 0) {
+            epoll_del(g_tcp_flows[i].sock);
+            close(g_tcp_flows[i].sock);
+        }
+    }
+    g_tcp_flow_count = 0;
     pthread_mutex_unlock(&g_flows_mtx);
 }
 
@@ -307,13 +676,43 @@ static void handle_tcp_packet(int tun_fd, IpHdr* iph, uint8_t* buf, int n) {
     int plen = ntohs(iph->tot_len) - ihl - tcph_len;
 
     uint8_t flags = tcph->flags;
+
+    // 1. Si es un FIN o RST (Cierre/Reinicio de conexión por el cliente) -> Limpiar flow
+    if (flags & (0x01 | 0x04)) {
+        pthread_mutex_lock(&g_flows_mtx);
+        for (int i = 0; i < g_tcp_flow_count; i++) {
+            if (g_tcp_flows[i].sock >= 0 && 
+                g_tcp_flows[i].client_port == tcph->sport && 
+                g_tcp_flows[i].server_ip == iph->daddr) {
+                
+                int sock_to_close = g_tcp_flows[i].sock;
+                if (sock_to_close >= 0) {
+                    epoll_del(sock_to_close);
+                    close(sock_to_close);
+                    g_tcp_flows[i].sock = -1;
+                    LOGI("TCP Connection closed by client (FIN/RST) on port=%u", ntohs(tcph->sport));
+                }
+                break;
+            }
+        }
+        pthread_mutex_unlock(&g_flows_mtx);
+        return;
+    }
     
-    // Si es un SYN (intento de conexión)
+    // 2. Si es un SYN (intento de conexión) -> Crear/Reutilizar flow
     if (flags & 0x02) {
         LOGI("TCP SYN from %u to %u", ntohs(tcph->sport), ntohs(tcph->dport));
         
         int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock >= 0) {
+            int opt = 1;
+            setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+            setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+            sockaddr_in bind_addr{};
+            bind_addr.sin_family = AF_INET;
+            bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+            bind_addr.sin_port = tcph->sport;
+            bind(sock, (sockaddr*)&bind_addr, sizeof(bind_addr));
             protect_fd(sock);
             fcntl(sock, F_SETFL, fcntl(sock, F_GETFL, 0) | O_NONBLOCK);
             
@@ -325,49 +724,53 @@ static void handle_tcp_packet(int tun_fd, IpHdr* iph, uint8_t* buf, int n) {
             connect(sock, (sockaddr*)&dst, sizeof(dst));
             
             pthread_mutex_lock(&g_flows_mtx);
-            if (g_tcp_flow_count < MAX_TCP_FLOWS) {
-                g_tcp_flows[g_tcp_flow_count++] = {
+            int slot = -1;
+            // Buscar un slot libre para reutilizar y evitar desborde de MAX_TCP_FLOWS
+            for (int i = 0; i < g_tcp_flow_count; i++) {
+                if (g_tcp_flows[i].sock == -1) {
+                    slot = i;
+                    break;
+                }
+            }
+            if (slot == -1 && g_tcp_flow_count < MAX_TCP_FLOWS) {
+                slot = g_tcp_flow_count++;
+            }
+            
+            if (slot != -1) {
+                g_tcp_flows[slot] = {
                     sock, iph->saddr, tcph->sport, iph->daddr, tcph->dport,
-                    1000, ntohl(tcph->seq) + 1, false
+                    1000, ntohl(tcph->seq) + 1, false, get_now_ms()
                 };
-                LOGI("Created TCP flow for port %u", ntohs(tcph->sport));
+                LOGI("Created TCP flow at slot %d for port %u, waiting for connect...", slot, ntohs(tcph->sport));
+                epoll_add_write(sock); // Escuchar lecturas y escrituras (finalización del connect)
             } else {
                 close(sock);
-                LOGE("MAX_TCP_FLOWS reached");
+                LOGE("MAX_TCP_FLOWS (%d) reached! Dropping TCP connection.", MAX_TCP_FLOWS);
             }
             pthread_mutex_unlock(&g_flows_mtx);
-            
-            // Responder con SYN-ACK
-            write_tcp_to_tun(tun_fd, 
-                             iph->daddr, tcph->dport,
-                             iph->saddr, tcph->sport,
-                             1000, ntohl(tcph->seq) + 1,
-                             0x12, // SYN | ACK
-                             nullptr, 0);
         }
         return;
     }
     
-    // Si es un ACK con datos
+    // 3. Si es un ACK con datos
     if ((flags & 0x10) && plen > 0) {
-        LOGI("TCP DATA from %u to %u, len=%d", ntohs(tcph->sport), ntohs(tcph->dport), plen);
-        
         int flow_idx = -1;
         pthread_mutex_lock(&g_flows_mtx);
         for (int i = 0; i < g_tcp_flow_count; i++) {
-            if (g_tcp_flows[i].client_port == tcph->sport && g_tcp_flows[i].server_ip == iph->daddr) {
+            if (g_tcp_flows[i].sock >= 0 && 
+                g_tcp_flows[i].client_port == tcph->sport && 
+                g_tcp_flows[i].server_ip == iph->daddr) {
                 flow_idx = i;
                 break;
             }
         }
-        pthread_mutex_unlock(&g_flows_mtx);
         
         if (flow_idx != -1) {
-            pthread_mutex_lock(&g_flows_mtx);
             TcpFlow& flow = g_tcp_flows[flow_idx];
             if (flow.sock >= 0) {
                 send(flow.sock, payload, plen, 0);
                 flow.seq_from_client += plen;
+                flow.last_activity = get_now_ms(); // Actualizar actividad para evitar GC
                 
                 // Responder con ACK para que el juego siga enviando
                 write_tcp_to_tun(tun_fd, 
@@ -377,118 +780,356 @@ static void handle_tcp_packet(int tun_fd, IpHdr* iph, uint8_t* buf, int n) {
                                  0x10, // ACK
                                  nullptr, 0);
             }
-            pthread_mutex_unlock(&g_flows_mtx);
         }
+        pthread_mutex_unlock(&g_flows_mtx);
     }
 }
 
 /* ── Main engine thread ──────────────────────────────────────────────────── */
 void* engine_thread(void*) {
     LOGI("Asymmetric UDP Proxy started. tun_fd=%d", g_tun_fd);
-    uint8_t buf[65535];
+
+    // Establecer prioridad alta para el hilo de red nativo (evitar retrasos/jitter)
+    if (setpriority(PRIO_PROCESS, 0, -16) < 0) {
+        LOGE("Failed to set thread priority: %s", strerror(errno));
+    } else {
+        LOGI("Native network thread priority set to high (-16)");
+    }
+
+    g_epoll_fd = epoll_create1(0);
+    if (g_epoll_fd < 0) {
+        LOGE("epoll_create1 failed: %s", strerror(errno));
+        return nullptr;
+    }
+
+    int tun = g_tun_fd;
+    if (tun < 0) {
+        close(g_epoll_fd);
+        g_epoll_fd = -1;
+        return nullptr;
+    }
+
+    // Configurar el FD del TUN como no bloqueante (lecturas asíncronas no bloqueantes)
+    int flags = fcntl(tun, F_GETFL, 0);
+    if (flags < 0 || fcntl(tun, F_SETFL, flags | O_NONBLOCK) < 0) {
+        LOGE("Failed to set TUN FD to non-blocking: %s", strerror(errno));
+    } else {
+        LOGI("TUN FD successfully set to non-blocking mode");
+    }
+
+    epoll_add(tun);
+    epoll_add(g_pipe[0]);
+
+    const int MAX_EVENTS = 64;
+    struct epoll_event events[MAX_EVENTS];
 
     while (g_running) {
-        int tun = g_tun_fd;
-        if (tun < 0) break;
-
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(tun, &fds);
-        FD_SET(g_pipe[0], &fds);
-        int maxfd = (tun > g_pipe[0]) ? tun : g_pipe[0];
-
-        pthread_mutex_lock(&g_flows_mtx);
-        for (int i = 0; i < g_flow_count; i++) {
-            FD_SET(g_flows[i].sock, &fds);
-            if (g_flows[i].sock > maxfd) maxfd = g_flows[i].sock;
+        int nfds = epoll_wait(g_epoll_fd, events, MAX_EVENTS, 100);
+        if (nfds < 0) {
+            if (errno == EINTR) continue;
+            LOGE("epoll_wait error: %s", strerror(errno));
+            break;
         }
-        for (int i = 0; i < g_tcp_flow_count; i++) {
-            if (g_tcp_flows[i].sock >= 0) {
-                FD_SET(g_tcp_flows[i].sock, &fds);
-                if (g_tcp_flows[i].sock > maxfd) maxfd = g_tcp_flows[i].sock;
+
+        // Safety timeout flush check for delayed packets (Requirement 12)
+        if (gLagActive.load()) {
+            uint64_t now = get_now_ms();
+            pthread_mutex_lock(&g_delay_queue_mtx);
+            if (g_delay_queue_count > 0) {
+                uint64_t oldest_age = now - g_delay_queue[g_delay_queue_head].timestamp;
+                if (oldest_age > 2200) { // Safety limit: 2200ms
+                    pthread_mutex_unlock(&g_delay_queue_mtx);
+                    LOGI("Safety timeout limit reached: flushing delay queue (%d packets)", g_delay_queue_count);
+                    delay_queue_flush(tun);
+                } else {
+                    pthread_mutex_unlock(&g_delay_queue_mtx);
+                }
+            } else {
+                pthread_mutex_unlock(&g_delay_queue_mtx);
             }
         }
-        pthread_mutex_unlock(&g_flows_mtx);
 
-        timeval tv{1, 0};
-        int ret = select(maxfd + 1, &fds, nullptr, nullptr, &tv);
-        if (ret < 0) { if (errno == EINTR) continue; break; }
-        if (ret == 0) continue;
-        if (FD_ISSET(g_pipe[0], &fds)) break; // stop signal
+        // Run NAT GC every 5 seconds (Requirement: garbage collect inactive flows)
+        static uint64_t last_gc_run = 0;
+        uint64_t now_gc = get_now_ms();
+        if (now_gc - last_gc_run > 5000) {
+            last_gc_run = now_gc;
+            nat_garbage_collector();
+        }
 
-        /* OUTGOING: game → VPN tun → protected socket → real server */
-        if (FD_ISSET(tun, &fds)) {
-            int n = read(tun, buf, sizeof(buf));
-            if (n > 20) {
-                uint8_t version = (buf[0] >> 4) & 0x0f;
-                if (version == 4) { // SOLO IPv4
-                    IpHdr* iph = (IpHdr*)buf;
-                    int ihl = (iph->ihl_ver & 0x0f) * 4;
-                    if (iph->proto == 17 && n > ihl + 8) {
-                        UdpHdr* udph = (UdpHdr*)(buf + ihl);
-                        uint8_t* payload = buf + ihl + 8;
-                        int plen = ntohs(udph->len) - 8;
-                        if (plen > 0 && plen <= n - ihl - 8) {
-                            int sock = get_or_create_flow(
-                                iph->saddr, udph->sport,
-                                iph->daddr, udph->dport);
-                            if (sock > 0) {
-                                sockaddr_in dst{};
-                                dst.sin_family      = AF_INET;
-                                dst.sin_addr.s_addr = iph->daddr;
-                                dst.sin_port        = udph->dport;
-                                sendto(sock, payload, plen, 0,
-                                       (sockaddr*)&dst, sizeof(dst));
-                            }
+        for (int i = 0; i < nfds; i++) {
+            int fd = events[i].data.fd;
+
+            if (fd == g_pipe[0]) {
+                LOGI("Stop signal received via pipe.");
+                g_running = false;
+                break;
+            }
+
+            if (fd == tun) {
+                // Leer todos los paquetes disponibles del TUN de forma no bloqueante (Zero-Allocation)
+                while (g_running) {
+                    PacketBuffer* pkt_buf = acquire_buffer();
+                    int n = read(tun, pkt_buf->data, sizeof(pkt_buf->data));
+                    if (n < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            break; // No hay más datos por leer en este ciclo
                         }
-                    } else if (iph->proto == 6 && n > ihl + 20) {
-                        // Llamar al manejador TCP para Opción 2
-                        handle_tcp_packet(tun, iph, buf, n);
+                        LOGE("TUN read error: %s", strerror(errno));
+                        break;
+                    }
+                    if (n == 0) {
+                        break; // EOF
+                    }
+                    if (n > 20) {
+                        uint8_t version = (pkt_buf->data[0] >> 4) & 0x0f;
+                        if (version == 4) { // IPv4 Zero-Copy Parsing
+                            IpHdr* iph = (IpHdr*)pkt_buf->data;
+                            int ihl = (iph->ihl_ver & 0x0f) * 4;
+                            if (iph->proto == 17 && n > ihl + 8) { // UDP
+                                UdpHdr* udph = (UdpHdr*)(pkt_buf->data + ihl);
+                                uint8_t* payload = pkt_buf->data + ihl + 8;
+                                int plen = ntohs(udph->len) - 8;
+                                
+                                // BYPASS INMEDIATO DE DNS (Puerto 53)
+                                if (udph->sport == htons(53) || udph->dport == htons(53)) {
+                                    int sock = get_or_create_flow(
+                                        false, 
+                                        (const uint8_t*)&iph->saddr, udph->sport,
+                                        (const uint8_t*)&iph->daddr, udph->dport);
+                                    if (sock > 0) {
+                                        sockaddr_in dst{};
+                                        dst.sin_family      = AF_INET;
+                                        dst.sin_addr.s_addr = iph->daddr;
+                                        dst.sin_port        = udph->dport;
+                                        sendto(sock, payload, plen, 0, (sockaddr*)&dst, sizeof(dst));
+                                    }
+                                } else if (plen > 0 && plen <= n - ihl - 8) {
+                                    int sock = get_or_create_flow(
+                                        false, 
+                                        (const uint8_t*)&iph->saddr, udph->sport,
+                                        (const uint8_t*)&iph->daddr, udph->dport);
+                                    if (sock > 0) {
+                                        sockaddr_in dst{};
+                                        dst.sin_family      = AF_INET;
+                                        dst.sin_addr.s_addr = iph->daddr;
+                                        dst.sin_port        = udph->dport;
+                                        sendto(sock, payload, plen, 0,
+                                               (sockaddr*)&dst, sizeof(dst));
+                                    }
+                                }
+                            } else if (iph->proto == 6 && n > ihl + 20) { // TCP (Early Protocol Filter: instant transparent bypass)
+                                handle_tcp_packet(tun, iph, pkt_buf->data, n);
+                            }
+                        } else if (version == 6 && n > 40) { // IPv6 Zero-Copy Parsing
+                            Ip6Hdr* ip6h = (Ip6Hdr*)pkt_buf->data;
+                            if (ip6h->next_hdr == 17 && n > 40 + 8) { // UDP over IPv6
+                                UdpHdr* udph = (UdpHdr*)(pkt_buf->data + 40);
+                                uint8_t* payload = pkt_buf->data + 40 + 8;
+                                int plen = ntohs(udph->len) - 8;
+                                
+                                // BYPASS INMEDIATO DE DNS EN IPv6 (Puerto 53)
+                                if (udph->sport == htons(53) || udph->dport == htons(53)) {
+                                    int sock = get_or_create_flow(
+                                        true,
+                                        ip6h->saddr, udph->sport,
+                                        ip6h->daddr, udph->dport);
+                                    if (sock > 0) {
+                                        sockaddr_in6 dst{};
+                                        dst.sin6_family = AF_INET6;
+                                        memcpy(&dst.sin6_addr, ip6h->daddr, 16);
+                                        dst.sin6_port = udph->dport;
+                                        sendto(sock, payload, plen, 0, (sockaddr*)&dst, sizeof(dst));
+                                    }
+                                } else if (plen > 0 && plen <= n - 48) {
+                                    int sock = get_or_create_flow(
+                                        true,
+                                        ip6h->saddr, udph->sport,
+                                        ip6h->daddr, udph->dport);
+                                    if (sock > 0) {
+                                        sockaddr_in6 dst{};
+                                        dst.sin6_family = AF_INET6;
+                                        memcpy(&dst.sin6_addr, ip6h->daddr, 16);
+                                        dst.sin6_port = udph->dport;
+                                        sendto(sock, payload, plen, 0,
+                                               (sockaddr*)&dst, sizeof(dst));
+                                    }
+                                }
+                            }
+                            // TCP over IPv6 is bypassed natively by the Android VPN routing table 
+                            // or handled here if needed.
+                        }
                     }
                 }
-            }
-        }
+            } else {
+                bool processed = false;
 
-        /* INCOMING: real server → protected socket → drop or → VPN tun → game */
-        pthread_mutex_lock(&g_flows_mtx);
-        // UDP Incoming
-        for (int i = 0; i < g_flow_count; i++) {
-            if (!FD_ISSET(g_flows[i].sock, &fds)) continue;
-            sockaddr_in from{};
-            socklen_t fromlen = sizeof(from);
-            int n = recvfrom(g_flows[i].sock, buf, sizeof(buf), 0,
-                             (sockaddr*)&from, &fromlen);
-            if (n > 0 && !gLagActive.load()) {
-                write_to_tun(tun,
-                    from.sin_addr.s_addr, from.sin_port,
-                    g_flows[i].game_ip,   g_flows[i].game_port,
-                    buf, n);
-            }
-        }
-        
-        // TCP Incoming (Opción 2)
-        for (int i = 0; i < g_tcp_flow_count; i++) {
-            if (g_tcp_flows[i].sock >= 0 && FD_ISSET(g_tcp_flows[i].sock, &fds)) {
-                uint8_t t_buf[4096];
-                int n = recv(g_tcp_flows[i].sock, t_buf, sizeof(t_buf), 0);
-                if (n > 0) {
-                    write_tcp_to_tun(tun, 
-                                     g_tcp_flows[i].server_ip, g_tcp_flows[i].server_port,
-                                     g_tcp_flows[i].client_ip, g_tcp_flows[i].client_port,
-                                     g_tcp_flows[i].seq_to_client, g_tcp_flows[i].seq_from_client,
-                                     0x18, // PSH | ACK
-                                     t_buf, n);
-                    g_tcp_flows[i].seq_to_client += n;
-                } else if (n == 0 || (n < 0 && errno != EAGAIN)) {
-                    close(g_tcp_flows[i].sock);
-                    g_tcp_flows[i].sock = -1;
+                pthread_mutex_lock(&g_flows_mtx);
+                // Check UDP flows
+                for (int j = 0; j < g_flow_count; j++) {
+                    if (g_flows[j].sock == fd) {
+                        processed = true;
+                        g_flows[j].last_activity = get_now_ms(); // Update activity for GC
+                        // Leer todos los paquetes recibidos en el socket proxy UDP de forma no bloqueante (Zero-Allocation)
+                        while (g_running) {
+                            PacketBuffer* pkt_buf = acquire_buffer();
+                            sockaddr_storage from{};
+                            socklen_t fromlen = sizeof(from);
+                            int n = recvfrom(fd, pkt_buf->data, sizeof(pkt_buf->data), 0,
+                                             (sockaddr*)&from, &fromlen);
+                            if (n < 0) {
+                                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                    break; // No hay más datos por recibir
+                                }
+                                LOGE("recvfrom error: %s", strerror(errno));
+                                break;
+                            }
+                            if (n == 0) {
+                                break;
+                            }
+                            
+                            // Determinar si debemos aplicar el lag switch.
+                            // Solo se aplica si el lag está activo Y es un puerto de partida del juego.
+                            // Tráfico UDP ajeno al juego (por ejemplo DNS) se enruta al instante sin retraso.
+                            uint16_t srv_port = g_flows[j].srv_port;
+                            bool is_game = is_game_port(ntohs(srv_port));
+                            bool drop_packet = gLagActive.load() && is_game;
+
+                            if (drop_packet) {
+                                // 1. Descarte Probabilístico Realista (Evitar detección abrupta)
+                                if (should_probabilistic_drop()) {
+                                    DBG_LOG("LAG-DROP: probabilistic discard of UDP packet. size=%d, srv_port=%u", n, ntohs(srv_port));
+                                    continue;
+                                }
+
+                                // 2. Ofuscación de Tráfico (Jitter / Latido Heartbeat para evitar baneo)
+                                if (handle_lag_evasion(n)) {
+                                    DBG_LOG("LAG-EVASION: Keep-alive heartbeat/small packet bypassed. size=%d, srv_port=%u", n, ntohs(srv_port));
+                                    // Dejar pasar latidos o keep-alive de inmediato
+                                    if (g_flows[j].is_ipv6) {
+                                        sockaddr_in6* from6 = (sockaddr_in6*)&from;
+                                        write_ipv6_to_tun(tun,
+                                            from6->sin6_addr.s6_addr, from6->sin6_port,
+                                            g_flows[j].game_ip6, g_flows[j].game_port,
+                                            pkt_buf->data, n);
+                                    } else {
+                                        sockaddr_in* from4 = (sockaddr_in*)&from;
+                                        write_to_tun(tun,
+                                            from4->sin_addr.s_addr, from4->sin_port,
+                                            g_flows[j].game_ip, g_flows[j].game_port,
+                                            pkt_buf->data, n);
+                                    }
+                                } else {
+                                    DBG_LOG("LAG-CHOKE: Queuing game UDP packet. size=%d, srv_port=%u", n, ntohs(srv_port));
+                                    // 3. Cola de Retención (Fake Lag / Choke)
+                                    if (g_flows[j].is_ipv6) {
+                                        sockaddr_in6* from6 = (sockaddr_in6*)&from;
+                                        delay_queue_push(true,
+                                            from6->sin6_addr.s6_addr, from6->sin6_port,
+                                            g_flows[j].game_ip6, g_flows[j].game_port,
+                                            pkt_buf->data, n);
+                                    } else {
+                                        sockaddr_in* from4 = (sockaddr_in*)&from;
+                                        delay_queue_push(false,
+                                            (const uint8_t*)&from4->sin_addr.s_addr, from4->sin_port,
+                                            (const uint8_t*)&g_flows[j].game_ip, g_flows[j].game_port,
+                                            pkt_buf->data, n);
+                                    }
+                                }
+                            } else {
+                                // Tráfico no retenido o lag apagado
+                                if (g_flows[j].is_ipv6) {
+                                    sockaddr_in6* from6 = (sockaddr_in6*)&from;
+                                    write_ipv6_to_tun(tun,
+                                        from6->sin6_addr.s6_addr, from6->sin6_port,
+                                        g_flows[j].game_ip6, g_flows[j].game_port,
+                                        pkt_buf->data, n);
+                                } else {
+                                    sockaddr_in* from4 = (sockaddr_in*)&from;
+                                    write_to_tun(tun,
+                                        from4->sin_addr.s_addr, from4->sin_port,
+                                        g_flows[j].game_ip, g_flows[j].game_port,
+                                        pkt_buf->data, n);
+                                }
+                            }
+                        }
+                        break;
+                    }
                 }
+
+                // Check TCP flows
+                if (!processed) {
+                    for (int j = 0; j < g_tcp_flow_count; j++) {
+                        if (g_tcp_flows[j].sock == fd) {
+                            processed = true;
+                            
+                            // Si la conexión real con el servidor no se ha completado, este evento es del connect()
+                            if (!g_tcp_flows[j].connected) {
+                                int error = 0;
+                                socklen_t len = sizeof(error);
+                                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+                                    LOGE("TCP connect failed for port %u: %s", ntohs(g_tcp_flows[j].client_port), strerror(error));
+                                    epoll_del(fd);
+                                    close(fd);
+                                    g_tcp_flows[j].sock = -1;
+                                    break;
+                                }
+                                
+                                g_tcp_flows[j].connected = true;
+                                g_tcp_flows[j].last_activity = get_now_ms();
+                                epoll_mod_read(fd); // Volver a escuchar solo lectura normal (quitar EPOLLOUT)
+                                
+                                // Ahora sí, responder con el SYN-ACK al juego para completar el handshake
+                                write_tcp_to_tun(tun, 
+                                                 g_tcp_flows[j].server_ip, g_tcp_flows[j].server_port,
+                                                 g_tcp_flows[j].client_ip, g_tcp_flows[j].client_port,
+                                                 1000, g_tcp_flows[j].seq_from_client,
+                                                 0x12, // SYN | ACK
+                                                 nullptr, 0);
+                                LOGI("TCP connect successful! SYN-ACK sent to client for port %u", ntohs(g_tcp_flows[j].client_port));
+                                break;
+                            }
+                            
+                            while (g_running) {
+                                PacketBuffer* pkt_buf = acquire_buffer();
+                                int n = recv(fd, pkt_buf->data, sizeof(pkt_buf->data), 0);
+                                if (n < 0) {
+                                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                        break;
+                                    }
+                                    LOGE("recv error: %s", strerror(errno));
+                                    epoll_del(fd);
+                                    close(fd);
+                                    g_tcp_flows[j].sock = -1;
+                                    break;
+                                }
+                                if (n == 0) {
+                                    epoll_del(fd);
+                                    close(fd);
+                                    g_tcp_flows[j].sock = -1;
+                                    break;
+                                }
+                                write_tcp_to_tun(tun, 
+                                                 g_tcp_flows[j].server_ip, g_tcp_flows[j].server_port,
+                                                 g_tcp_flows[j].client_ip, g_tcp_flows[j].client_port,
+                                                 g_tcp_flows[j].seq_to_client, g_tcp_flows[j].seq_from_client,
+                                                 0x18, // PSH | ACK
+                                                 pkt_buf->data, n);
+                                g_tcp_flows[j].seq_to_client += n;
+                                g_tcp_flows[j].last_activity = get_now_ms(); // Actualizar actividad
+                            }
+                            break;
+                        }
+                    }
+                }
+                pthread_mutex_unlock(&g_flows_mtx);
             }
         }
-        pthread_mutex_unlock(&g_flows_mtx);
     }
 
     cleanup_flows();
+    close(g_epoll_fd);
+    g_epoll_fd = -1;
     LOGI("Asymmetric UDP Proxy stopped.");
     return nullptr;
 }
@@ -538,6 +1179,34 @@ Java_com_freezy_AntigravityFirewall_setLagActive(
         JNIEnv* /*env*/, jclass /*cls*/, jboolean active) {
     gLagActive = (bool)active;
     LOGI("Lag switch: %s", (bool)active ? "ON (enemy frozen)" : "OFF (normal)");
+    if (!active && g_tun_fd >= 0) {
+        delay_queue_flush(g_tun_fd);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_notifyNetworkChange(JNIEnv* /*env*/, jclass) {
+    LOGI("Network change detected! Closing old native sockets and resetting flows table...");
+    pthread_mutex_lock(&g_flows_mtx);
+    for (int i = 0; i < g_flow_count; i++) {
+        if (g_flows[i].sock >= 0) {
+            epoll_del(g_flows[i].sock);
+            close(g_flows[i].sock);
+            g_flows[i].sock = -1;
+        }
+    }
+    g_flow_count = 0; // Reset UDP NAT table entries
+
+    for (int i = 0; i < g_tcp_flow_count; i++) {
+        if (g_tcp_flows[i].sock >= 0) {
+            epoll_del(g_tcp_flows[i].sock);
+            close(g_tcp_flows[i].sock);
+            g_tcp_flows[i].sock = -1;
+        }
+    }
+    g_tcp_flow_count = 0; // Reset TCP NAT table entries
+    pthread_mutex_unlock(&g_flows_mtx);
+    LOGI("All native proxy flows successfully reset. Sockets will be re-created on demand.");
 }
 
 // Función simple de descifrado XOR

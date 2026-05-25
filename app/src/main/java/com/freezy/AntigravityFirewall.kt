@@ -1,6 +1,5 @@
 package com.freezy
 
-/*
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -10,28 +9,23 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 
 /**
- * AntigravityFirewall — Proxy UDP Asimétrico sin Root.
+ * AntigravityFirewall — Proxy UDP Asimétrico sin Root (Fase 1 Optimizado).
  *
- * Comportamiento idéntico a:
- *   iptables -I INPUT  -p udp -j DROP   (LAG ON  → enemigos congelados)
- *   iptables -D INPUT  -p udp -j DROP   (LAG OFF → conexión normal)
- *
- * El motor C++ en native-lib.cpp:
- *  1. Lee paquetes salientes del juego desde el tun fd
- *  2. Los reenvía al servidor real mediante sockets protegidos (VpnService.protect)
- *  3. Recibe respuestas del servidor:
- *     - LAG OFF → escribe la respuesta al tun fd → el juego recibe normalmente
- *     - LAG ON  → dropea la respuesta → los enemigos se congelan en tu pantalla
+ * La capa de Kotlin solo pide permisos y abre el descriptor de archivo (FD).
  */
 class AntigravityFirewall : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
+    private var connectivityManager: android.net.ConnectivityManager? = null
+    private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
 
     companion object {
         init { System.loadLibrary("freezy_net") }
 
         /** Llamado desde BubbleService para activar/desactivar el drop asimétrico */
         @JvmStatic external fun setLagActive(active: Boolean)
+
+        @JvmStatic external fun notifyNetworkChange()
     }
 
     private external fun startNativeEngine(fd: Int)
@@ -78,26 +72,30 @@ class AntigravityFirewall : VpnService() {
         }
 
         val targetPackage = intent?.getStringExtra("TARGET_PACKAGE")
+        if (targetPackage.isNullOrEmpty()) {
+            Log.e("AntigravityFirewall", "Target package nulo. Abortando.")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         openTunnel(targetPackage)
         return START_NOT_STICKY
     }
 
-    private fun openTunnel(targetPackage: String?) {
+    private fun openTunnel(targetPackage: String) {
         try {
             val builder = Builder()
             builder.setSession("FreezyProxy")
                 .addAddress("10.0.0.2", 32)
                 .addRoute("0.0.0.0", 0)   // Capturar todo el tráfico IPv4
-                .setMtu(1400)             // Evitar fragmentación (Sugerido: 1400)
-                .setBlocking(false)
+                .setMtu(65535)             // Evitar fragmentación IP entregando paquetes reensamblados al motor nativo
 
-            if (targetPackage != null) {
-                try {
-                    builder.addAllowedApplication(targetPackage)
-                    Log.i("AntigravityFirewall", "Proxy activo solo para: $targetPackage")
-                } catch (e: Exception) {
-                    Log.e("AntigravityFirewall", "Error restringiendo paquete: ${e.message}")
-                }
+            // Aislamiento de Aplicación Estricto
+            try {
+                builder.addAllowedApplication(targetPackage)
+                Log.i("AntigravityFirewall", "Proxy activo estrictamente solo para: $targetPackage")
+            } catch (e: Exception) {
+                Log.e("AntigravityFirewall", "Error restringiendo paquete: ${e.message}")
             }
 
             val iface = builder.establish()
@@ -108,13 +106,28 @@ class AntigravityFirewall : VpnService() {
             }
             vpnInterface = iface
 
-            // Lanzar el motor nativo en un hilo separado para NO bloquear la UI
+            // Monitorear cambios de red activa (WiFi <-> Datos)
+            try {
+                connectivityManager = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: android.net.Network) {
+                        super.onAvailable(network)
+                        Log.i("AntigravityFirewall", "Cambio de red detectado. Restableciendo sockets nativos...")
+                        notifyNetworkChange()
+                    }
+                }
+                connectivityManager?.registerDefaultNetworkCallback(networkCallback!!)
+            } catch (e: Exception) {
+                Log.e("AntigravityFirewall", "No se pudo registrar callback de red: ${e.message}")
+            }
+
+            // Delegación Absoluta del FD al entorno JNI (C++)
             Thread {
                 try {
-                    Log.i("AntigravityFirewall", "Iniciando motor nativo con fd=${iface.fd}")
+                    Log.i("AntigravityFirewall", "Delegando FD=${iface.fd} al motor nativo.")
                     startNativeEngine(iface.fd)
                 } catch (e: Exception) {
-                    Log.e("AntigravityFirewall", "Error en el hilo del motor: ${e.message}")
+                    Log.e("AntigravityFirewall", "Error delegando FD: ${e.message}")
                 }
             }.start()
 
@@ -126,6 +139,10 @@ class AntigravityFirewall : VpnService() {
 
     private fun shutdown() {
         stopNativeEngine()
+        try {
+            networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
+        } catch (e: Exception) {}
+        networkCallback = null
         Thread.sleep(60) // Dar tiempo al thread C++ de salir del select()
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
@@ -141,4 +158,3 @@ class AntigravityFirewall : VpnService() {
         shutdown()
     }
 }
-*/

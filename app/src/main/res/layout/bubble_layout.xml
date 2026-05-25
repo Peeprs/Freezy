@@ -4,21 +4,32 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content">
 
-    <!-- CARA 1: Fake Lag (El icono) -->
-    <FrameLayout
+    <!-- CARA 1: Burbuja Fake Lag -->
+    <LinearLayout
         android:id="@+id/cara_fake_lag"
-        android:layout_width="56dp"
-        android:layout_height="56dp"
+        android:layout_width="59dp"
+        android:layout_height="59dp"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="4dp"
         android:background="@drawable/bg_glass_bubble">
         
         <ImageView
-            android:id="@+id/bubble_icon"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:layout_gravity="center"
+            android:id="@+id/btn_fake_lag"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:padding="6dp"
             android:src="@drawable/ic_play_white"
-            android:tint="#FFFFFF" />
-    </FrameLayout>
+            android:contentDescription="Fake Lag" />
+
+        <!-- Dummy hidden bubble_icon to ensure legacy code references do not crash -->
+        <ImageView
+            android:id="@+id/bubble_icon"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            android:src="@drawable/ic_play_white" />
+    </LinearLayout>
 
     <!-- CARA 2: NoRecoil Menu (Oculto) -->
     <LinearLayout

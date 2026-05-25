@@ -75,24 +75,26 @@ object LagController {
     fun activarFantasmaRoot() {
         // Bloquea movimiento pero permite latidos (ping bajo) y daño/disparos (cuenta daño perfectamente)
         ejecutarComandoRoot("iptables -I OUTPUT -p udp --dport 7000:25000 -j DROP")
-        ejecutarComandoRoot("iptables -I OUTPUT -p udp --dport 7000:25000 -m length --length 80:1500 -j ACCEPT")
-        ejecutarComandoRoot("iptables -I OUTPUT -p udp --dport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
+        ejecutarComandoRoot("iptables -I OUTPUT -p udp --dport 7000:25000 -m length --length 0:60 -j ACCEPT")
+        ejecutarComandoRoot("iptables -I OUTPUT -p udp --dport 7000:25000 -m length --length 61:1500 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
     }
 
     fun desactivarFantasmaRoot() {
-        ejecutarComandoRoot("iptables -D OUTPUT -p udp --dport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
-        ejecutarComandoRoot("iptables -D OUTPUT -p udp --dport 7000:25000 -m length --length 80:1500 -j ACCEPT")
+        ejecutarComandoRoot("iptables -D OUTPUT -p udp --dport 7000:25000 -m length --length 61:1500 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
+        ejecutarComandoRoot("iptables -D OUTPUT -p udp --dport 7000:25000 -m length --length 0:60 -j ACCEPT")
         ejecutarComandoRoot("iptables -D OUTPUT -p udp --dport 7000:25000 -j DROP")
     }
 
     fun activarFakeLagRoot() {
         // Congela enemigos pero mantiene latidos pequeños para no subir el ping, daño sale en tiempo real
         ejecutarComandoRoot("iptables -I INPUT -p udp --sport 7000:25000 -j DROP")
-        ejecutarComandoRoot("iptables -I INPUT -p udp --sport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
+        ejecutarComandoRoot("iptables -I INPUT -p udp --sport 7000:25000 -m length --length 0:60 -j ACCEPT")
+        ejecutarComandoRoot("iptables -I INPUT -p udp --sport 7000:25000 -m length --length 61:1500 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
     }
 
     fun desactivarFakeLagRoot() {
-        ejecutarComandoRoot("iptables -D INPUT -p udp --sport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
+        ejecutarComandoRoot("iptables -D INPUT -p udp --sport 7000:25000 -m length --length 61:1500 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
+        ejecutarComandoRoot("iptables -D INPUT -p udp --sport 7000:25000 -m length --length 0:60 -j ACCEPT")
         ejecutarComandoRoot("iptables -D INPUT -p udp --sport 7000:25000 -j DROP")
     }
 }

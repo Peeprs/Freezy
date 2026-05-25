@@ -34,33 +34,6 @@
             android:layout_centerInParent="true"/>
     </RelativeLayout>
 
-    <!-- Tile: Permisos -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="@drawable/bg_glass_tile"
-        android:padding="16dp"
-        android:layout_marginBottom="12dp">
-        
-        <TextView
-            android:id="@+id/tv_label_system"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="#BBBBBB"
-            android:textSize="10sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="8dp"/>
-
-        <Switch
-            android:id="@+id/switch_root"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:thumb="@drawable/custom_seekbar_thumb"/>
-    </LinearLayout>
-
     <!-- Tile: Información -->
     <LinearLayout
         android:layout_width="match_parent"

@@ -22,9 +22,10 @@ object LocalProxyServer {
         isRunning = true
         thread {
             try {
-                tcpServerSocket = ServerSocket(PORT)
-                startUDPServer()
-                Log.i(TAG, "Servidor Proxy Local iniciado en el puerto $PORT (TCP/UDP)")
+                val localhost = java.net.InetAddress.getByName("127.0.0.1")
+                tcpServerSocket = ServerSocket(PORT, 50, localhost)
+                startUDPServer(localhost)
+                Log.i(TAG, "Servidor Proxy Local iniciado en el puerto $PORT (TCP/UDP) en 127.0.0.1")
                 while (isRunning) {
                     val clientSocket = tcpServerSocket?.accept()
                     clientSocket?.let {
@@ -43,7 +44,6 @@ object LocalProxyServer {
                 // Aquí (Paso 4) el motor C++ enviará el tráfico descifrado.
                 // Filtraremos subida vs bajada.
                 val input = socket.getInputStream()
-                val output = socket.getOutputStream()
                 val buffer = ByteArray(4096)
                 
                 while (isRunning && !socket.isClosed) {
@@ -66,10 +66,10 @@ object LocalProxyServer {
         }
     }
 
-    private fun startUDPServer() {
+    private fun startUDPServer(localhost: java.net.InetAddress) {
         thread {
             try {
-                udpSocket = DatagramSocket(PORT + 1) // Puerto UDP dedicado
+                udpSocket = DatagramSocket(PORT + 1, localhost) // Puerto UDP dedicado en 127.0.0.1
                 val buffer = ByteArray(65535)
                 
                 while (isRunning) {
