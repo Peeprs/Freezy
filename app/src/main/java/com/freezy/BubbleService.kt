@@ -411,8 +411,8 @@ class BubbleService : Service() {
 
         if (showFakeLag) {
             bubbleView = LayoutInflater.from(this).inflate(R.layout.bubble_layout, null)
-            bubbleIcon = bubbleView.findViewById(R.id.bubble_icon)
             btnFakeLag = bubbleView.findViewById(R.id.btn_fake_lag)
+            bubbleIcon = btnFakeLag // Bind directly to the visible button so play/pause state is shown correctly
             caraFakeLag = bubbleView.findViewById(R.id.cara_fake_lag)
             recoilMenu = bubbleView.findViewById(R.id.recoil_menu)
 
@@ -604,13 +604,13 @@ class BubbleService : Service() {
     private fun actualizarUI() {
         val useRoot = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false)
         if (::btnFakeLag.isInitialized) {
-            btnFakeLag.alpha = if (LagController.fakeLagActivo) 1.0f else 0.5f
+            btnFakeLag.alpha = 1.0f
             val colorStr = if (useRoot) "#D500F9" else "#FFFFFF"
             btnFakeLag.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
         }
 
         if (::btnFantasma.isInitialized) {
-            btnFantasma.alpha = if (LagController.fantasmaActivo) 1.0f else 0.5f
+            btnFantasma.alpha = 1.0f
             val colorStr = if (useRoot) "#D500F9" else "#FFFFFF"
             btnFantasma.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
         }
