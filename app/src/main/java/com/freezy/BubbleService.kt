@@ -651,10 +651,18 @@ class BubbleService : Service() {
                     MotionEvent.ACTION_UP -> {
                         handler.removeCallbacks(longClickRunnable)
                         if (!isDragging && !isLongClickTriggered) {
-                            val nuevoEstado = !LagController.fakeLagActivo
-                            LagController.toggleFakeLag(nuevoEstado)
-                            actualizarUI()
-                            playSoundFromRes(if (nuevoEstado) R.raw.coin_on else R.raw.coin_off)
+                            val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+                            val useRoot = prefs.getBoolean("use_root", false)
+                            val rootModeType = prefs.getInt("root_mode_type", 0)
+                            
+                            if (useRoot && rootModeType == 1) {
+                                val nuevoEstado = !LagController.fakeLagActivo
+                                LagController.toggleFakeLag(nuevoEstado)
+                                actualizarUI()
+                                playSoundFromRes(if (nuevoEstado) R.raw.coin_on else R.raw.coin_off)
+                            } else {
+                                onBubbleTapped()
+                            }
                         } else if (isDragging) {
                             getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
                                 .putInt("bubble_x", params.x).putInt("bubble_y", params.y).apply()
