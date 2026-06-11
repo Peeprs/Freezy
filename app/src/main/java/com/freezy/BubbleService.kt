@@ -49,7 +49,6 @@ class BubbleService : Service() {
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var bubbleIcon: ImageView
     private lateinit var btnFakeLag: ImageView
-    private lateinit var btnFantasma: ImageView
     private lateinit var arcOverlay: ArcProgressView
     private lateinit var caraFakeLag: View
     private lateinit var recoilMenu: LinearLayout
@@ -60,12 +59,6 @@ class BubbleService : Service() {
     }
     private lateinit var fovOverlay: FovOverlay
     private var fovParams = WindowManager.LayoutParams()
-    private lateinit var bubbleFantasmaView: View
-    private lateinit var paramsFantasma: WindowManager.LayoutParams
-    private lateinit var bubbleIconFantasma: ImageView
-    private lateinit var caraFantasma: View
-    private var initialXFantasma = 0
-    private var initialYFantasma = 0
 
     private var suProcess: Process? = null
     private var suOutputStream: java.io.DataOutputStream? = null
@@ -86,15 +79,7 @@ class BubbleService : Service() {
     private var isFreezing = false
     private var fillAnimator: ValueAnimator? = null
 
-    // Variables para el mapeo del botón de disparo de Auto-Lag
-    private var shootAreaLeft = 0
-    private var shootAreaTop = 0
-    private var shootAreaRight = 0
-    private var shootAreaBottom = 0
 
-    private var mappingHudPanel: View? = null
-    private var mappingSeekBarView: View? = null
-    private var circleTargetContainer: View? = null
 
     // Vista personalizada que dibuja el arco circular de progreso
     inner class ArcProgressView(context: Context, var isRootMode: Boolean) : View(context) {
@@ -143,11 +128,6 @@ class BubbleService : Service() {
             try {
                 if (::bubbleView.isInitialized && bubbleView.parent != null) {
                     windowManager.removeView(bubbleView)
-                }
-            } catch (e: Exception) {}
-            try {
-                if (::bubbleFantasmaView.isInitialized && bubbleFantasmaView.parent != null) {
-                    windowManager.removeView(bubbleFantasmaView)
                 }
             } catch (e: Exception) {}
             setupBubble()
@@ -201,50 +181,13 @@ class BubbleService : Service() {
             }.start()
         }
         
-        // Variables eliminadas por duplicado
-        var isPremiumLicense = false
-        val actDate = prefs.getString("activation_date", "")
-        val expDate = prefs.getString("expiration_date", "")
-        if (!actDate.isNullOrEmpty() && !expDate.isNullOrEmpty() && actDate != "--" && expDate != "--") {
-            try {
-                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
-                val d1 = sdf.parse(actDate)
-                val d2 = sdf.parse(expDate)
-                if (d1 != null && d2 != null) {
-                    val diffMs = d2.time - d1.time
-                    val diffDays = java.util.concurrent.TimeUnit.DAYS.convert(diffMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                    if (diffDays >= 14) { // 14 días de diferencia para abarcar licencias de 15 días
-                        isPremiumLicense = true
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
 
-        if (!isPremiumLicense) {
-            prefs.edit()
-                .putBoolean("auto_lag_enabled", false)
-                .putBoolean("modo_mapeo_activo", false)
-                .commit()
-        }
-
-        val isAutoLagEnabled = prefs.getBoolean("auto_lag_enabled", false)
-        if (!isAutoLagEnabled) {
-            setupBubble() // Solo mostramos la burbuja normal en Fake Lag clásico!
-        }
+        setupBubble()
         
         startLicenseCheck()
         
         getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
             .putBoolean("is_bubble_running", true).apply()
-
-        // Si el modo mapeo está activo, iniciamos la interfaz de arrastre
-        if (prefs.getBoolean("modo_mapeo_activo", false)) {
-            iniciarInterfazDeMapeo()
-        } else if (isAutoLagEnabled && prefs.contains("shoot_left")) {
-            mostrarCirculoDeMapeoBloqueado()
-        }
     }
 
     private val licenseCheckRunnable = object : Runnable {
@@ -404,198 +347,169 @@ class BubbleService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
-        val rootModeType = prefs.getInt("root_mode_type", 0)
 
-        val showFakeLag = !useRoot || rootModeType == 0
-        val showFantasma = useRoot && rootModeType == 1
+        bubbleView = LayoutInflater.from(this).inflate(R.layout.bubble_layout, null)
+        btnFakeLag = bubbleView.findViewById(R.id.btn_fake_lag)
+        bubbleIcon = btnFakeLag // Bind directly to the visible button so play/pause state is shown correctly
+        caraFakeLag = bubbleView.findViewById(R.id.cara_fake_lag)
+        recoilMenu = bubbleView.findViewById(R.id.recoil_menu)
 
-        if (showFakeLag) {
-            bubbleView = LayoutInflater.from(this).inflate(R.layout.bubble_layout, null)
-            btnFakeLag = bubbleView.findViewById(R.id.btn_fake_lag)
-            bubbleIcon = btnFakeLag // Bind directly to the visible button so play/pause state is shown correctly
-            caraFakeLag = bubbleView.findViewById(R.id.cara_fake_lag)
-            recoilMenu = bubbleView.findViewById(R.id.recoil_menu)
+        btnFakeLag.isClickable = false
+        btnFakeLag.isFocusable = false
 
-            btnFakeLag.isClickable = false
-            btnFakeLag.isFocusable = false
+        // Aplicar tinte distintivo al ícono de Play según el modo
+        if (useRoot) {
+            bubbleIcon.setColorFilter(Color.parseColor("#D500F9"), android.graphics.PorterDuff.Mode.SRC_IN)
+        } else {
+            bubbleIcon.setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
+        }
 
-            // Aplicar tinte distintivo al ícono de Play según el modo
-            if (useRoot) {
-                bubbleIcon.setColorFilter(Color.parseColor("#D500F9"), android.graphics.PorterDuff.Mode.SRC_IN)
+        // Agregar la vista de arco circular programáticamente encima del ícono (en bubbleView)
+        arcOverlay = ArcProgressView(this, useRoot)
+        arcOverlay.visibility = View.GONE
+        val size = (59 * resources.displayMetrics.density).toInt()
+        (bubbleView as ViewGroup).addView(
+            arcOverlay,
+            FrameLayout.LayoutParams(size, size, Gravity.CENTER)
+        )
+
+        // Set obfuscated strings for the bubble menu
+        bubbleView.findViewById<android.widget.TextView>(R.id.tv_bubble_title)?.text = NativeBridge.getNativeString(NativeBridge.STRING_BUBBLE_TITLE)
+
+        // Configurar clics del menú
+        val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
+        btnBackToLag.setOnClickListener { returnToFakeLag() }
+
+        // Hacer el menú arrastrable usando el header
+        val menuHeader = bubbleView.findViewById<LinearLayout>(R.id.menu_header)
+        menuHeader.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = params.x; initialY = params.y
+                    initialTouchX = event.rawX; initialTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - initialTouchX
+                    val dy = event.rawY - initialTouchY
+                    params.x = initialX + dx.toInt()
+                    params.y = initialY + dy.toInt()
+                    windowManager.updateViewLayout(bubbleView, params)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
+                        .putInt("bubble_x", params.x).putInt("bubble_y", params.y).apply()
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // Configurar SeekBar y Switch
+        val recoilSeekbar = bubbleView.findViewById<SeekBar>(R.id.recoil_seekbar)
+        val recoilPercentage = bubbleView.findViewById<TextView>(R.id.recoil_percentage)
+        val recoilSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
+
+        recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}50%"
+        recoilSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_EXTERNAL)
+
+        recoilSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
+                    action = "START_RECOIL"
+                }
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+                
+                if (inputMonitor == null) {
+                    inputMonitor = com.freezy.network.InputMonitor(this)
+                }
+                inputMonitor?.startMonitoring()
             } else {
-                bubbleIcon.setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
+                val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
+                    action = "STOP_RECOIL"
+                }
+                startService(intent)
+                inputMonitor?.stopMonitoring()
+                Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_OFF), Toast.LENGTH_SHORT).show()
             }
-
-            // Agregar la vista de arco circular programáticamente encima del ícono (en bubbleView)
-            arcOverlay = ArcProgressView(this, useRoot)
-            arcOverlay.visibility = View.GONE
-            val size = (59 * resources.displayMetrics.density).toInt()
-            (bubbleView as ViewGroup).addView(
-                arcOverlay,
-                FrameLayout.LayoutParams(size, size, Gravity.CENTER)
-            )
-
-            // Set obfuscated strings for the bubble menu
-            bubbleView.findViewById<android.widget.TextView>(R.id.tv_bubble_title)?.text = NativeBridge.getNativeString(NativeBridge.STRING_BUBBLE_TITLE)
-
-            // Configurar clics del menú
-            val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
-            btnBackToLag.setOnClickListener { returnToFakeLag() }
-
-            // Hacer el menú arrastrable usando el header
-            val menuHeader = bubbleView.findViewById<LinearLayout>(R.id.menu_header)
-            menuHeader.setOnTouchListener { _, event ->
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialX = params.x; initialY = params.y
-                        initialTouchX = event.rawX; initialTouchY = event.rawY
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = event.rawX - initialTouchX
-                        val dy = event.rawY - initialTouchY
-                        params.x = initialX + dx.toInt()
-                        params.y = initialY + dy.toInt()
-                        windowManager.updateViewLayout(bubbleView, params)
-                        true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
-                            .putInt("bubble_x", params.x).putInt("bubble_y", params.y).apply()
-                        true
-                    }
-                    else -> false
-                }
+        }
+        
+        recoilSeekbar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}$progress%"
             }
-
-            // Configurar SeekBar y Switch
-            val recoilSeekbar = bubbleView.findViewById<SeekBar>(R.id.recoil_seekbar)
-            val recoilPercentage = bubbleView.findViewById<TextView>(R.id.recoil_percentage)
-            val recoilSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
-
-            recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}50%"
-            recoilSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_EXTERNAL)
-
-            recoilSwitch.setOnCheckedChangeListener { _, isChecked ->
-                if (isChecked) {
-                    val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
-                        action = "START_RECOIL"
-                    }
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        startForegroundService(intent)
-                    } else {
-                        startService(intent)
-                    }
-                    
-                    if (inputMonitor == null) {
-                        inputMonitor = com.freezy.network.InputMonitor(this)
-                    }
-                    inputMonitor?.startMonitoring()
-                } else {
-                    val intent = Intent(this, com.freezy.network.RecoilService::class.java).apply {
-                        action = "STOP_RECOIL"
-                    }
-                    startService(intent)
-                    inputMonitor?.stopMonitoring()
-                    Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_RECOIL_OFF), Toast.LENGTH_SHORT).show()
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val progress = seekBar?.progress ?: 0
+                val baseStrength = (progress * 0.5).toInt()
+                val maxStrength = (progress * 1.5).toInt()
+                
+                val intent = Intent(this@BubbleService, com.freezy.network.RecoilService::class.java).apply {
+                    action = "SET_PROFILE"
+                    putExtra("base", baseStrength)
+                    putExtra("inc", 1.2f)
+                    putExtra("max", maxStrength)
                 }
+                startService(intent)
             }
-            
-            recoilSeekbar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    recoilPercentage.text = "${NativeBridge.getNativeString(NativeBridge.STRING_EFFECTIVENESS)}$progress%"
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                    val progress = seekBar?.progress ?: 0
-                    val baseStrength = (progress * 0.5).toInt()
-                    val maxStrength = (progress * 1.5).toInt()
-                    
-                    val intent = Intent(this@BubbleService, com.freezy.network.RecoilService::class.java).apply {
-                        action = "SET_PROFILE"
-                        putExtra("base", baseStrength)
-                        putExtra("inc", 1.2f)
-                        putExtra("max", maxStrength)
+        })
+
+        val fovSwitch = bubbleView.findViewById<Switch>(R.id.fov_switch)
+        val fovSeekBar = bubbleView.findViewById<SeekBar>(R.id.fov_seekbar)
+        val fovText = bubbleView.findViewById<TextView>(R.id.fov_size_text)
+
+        fovSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_FOV_EXTERNAL)
+        fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}0px"
+
+        fovSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                windowManager.addView(fovOverlay, fovParams)
+                NativeBridge.setFovEnabled(true)
+            } else {
+                windowManager.removeView(fovOverlay)
+                NativeBridge.setFovEnabled(false)
+            }
+        }
+
+        fovSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}${progress}px"
+                
+                if (progress > 0 && fovSwitch.isChecked) {
+                    if (fovOverlay.parent == null) {
+                        windowManager.addView(fovOverlay, fovParams)
                     }
-                    startService(intent)
-                }
-            })
-
-            val fovSwitch = bubbleView.findViewById<Switch>(R.id.fov_switch)
-            val fovSeekBar = bubbleView.findViewById<SeekBar>(R.id.fov_seekbar)
-            val fovText = bubbleView.findViewById<TextView>(R.id.fov_size_text)
-
-            fovSwitch.text = NativeBridge.getNativeString(NativeBridge.STRING_FOV_EXTERNAL)
-            fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}0px"
-
-            fovSwitch.setOnCheckedChangeListener { _, isChecked ->
-                if (isChecked) {
-                    windowManager.addView(fovOverlay, fovParams)
+                    fovOverlay.updateRadius(progress)
                     NativeBridge.setFovEnabled(true)
-                } else {
-                    windowManager.removeView(fovOverlay)
+                    NativeBridge.setFovRadius(progress)
+                } else if (progress == 0) {
+                    if (fovOverlay.parent != null) {
+                        windowManager.removeView(fovOverlay)
+                    }
                     NativeBridge.setFovEnabled(false)
                 }
             }
+            override fun onStartTrackingTouch(p0: SeekBar?) {}
+            override fun onStopTrackingTouch(p0: SeekBar?) {}
+        })
 
-            fovSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    fovText.text = "${NativeBridge.getNativeString(NativeBridge.STRING_FOV_RADIUS)}${progress}px"
-                    
-                    if (progress > 0 && fovSwitch.isChecked) {
-                        if (fovOverlay.parent == null) {
-                            windowManager.addView(fovOverlay, fovParams)
-                        }
-                        fovOverlay.updateRadius(progress)
-                        NativeBridge.setFovRadius(progress)
-                        NativeBridge.setFovEnabled(true)
-                    } else if (progress == 0) {
-                        if (fovOverlay.parent != null) {
-                            windowManager.removeView(fovOverlay)
-                        }
-                        NativeBridge.setFovEnabled(false)
-                    }
-                }
-                override fun onStartTrackingTouch(p0: SeekBar?) {}
-                override fun onStopTrackingTouch(p0: SeekBar?) {}
-            })
-
-            params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = prefs.getInt("bubble_x", 100)
-                y = prefs.getInt("bubble_y", 200)
-            }
-            windowManager.addView(bubbleView, params)
+        params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = prefs.getInt("bubble_x", 100)
+            y = prefs.getInt("bubble_y", 200)
         }
-
-        if (showFantasma) {
-            bubbleFantasmaView = LayoutInflater.from(this).inflate(R.layout.bubble_fantasma_layout, null)
-            bubbleIconFantasma = bubbleFantasmaView.findViewById(R.id.bubble_icon_fantasma)
-            btnFantasma = bubbleFantasmaView.findViewById(R.id.btn_fantasma)
-            caraFantasma = bubbleFantasmaView.findViewById(R.id.cara_fantasma)
-
-            btnFantasma.isClickable = false
-            btnFantasma.isFocusable = false
-
-            paramsFantasma = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = prefs.getInt("bubble_fantasma_x", 100)
-                y = prefs.getInt("bubble_fantasma_y", 300)
-            }
-            windowManager.addView(bubbleFantasmaView, paramsFantasma)
-        }
+        windowManager.addView(bubbleView, params)
 
         setupTouchListener()
         actualizarUI()
@@ -603,17 +517,35 @@ class BubbleService : Service() {
 
     private fun actualizarUI() {
         val useRoot = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false)
-        if (::btnFakeLag.isInitialized) {
-            btnFakeLag.alpha = 1.0f
-            val colorStr = if (useRoot) "#D500F9" else "#FFFFFF"
-            btnFakeLag.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
+        
+        // 1. Actualizar Fake Lag UI (incluyendo modo Root y No-Root)
+        if (::btnFakeLag.isInitialized && ::caraFakeLag.isInitialized) {
+            val isFakeLagActive = if (useRoot) LagController.fakeLagActivo else isFreezing
+            
+            // Tintar icono
+            if (isFakeLagActive) {
+                btnFakeLag.setColorFilter(Color.parseColor("#D500F9"), android.graphics.PorterDuff.Mode.SRC_IN)
+                btnFakeLag.alpha = 1.0f
+            } else {
+                val colorStr = if (useRoot) "#D500F9" else "#FFFFFF"
+                btnFakeLag.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
+                btnFakeLag.alpha = if (useRoot) 0.6f else 1.0f
+            }
+            
+            // Tintar fondo de cristal para feedback premium (Púrpura Neón)
+            val bgFakeLag = caraFakeLag.background.mutate() as? android.graphics.drawable.GradientDrawable
+            if (bgFakeLag != null) {
+                if (isFakeLagActive) {
+                    bgFakeLag.setColor(Color.parseColor("#99D500F9"))
+                    bgFakeLag.setStroke((2.5f * resources.displayMetrics.density).toInt(), Color.parseColor("#D500F9"))
+                } else {
+                    bgFakeLag.setColor(Color.parseColor("#991A1A1A"))
+                    bgFakeLag.setStroke((1.5f * resources.displayMetrics.density).toInt(), Color.parseColor("#80FFFFFF"))
+                }
+            }
         }
 
-        if (::btnFantasma.isInitialized) {
-            btnFantasma.alpha = 1.0f
-            val colorStr = if (useRoot) "#D500F9" else "#FFFFFF"
-            btnFantasma.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
-        }
+
 
         if (::arcOverlay.isInitialized) {
             arcOverlay.updateMode(useRoot)
@@ -651,61 +583,12 @@ class BubbleService : Service() {
                     MotionEvent.ACTION_UP -> {
                         handler.removeCallbacks(longClickRunnable)
                         if (!isDragging && !isLongClickTriggered) {
-                            val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
-                            val useRoot = prefs.getBoolean("use_root", false)
-                            val rootModeType = prefs.getInt("root_mode_type", 0)
-                            
-                            if (useRoot && rootModeType == 1) {
-                                val nuevoEstado = !LagController.fakeLagActivo
-                                LagController.toggleFakeLag(nuevoEstado)
-                                actualizarUI()
-                                playSoundFromRes(if (nuevoEstado) R.raw.coin_on else R.raw.coin_off)
-                            } else {
-                                onBubbleTapped()
-                            }
+                            // Retroalimentación háptica premium al tacto
+                            caraFakeLag.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                            onBubbleTapped()
                         } else if (isDragging) {
                             getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
                                 .putInt("bubble_x", params.x).putInt("bubble_y", params.y).apply()
-                        }
-                        true
-                    }
-                    else -> false
-                }
-            }
-        }
-
-        if (::caraFantasma.isInitialized) {
-            var isDraggingFantasma = false
-            caraFantasma.setOnTouchListener { _, event ->
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        isDraggingFantasma = false
-                        initialXFantasma = paramsFantasma.x; initialYFantasma = paramsFantasma.y
-                        initialTouchX = event.rawX; initialTouchY = event.rawY
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = event.rawX - initialTouchX
-                        val dy = event.rawY - initialTouchY
-                        if (abs(dx) > 8 || abs(dy) > 8) {
-                            isDraggingFantasma = true
-                        }
-                        if (isDraggingFantasma) {
-                            paramsFantasma.x = initialXFantasma + dx.toInt()
-                            paramsFantasma.y = initialYFantasma + dy.toInt()
-                            windowManager.updateViewLayout(bubbleFantasmaView, paramsFantasma)
-                        }
-                        true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        if (!isDraggingFantasma) {
-                            val nuevoEstado = !LagController.fantasmaActivo
-                            LagController.toggleFantasma(nuevoEstado)
-                            actualizarUI()
-                            playGhostSound()
-                        } else {
-                            getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
-                                .putInt("bubble_fantasma_x", paramsFantasma.x).putInt("bubble_fantasma_y", paramsFantasma.y).apply()
                         }
                         true
                     }
@@ -772,28 +655,6 @@ class BubbleService : Service() {
         if (::fovOverlay.isInitialized) {
             fovOverlay.setFiringState(isFiring)
         }
-
-        // Si el modo Auto-Lag está activo, disparamos el lag switch
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("auto_lag_enabled", false)) {
-            val useRoot = prefs.getBoolean("use_root", false)
-            if (isFiring) {
-                if (!isFreezing) {
-                    isFreezing = true
-                    startFreeze(useRoot)
-                    if (::arcOverlay.isInitialized) {
-                        startArcAnimation(1500L) // Límite de 1.5 segundos para evitar desconexiones
-                    }
-                    handler.postDelayed({
-                        if (isFreezing) stopFreeze(useRoot)
-                    }, 1500L)
-                }
-            } else {
-                if (isFreezing) {
-                    stopFreeze(useRoot)
-                }
-            }
-        }
     }
 
     private fun toggleManual(useRoot: Boolean) {
@@ -835,14 +696,7 @@ class BubbleService : Service() {
         playSoundFromRes(R.raw.coin_on)
         Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_ACTIVE) + " (Root: $useRoot)")
         
-        // Brillo visual de disparo: cambiar círculo a rojo translúcido si está visible
-        if (circleTargetContainer != null) {
-            circleTargetContainer?.post {
-                circleTargetContainer?.findViewById<View>(R.id.circle_target)?.setBackgroundTintList(
-                    android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FF3B30"))
-                )
-            }
-        }
+
         
         if (useRoot) {
             val rootModeType = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getInt("root_mode_type", 0)
@@ -875,12 +729,7 @@ class BubbleService : Service() {
         Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_DEACTIVATED))
         isFreezing = false
         
-        // Restaurar círculo a su diseño normal (quitar filtro rojo)
-        if (circleTargetContainer != null) {
-            circleTargetContainer?.post {
-                circleTargetContainer?.findViewById<View>(R.id.circle_target)?.setBackgroundTintList(null)
-            }
-        }
+
         
         if (::arcOverlay.isInitialized) {
             fillAnimator?.cancel()
@@ -931,58 +780,7 @@ class BubbleService : Service() {
         }
     }
 
-    private fun playGhostSound() {
-        Thread {
-            try {
-                val sampleRate = 44100
-                val durationS = 0.32f
-                val numSamples = (durationS * sampleRate).toInt()
-                val sample = ShortArray(numSamples)
-                
-                // Generar un barrido de frecuencia spooky corto y táctico: onda senoidal con vibrato rápido
-                for (i in 0 until numSamples) {
-                    val t = i.toFloat() / sampleRate
-                    // Envolvente de amplitud ultra-compacta para evitar chasquidos (fade-in de 40ms, fade-out de 60ms)
-                    val env = if (t < 0.04f) {
-                        t / 0.04f
-                    } else if (t > durationS - 0.06f) {
-                        (durationS - t) / 0.06f
-                    } else {
-                        1.0f
-                    }
-                    
-                    // Frecuencia instantánea
-                    val progress = t / durationS
-                    val baseFreq = 350f + 350f * Math.sin(progress * Math.PI).toFloat()
-                    val vibrato = 30f * Math.sin(2.0 * Math.PI * 12.0 * t).toFloat()
-                    val freq = baseFreq + vibrato
-                    
-                    // Fase acumulada
-                    val angle = 2.0 * Math.PI * freq * t
-                    sample[i] = (Math.sin(angle) * Short.MAX_VALUE * env * 0.5f).toInt().toShort()
-                }
-                
-                val audioTrack = android.media.AudioTrack(
-                    android.media.AudioManager.STREAM_MUSIC,
-                    sampleRate,
-                    android.media.AudioFormat.CHANNEL_OUT_MONO,
-                    android.media.AudioFormat.ENCODING_PCM_16BIT,
-                    numSamples * 2,
-                    android.media.AudioTrack.MODE_STATIC
-                )
-                audioTrack.write(sample, 0, numSamples)
-                audioTrack.play()
-                // Liberar después de reproducir
-                Thread.sleep((durationS * 1000).toLong() + 100)
-                try {
-                    audioTrack.stop()
-                } catch (e: Exception) {}
-                audioTrack.release()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }.start()
-    }
+
 
     private fun startArcAnimation(duration: Long) {
         arcOverlay.progress = 0f
@@ -1019,10 +817,6 @@ class BubbleService : Service() {
             LagController.desactivarFakeLagRoot()
             LagController.fakeLagActivo = false
         }
-        if (LagController.fantasmaActivo) {
-            LagController.desactivarFantasmaRoot()
-            LagController.fantasmaActivo = false
-        }
         
         if (isFreezing) stopFreeze(getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false))
         fillAnimator?.cancel()
@@ -1040,24 +834,11 @@ class BubbleService : Service() {
         if (::bubbleView.isInitialized && bubbleView.parent != null) {
             windowManager.removeView(bubbleView)
         }
-        if (::bubbleFantasmaView.isInitialized && bubbleFantasmaView.parent != null) {
-            windowManager.removeView(bubbleFantasmaView)
-        }
         if (::fovOverlay.isInitialized && fovOverlay.parent != null) {
             windowManager.removeView(fovOverlay)
         }
         
-        try {
-            if (mappingHudPanel != null && mappingHudPanel?.parent != null) {
-                windowManager.removeView(mappingHudPanel)
-            }
-            if (mappingSeekBarView != null && mappingSeekBarView?.parent != null) {
-                windowManager.removeView(mappingSeekBarView)
-            }
-            if (circleTargetContainer != null && circleTargetContainer?.parent != null) {
-                windowManager.removeView(circleTargetContainer)
-            }
-        } catch (e: Exception) {}
+
         
         // Cerrar el shell root correctamente
         try {
@@ -1071,244 +852,7 @@ class BubbleService : Service() {
             .putBoolean("is_bubble_running", false).apply()
     }
 
-    private fun iniciarInterfazDeMapeo() {
-        if (!::windowManager.isInitialized) {
-            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        }
 
-        // Inflamos el XML completo una sola vez para extraer las tres vistas individuales
-        val parentView = LayoutInflater.from(this).inflate(R.layout.layout_mapping_bubble, null) as ViewGroup
-        
-        val rawHudPanel = parentView.findViewById<View>(R.id.mapping_hud_panel)
-        val rawSeekBarView = parentView.findViewById<View>(R.id.layout_seekbar_container)
-        val rawCircleContainer = parentView.findViewById<View>(R.id.circle_target_container)
-
-        // Desconectamos las vistas de su FrameLayout padre para poder añadirlas por separado a WindowManager
-        parentView.removeView(rawHudPanel)
-        parentView.removeView(rawSeekBarView)
-        parentView.removeView(rawCircleContainer)
-
-        mappingHudPanel = rawHudPanel
-        mappingSeekBarView = rawSeekBarView
-        circleTargetContainer = rawCircleContainer
-
-        // 1. Configurar LayoutParams del HUD panel (Superior Central)
-        val hudParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = (36 * resources.displayMetrics.density).toInt() // Margen de arriba
-        }
-
-        // 2. Configurar LayoutParams de la barra de progreso lateral (Izquierda Centro)
-        val seekParams = WindowManager.LayoutParams(
-            (60 * resources.displayMetrics.density).toInt(),
-            (240 * resources.displayMetrics.density).toInt(),
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.CENTER_VERTICAL or Gravity.START
-            x = (16 * resources.displayMetrics.density).toInt() // Margen de izquierda
-        }
-
-        // 3. Configurar LayoutParams del círculo de disparo (Centro arrastrable)
-        val circleParams = WindowManager.LayoutParams(
-            (80 * resources.displayMetrics.density).toInt(), // Ancho inicial
-            (80 * resources.displayMetrics.density).toInt(), // Alto inicial
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.CENTER
-        }
-
-        val btnToggle = mappingHudPanel!!.findViewById<Button>(R.id.btn_toggle_mapeo)
-        val btnAceptar = mappingHudPanel!!.findViewById<Button>(R.id.btn_aceptar_mapeo)
-        val seekbarSize = mappingSeekBarView!!.findViewById<SeekBar>(R.id.seekbar_circle_size)
-
-        var isShowing = false
-
-        btnToggle.setOnClickListener {
-            isShowing = !isShowing
-            if (isShowing) {
-                btnToggle.text = "Cerrar"
-                btnAceptar.visibility = View.VISIBLE
-                
-                // Forzar visibilidad para contrarrestar el 'gone' original del XML
-                mappingSeekBarView?.visibility = View.VISIBLE
-                circleTargetContainer?.visibility = View.VISIBLE
-                
-                // Agregamos el SeekBar y el Círculo dinámicamente al WindowManager
-                if (mappingSeekBarView?.parent == null) {
-                    windowManager.addView(mappingSeekBarView, seekParams)
-                }
-                if (circleTargetContainer?.parent == null) {
-                    windowManager.addView(circleTargetContainer, circleParams)
-                }
-            } else {
-                btnToggle.text = "Mostrar"
-                btnAceptar.visibility = View.GONE
-                
-                // Removemos el SeekBar y el Círculo del WindowManager
-                if (mappingSeekBarView?.parent != null) {
-                    windowManager.removeView(mappingSeekBarView)
-                }
-                if (circleTargetContainer?.parent != null) {
-                    windowManager.removeView(circleTargetContainer)
-                }
-            }
-        }
-
-        seekbarSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val density = resources.displayMetrics.density
-                val progressPx = (progress * density).toInt()
-                val newSize = Math.max((40 * density).toInt(), progressPx) // Mínimo 40dp en píxeles
-                
-                circleParams.width = newSize
-                circleParams.height = newSize
-                
-                if (circleTargetContainer?.parent != null) {
-                    windowManager.updateViewLayout(circleTargetContainer, circleParams)
-                }
-            }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
-
-        var initX = 0
-        var initY = 0
-        var touchX = 0f
-        var touchY = 0f
-
-        circleTargetContainer!!.setOnTouchListener { _: View, event: MotionEvent ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initX = circleParams.x
-                    initY = circleParams.y
-                    touchX = event.rawX
-                    touchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    circleParams.x = initX + (event.rawX - touchX).toInt()
-                    circleParams.y = initY + (event.rawY - touchY).toInt()
-                    if (circleTargetContainer?.parent != null) {
-                        windowManager.updateViewLayout(circleTargetContainer, circleParams)
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
-
-        btnAceptar.setOnClickListener {
-            val location = IntArray(2)
-            circleTargetContainer!!.getLocationOnScreen(location)
-            
-            shootAreaLeft = location[0]
-            shootAreaTop = location[1]
-            shootAreaRight = shootAreaLeft + circleParams.width
-            shootAreaBottom = shootAreaTop + circleParams.height
-
-            // Guardar en preferencias para recordarlo en futuros lanzamientos
-            getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
-                .putInt("shoot_left", shootAreaLeft)
-                .putInt("shoot_top", shootAreaTop)
-                .putInt("shoot_right", shootAreaRight)
-                .putInt("shoot_bottom", shootAreaBottom)
-                .putBoolean("modo_mapeo_activo", false)
-                .apply()
-
-            // Si el InputMonitor no se ha creado, lo instanciamos y activamos
-            if (inputMonitor == null) {
-                inputMonitor = com.freezy.network.InputMonitor(this)
-            }
-            inputMonitor?.startMonitoring()
-            inputMonitor?.updateFireZone(shootAreaLeft, shootAreaTop, shootAreaRight, shootAreaBottom)
-
-            // Hacer el círculo completamente intangible al tacto y reposicionarlo de forma fija
-            circleParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            circleParams.gravity = Gravity.TOP or Gravity.START
-            circleParams.x = shootAreaLeft
-            circleParams.y = shootAreaTop
-            
-            if (circleTargetContainer?.parent != null) {
-                windowManager.updateViewLayout(circleTargetContainer, circleParams)
-            }
-
-            // Ocultar de inmediato las opciones de aumento, sliders y HUD de mostrar
-            try {
-                if (mappingHudPanel?.parent != null) windowManager.removeView(mappingHudPanel)
-                if (mappingSeekBarView?.parent != null) windowManager.removeView(mappingSeekBarView)
-            } catch (e: Exception) {}
-            
-            Toast.makeText(this, "Botón de disparo mapeado y guardado.", Toast.LENGTH_SHORT).show()
-        }
-
-        // Al inicio, solo agregamos el panel de control (que tiene el botón "Mostrar")
-        windowManager.addView(mappingHudPanel, hudParams)
-    }
-
-    private fun mostrarCirculoDeMapeoBloqueado() {
-        if (!::windowManager.isInitialized) {
-            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        }
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
-        val left = prefs.getInt("shoot_left", -1)
-        val top = prefs.getInt("shoot_top", -1)
-        val right = prefs.getInt("shoot_right", -1)
-        val bottom = prefs.getInt("shoot_bottom", -1)
-        
-        val width = right - left
-        val height = bottom - top
-        if (left == -1 || top == -1 || width <= 0 || height <= 0) return
-
-        val parentView = LayoutInflater.from(this).inflate(R.layout.layout_mapping_bubble, null) as ViewGroup
-        val rawCircleContainer = parentView.findViewById<View>(R.id.circle_target_container)
-        parentView.removeView(rawCircleContainer)
-        
-        circleTargetContainer = rawCircleContainer
-        circleTargetContainer?.visibility = View.VISIBLE
-
-        val circleParams = WindowManager.LayoutParams(
-            width,
-            height,
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = left
-            y = top
-        }
-
-        windowManager.addView(circleTargetContainer, circleParams)
-        
-        // Iniciamos y alimentamos el lector nativo InputMonitor
-        if (inputMonitor == null) {
-            inputMonitor = com.freezy.network.InputMonitor(this)
-        }
-        inputMonitor?.startMonitoring()
-        inputMonitor?.updateFireZone(left, top, right, bottom)
-    }
 
     private fun isAppOrGameInForeground(): Boolean {
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)

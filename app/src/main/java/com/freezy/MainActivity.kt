@@ -106,20 +106,6 @@ class MainActivity : AppCompatActivity() {
         val btnModeNoroot = findViewById<TextView>(R.id.btn_mode_noroot)
         val btnModeRoot = findViewById<TextView>(R.id.btn_mode_root)
         val indicatorRootView = findViewById<View>(R.id.indicator_root_view)
-        val cardAutoLag = findViewById<View>(R.id.card_autolag)
-        val cardRootOptions = findViewById<View>(R.id.card_root_options)
-        val rgRootMode = findViewById<android.widget.RadioGroup>(R.id.rg_root_mode)
-
-        rgRootMode.check(if (prefs.getInt("root_mode_type", 0) == 1) R.id.rb_fantasma else R.id.rb_fake_lag)
-        rgRootMode.setOnCheckedChangeListener { _, checkedId ->
-            prefs.edit().putInt("root_mode_type", if (checkedId == R.id.rb_fantasma) 1 else 0).apply()
-            if (isServiceRunning(BubbleService::class.java)) {
-                val serviceIntent = Intent(this, BubbleService::class.java).apply {
-                    action = "UPDATE_BUBBLE_MODE"
-                }
-                startService(serviceIntent)
-            }
-        }
 
         fun updateRootUI(useRoot: Boolean, animate: Boolean) {
             val width = (btnModeNoroot.parent as View).width / 2
@@ -141,8 +127,6 @@ class MainActivity : AppCompatActivity() {
             if (useRoot) {
                 btnModeNoroot.setTextColor(Color.parseColor("#888888"))
                 btnModeRoot.setTextColor(Color.WHITE)
-                // cardAutoLag.visibility = View.VISIBLE
-                cardRootOptions.visibility = View.VISIBLE
                 
                 btnFreezy.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#9C27B0")))
                 btnFreezy.setTextColor(Color.WHITE)
@@ -190,16 +174,9 @@ class MainActivity : AppCompatActivity() {
             } else {
                 btnModeRoot.setTextColor(Color.parseColor("#888888"))
                 btnModeNoroot.setTextColor(Color.BLACK)
-                cardAutoLag.visibility = View.GONE
-                cardRootOptions.visibility = View.GONE
                 
                 btnFreezy.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.WHITE))
                 btnFreezy.setTextColor(Color.BLACK)
-                
-                // Forzar desactivación de Auto-Lag para que no interfiera y no fuerce Root
-                getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit().putBoolean("auto_lag_enabled", false).apply()
-                findViewById<Switch>(R.id.switch_autolag)?.isChecked = false
-                findViewById<Button>(R.id.btn_reset_autolag)?.visibility = View.GONE
                 
                 rootGlowAnimator?.cancel()
                 rootGlowAnimator = null
@@ -306,72 +283,7 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
-        /*
-        val switchAutoLag = findViewById<Switch>(R.id.switch_autolag)
-        val btnResetAutoLag = findViewById<Button>(R.id.btn_reset_autolag)
-        
-        val isPremium = checkIsPremiumLicense(prefs)
-        if (!isPremium) {
-            prefs.edit()
-                .putBoolean("auto_lag_enabled", false)
-                .putBoolean("modo_mapeo_activo", false)
-                .apply()
-        }
 
-        switchAutoLag.isChecked = prefs.getBoolean("auto_lag_enabled", false)
-        btnResetAutoLag.visibility = if (switchAutoLag.isChecked) View.VISIBLE else View.GONE
-
-        switchAutoLag.setOnCheckedChangeListener { buttonView, isChecked ->
-            if (isChecked && !checkIsPremiumLicense(prefs)) {
-                buttonView.isChecked = false
-                Toast.makeText(this, "El modo Auto-Lag requiere una licencia Premium (mínimo 15 días).", Toast.LENGTH_LONG).show()
-                return@setOnCheckedChangeListener
-            }
-            prefs.edit().putBoolean("auto_lag_enabled", isChecked).apply()
-            btnResetAutoLag.visibility = if (isChecked) View.VISIBLE else View.GONE
-            if (isChecked) {
-                // Si no tiene coordenadas previas guardadas, iniciar el mapeo
-                if (!prefs.contains("shoot_left")) {
-                    AlertDialog.Builder(this)
-                        .setTitle("Modo Auto-Lag")
-                        .setMessage("Deberá colocar el círculo sobre su botón de disparo en el juego. Ajústelo al tamaño lo más preciso posible.")
-                        .setCancelable(false)
-                        .setPositiveButton("Entendido") { _, _ ->
-                            iniciarCuentaRegresivaAutoLag()
-                        }
-                        .setNegativeButton("Cancelar") { dialog, _ ->
-                            switchAutoLag.isChecked = false
-                            btnResetAutoLag.visibility = View.GONE
-                            dialog.dismiss()
-                        }
-                        .show()
-                } else {
-                    Toast.makeText(this, "Modo Auto-Lag activado usando mapeo existente.", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-
-        btnResetAutoLag.setOnClickListener {
-            prefs.edit()
-                .remove("shoot_left")
-                .remove("shoot_top")
-                .remove("shoot_right")
-                .remove("shoot_bottom")
-                .putBoolean("modo_mapeo_activo", true)
-                .apply()
-            
-            AlertDialog.Builder(this)
-                .setTitle("Restablecer Mapeo")
-                .setMessage("Las coordenadas anteriores fueron eliminadas. ¿Deseas iniciar la calibración del botón de disparo ahora?")
-                .setPositiveButton("Sí, iniciar") { _, _ ->
-                    iniciarCuentaRegresivaAutoLag()
-                }
-                .setNegativeButton("No, después") { dialog, _ ->
-                    dialog.dismiss()
-                }
-                .show()
-        }
-        */
 
         btnFreezy.setOnClickListener {
             if (!Settings.canDrawOverlays(this)) {
@@ -383,17 +295,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            /*
-            val isAutoLag = prefs.getBoolean("auto_lag_enabled", false)
-            if (isAutoLag) {
-                // El modo Auto-Lag requiere Root obligatorio para leer /dev/input/event* y bloquear udp
-                if (!hasRootAccess()) {
-                    Toast.makeText(this, "El modo Auto-Lag requiere permisos de Root obligatorios.", Toast.LENGTH_LONG).show()
-                    return@setOnClickListener
-                }
-                prefs.edit().putBoolean("use_root", true).apply()
-            }
-            */
+
 
             val useRoot = prefs.getBoolean("use_root", false)
             if (useRoot && !hasRootAccess()) {
@@ -759,32 +661,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun iniciarCuentaRegresivaAutoLag() {
-        val progressDialog = AlertDialog.Builder(this)
-            .setTitle("Iniciando")
-            .setMessage("Abriendo Free Fire en 3 segundos...")
-            .setCancelable(false)
-            .create()
-        progressDialog.show()
 
-        var count = 3
-        val handler = Handler(Looper.getMainLooper())
-        handler.post(object : Runnable {
-            override fun run() {
-                if (count > 0) {
-                    progressDialog.setMessage("Abriendo Free Fire en $count segundos...")
-                    count--
-                    handler.postDelayed(this, 1000)
-                } else {
-                    progressDialog.dismiss()
-                    getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).edit()
-                        .putBoolean("modo_mapeo_activo", true)
-                        .apply()
-                    checkLicenseAndLaunch()
-                }
-            }
-        })
-    }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)

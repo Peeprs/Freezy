@@ -194,6 +194,7 @@ static bool epoll_del(int fd) {
 
 // Set from Kotlin: true = drop incoming UDP (lag switch ON)
 extern "C" std::atomic<bool> gLagActive{false};
+static std::atomic<uint64_t> g_last_keepalive_time{0};
 
 /* ── JNI callback to protect a socket ───────────────────────────────────── */
 static JavaVM*    g_jvm     = nullptr;
@@ -905,6 +906,8 @@ void* engine_thread(void*) {
                                         sendto(sock, payload, plen, 0, (sockaddr*)&dst, sizeof(dst));
                                     }
                                 } else if (plen > 0 && plen <= n - ihl - 8) {
+                                    uint16_t dport = ntohs(udph->dport);
+                                    bool is_game = is_game_port(dport);
                                     int sock = get_or_create_flow(
                                         false, 
                                         (const uint8_t*)&iph->saddr, udph->sport,

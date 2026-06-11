@@ -234,7 +234,7 @@ void* touch_monitor_thread(void* arg) {
                         if (!any_active_fire) {
                             set_firing(false);
                             notify_ui_firing_state(false);
-                            LOGI("Disparo AUTO-LAG finalizado (dedo levantado)");
+                            LOGI("Disparo en zona finalizado (dedo levantado)");
                         }
                     }
                     g_slots[g_current_slot].new_touch = false;
@@ -270,7 +270,7 @@ void* touch_monitor_thread(void* arg) {
                 if (was_firing) {
                     set_firing(false);
                     notify_ui_firing_state(false);
-                    LOGI("Disparo AUTO-LAG finalizado por BTN_TOUCH = 0");
+                    LOGI("Disparo en zona finalizado por BTN_TOUCH = 0");
                 }
             }
         } else if (ev.type == EV_SYN && ev.code == SYN_REPORT) {
@@ -284,12 +284,12 @@ void* touch_monitor_thread(void* arg) {
                     
                     LOGD("Slot %d Touch DOWN: raw(%d, %d) -> pixel(%d, %d)", i, g_slots[i].raw_x, g_slots[i].raw_y, pixel_x, pixel_y);
                     
-                    // 1. Check mapped Auto-Lag zone
+                    // 1. Check mapped fire zone
                     if (is_in_fire_zone(pixel_x, pixel_y)) {
                         g_slots[i].started_in_fire_zone = true;
                         set_firing(true);
                         notify_ui_firing_state(true);
-                        LOGI("Disparo AUTO-LAG detectado en Slot %d", i);
+                        LOGI("Disparo en zona detectado en Slot %d", i);
                     }
                     
                     // 2. Check FOV overlay
