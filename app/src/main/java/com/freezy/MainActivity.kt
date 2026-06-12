@@ -14,6 +14,9 @@ import android.widget.Toast
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.SeekBar
+import android.widget.ProgressBar
+import android.content.res.ColorStateList
+import android.animation.ValueAnimator
 import android.view.View
 import android.view.Menu
 import android.view.MenuItem
@@ -36,6 +39,9 @@ class MainActivity : AppCompatActivity() {
 
     private var targetPackageToLaunch: String? = null
 
+    private val licenseHandler = Handler(Looper.getMainLooper())
+    private var licenseRunnable: Runnable? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -55,6 +61,22 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_USAGE_ACCESS_REQ), Toast.LENGTH_LONG).show()
         }
 
+        // Pedir ignorar optimizaciones de bateria (Vital para gama baja y antiban)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = android.net.Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                    Toast.makeText(this, "Para evitar desincronizacion (antiban en gama baja), selecciona SIN RESTRICCIONES en el ahorro de bateria para Freezy.", Toast.LENGTH_LONG).show()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
         if (Settings.canDrawOverlays(this)) {
             Logger.log(this, "Permiso Overlay Permitido")
         }
@@ -64,17 +86,6 @@ class MainActivity : AppCompatActivity() {
 
         val btnFreezy = findViewById<Button>(R.id.btn_freezy)
         
-        // Animación pulsante llamativa
-        val pulseX = ObjectAnimator.ofFloat(btnFreezy, "scaleX", 1f, 1.05f, 1f).apply {
-            duration = 1500
-            repeatCount = ObjectAnimator.INFINITE
-        }
-        val pulseY = ObjectAnimator.ofFloat(btnFreezy, "scaleY", 1f, 1.05f, 1f).apply {
-            duration = 1500
-            repeatCount = ObjectAnimator.INFINITE
-        }
-        pulseX.start()
-        pulseY.start()
         
         val btnModeAuto = findViewById<TextView>(R.id.btn_mode_auto)
         val btnModeCustom = findViewById<TextView>(R.id.btn_mode_custom)
@@ -86,9 +97,26 @@ class MainActivity : AppCompatActivity() {
         val seekbarTime = findViewById<SeekBar>(R.id.seekbar_time)
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
 
+        val progressLicenseDays = findViewById<ProgressBar>(R.id.progress_license_days)
+        val viewLedStatus = findViewById<View>(R.id.view_led_status)
+
+        // Pulsing animation for status LED
+        viewLedStatus?.let { led ->
+            val pulseAlpha = ObjectAnimator.ofFloat(led, "alpha", 1f, 0.4f, 1f).apply {
+                duration = 1200
+                repeatCount = ObjectAnimator.INFINITE
+            }
+            pulseAlpha.start()
+        }
+
+        // Safe License Progress Calculation
+        startLicenseCountdown()
+
         // Ajustar el ancho del indicador dinámicamente
         indicatorView.post {
-            val width = (btnModeAuto.parent as View).width / 3
+            val parent = btnModeAuto.parent as View
+            val padding = parent.paddingLeft + parent.paddingRight
+            val width = (parent.width - padding) / 3
             indicatorView.layoutParams.width = width
             indicatorView.requestLayout()
             
@@ -97,7 +125,7 @@ class MainActivity : AppCompatActivity() {
             updateModeUI(currentMode, btnModeAuto, btnModeCustom, btnModeManual, indicatorView, layoutCustomTime, false)
         }
 
-        val customTimeFloat = prefs.getFloat("custom_time_float", 3.0f).coerceAtMost(5.0f)
+        val customTimeFloat = prefs.getFloat("custom_time_float", 3.0f).coerceAtLeast(1.0f).coerceAtMost(5.0f)
         seekbarTime.max = 50 // Máximo 5.0 segundos (50 / 10)
         seekbarTime.progress = (customTimeFloat * 10).toInt()
         tvTimeLabel.text = String.format("%.1f Segundos", customTimeFloat)
@@ -108,7 +136,9 @@ class MainActivity : AppCompatActivity() {
         val indicatorRootView = findViewById<View>(R.id.indicator_root_view)
 
         fun updateRootUI(useRoot: Boolean, animate: Boolean) {
-            val width = (btnModeNoroot.parent as View).width / 2
+            val parent = btnModeNoroot.parent as View
+            val padding = parent.paddingLeft + parent.paddingRight
+            val width = (parent.width - padding) / 2
             indicatorRootView.layoutParams.width = width
             indicatorRootView.requestLayout()
 
@@ -125,16 +155,23 @@ class MainActivity : AppCompatActivity() {
             val currentMode = prefs.getInt("mode", 0)
 
             if (useRoot) {
-                btnModeNoroot.setTextColor(Color.parseColor("#888888"))
-                btnModeRoot.setTextColor(Color.WHITE)
+                btnModeNoroot.setTextColor(Color.parseColor("#6E7582"))
+                btnModeRoot.setTextColor(Color.parseColor("#F5F6F8"))
                 
-                btnFreezy.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#9C27B0")))
-                btnFreezy.setTextColor(Color.WHITE)
+                btnFreezy.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#FF5900")))
+                btnFreezy.setTextColor(Color.parseColor("#F5F6F8"))
+                
+                // Color dynamically for seekbar and progress using safe platform Tint APIs
+                seekbarTime.progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#FF5900"))
+                seekbarTime.thumbTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#FF5900"))
+                progressLicenseDays.progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#FF5900"))
+
+                viewLedStatus?.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#FF5900"))
                 
                 if (rootGlowAnimator == null) {
                     val rootDrawable = android.graphics.drawable.GradientDrawable().apply {
                         shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                        cornerRadius = 25f * resources.displayMetrics.density
+                        cornerRadius = 100f * resources.displayMetrics.density
                     }
                     indicatorRootView.background = rootDrawable
                     
@@ -145,25 +182,23 @@ class MainActivity : AppCompatActivity() {
                         addUpdateListener { anim ->
                             val fraction = anim.animatedFraction
                             
-                            // Fondo: Morado profundo a Morado brillante
+                            // Fondo: Orange profundo a naranja brillante
                             val solidColor = androidx.core.graphics.ColorUtils.blendARGB(
-                                Color.parseColor("#4A0072"), 
-                                Color.parseColor("#9C27B0"), 
+                                Color.parseColor("#5C2000"), 
+                                Color.parseColor("#B33E00"), 
                                 fraction
                             )
                             rootDrawable.setColor(solidColor)
                             
-                            // Outline: Neon purple a light neon purple
-                            val strokeWidth = (1 + fraction * 3).toInt() * resources.displayMetrics.density.toInt()
+                            // Outline: Neon orange a light neon orange
+                            val strokeWidth = (1 + fraction * 2).toInt() * resources.displayMetrics.density.toInt()
                             val strokeColor = androidx.core.graphics.ColorUtils.blendARGB(
-                                Color.parseColor("#D500F9"), 
-                                Color.parseColor("#E040FB"), 
+                                Color.parseColor("#FF5900"), 
+                                Color.parseColor("#FF8F55"), 
                                 fraction
                             )
                             rootDrawable.setStroke(strokeWidth, strokeColor)
                             
-                            // Aseguramos que la escala se mantenga en 1 y sin elevación 
-                            // para que no sobrepase su contenedor ni oculte el texto
                             indicatorRootView.scaleX = 1f
                             indicatorRootView.scaleY = 1f
                             indicatorRootView.elevation = 0f
@@ -172,11 +207,18 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } else {
-                btnModeRoot.setTextColor(Color.parseColor("#888888"))
-                btnModeNoroot.setTextColor(Color.BLACK)
+                btnModeRoot.setTextColor(Color.parseColor("#6E7582"))
+                btnModeNoroot.setTextColor(Color.parseColor("#0D0E12"))
                 
-                btnFreezy.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.WHITE))
-                btnFreezy.setTextColor(Color.BLACK)
+                btnFreezy.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#00FF9D")))
+                btnFreezy.setTextColor(Color.parseColor("#0D0E12"))
+                
+                // Color dynamically for seekbar and progress using safe platform Tint APIs
+                seekbarTime.progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#00FF9D"))
+                seekbarTime.thumbTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#00FF9D"))
+                progressLicenseDays.progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#00FF9D"))
+
+                viewLedStatus?.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#00FF9D"))
                 
                 rootGlowAnimator?.cancel()
                 rootGlowAnimator = null
@@ -196,6 +238,58 @@ class MainActivity : AppCompatActivity() {
             updateRootUI(useRoot, false)
         }
 
+        // Game Selector Logic
+        val btnGameFF = findViewById<View>(R.id.btn_game_ff)
+        val btnGameMax = findViewById<View>(R.id.btn_game_max)
+        val tvGameFF = findViewById<TextView>(R.id.tv_game_ff)
+        val tvGameMax = findViewById<TextView>(R.id.tv_game_max)
+        val indicatorGameView = findViewById<View>(R.id.indicator_game_view)
+        
+        findViewById<TextView>(R.id.tv_game_title)?.text = NativeBridge.getNativeString(NativeBridge.STRING_GAME_TARGET)
+        tvGameFF.text = NativeBridge.getNativeString(NativeBridge.STRING_FREE_FIRE)
+        tvGameMax.text = NativeBridge.getNativeString(NativeBridge.STRING_FF_MAX)
+
+        fun updateGameUI(isMax: Boolean, animate: Boolean) {
+            val parent = btnGameFF.parent as View
+            val padding = parent.paddingLeft + parent.paddingRight
+            val width = (parent.width - padding) / 2
+            indicatorGameView.layoutParams.width = width
+            indicatorGameView.requestLayout()
+
+            val targetX = if (isMax) width.toFloat() else 0f
+            if (animate) {
+                android.animation.ObjectAnimator.ofFloat(indicatorGameView, "translationX", targetX).apply {
+                    duration = 300
+                    start()
+                }
+            } else {
+                indicatorGameView.translationX = targetX
+            }
+
+            if (isMax) {
+                tvGameFF.setTextColor(Color.parseColor("#888888"))
+                tvGameMax.setTextColor(Color.parseColor("#FFFFFF"))
+            } else {
+                tvGameFF.setTextColor(Color.parseColor("#FFFFFF"))
+                tvGameMax.setTextColor(Color.parseColor("#888888"))
+            }
+        }
+
+        indicatorGameView.post {
+            val isMax = prefs.getBoolean("use_ff_max", false)
+            updateGameUI(isMax, false)
+        }
+
+        btnGameFF.setOnClickListener {
+            prefs.edit().putBoolean("use_ff_max", false).apply()
+            updateGameUI(false, true)
+        }
+
+        btnGameMax.setOnClickListener {
+            prefs.edit().putBoolean("use_ff_max", true).apply()
+            updateGameUI(true, true)
+        }
+
         btnModeNoroot.setOnClickListener {
             prefs.edit().putBoolean("use_root", false).apply()
             updateRootUI(false, true)
@@ -211,7 +305,7 @@ class MainActivity : AppCompatActivity() {
             if (hasRootAccess()) {
                 prefs.edit().putBoolean("use_root", true).apply()
                 updateRootUI(true, true)
-                Toast.makeText(this, "Modo Root activado", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_ACTIVATED), Toast.LENGTH_SHORT).show()
                 if (isServiceRunning(BubbleService::class.java)) {
                     val serviceIntent = Intent(this, BubbleService::class.java).apply {
                         action = "UPDATE_BUBBLE_MODE"
@@ -237,8 +331,14 @@ class MainActivity : AppCompatActivity() {
         val tvActivationDate = findViewById<TextView>(R.id.tv_activation_date)
         val tvExpirationDate = findViewById<TextView>(R.id.tv_expiration_date)
         
-        tvActivationDate.text = prefs.getString("activation_date", "--")
-        tvExpirationDate.text = prefs.getString("expiration_date", "--")
+        val actStrRaw = prefs.getString("activation_date", "") ?: ""
+        val expStrRaw = prefs.getString("expiration_date", "") ?: ""
+        val actDateObj = parseDateTime(actStrRaw)
+        val expDateObj = parseDateTime(expStrRaw)
+        
+        val displaySdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+        tvActivationDate.text = if (actDateObj != null) displaySdf.format(actDateObj) else actStrRaw.takeIf { it.isNotEmpty() } ?: "--"
+        tvExpirationDate.text = if (expDateObj != null) displaySdf.format(expDateObj) else expStrRaw.takeIf { it.isNotEmpty() } ?: "--"
 
         // Cargar strings ofuscados de C++ para los títulos y etiquetas
         findViewById<TextView>(R.id.tv_title_activation)?.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_ACTIVATION)
@@ -274,24 +374,34 @@ class MainActivity : AppCompatActivity() {
 
         seekbarTime.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val realProgress = if (progress < 10) 10 else progress // Minimo 1.0s
-                val timeFloat = realProgress / 10f
+                if (fromUser && progress < 10) {
+                    seekBar?.progress = 10
+                    return
+                }
+                val timeFloat = progress / 10f
                 tvTimeLabel.text = String.format("%.1f Segundos", timeFloat)
                 prefs.edit().putFloat("custom_time_float", timeFloat).apply()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                seekBar?.let {
+                    val progress = it.progress
+                    val realProgress = if (progress < 10) 10 else progress
+                    val timeFloat = realProgress / 10f
+                    prefs.edit().putFloat("custom_time_float", timeFloat).commit()
+                }
+            }
         })
 
 
 
         btnFreezy.setOnClickListener {
             if (!Settings.canDrawOverlays(this)) {
-                Toast.makeText(this, "Necesitas dar permiso para mostrar sobre otras apps.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_OVERLAY_TOAST), Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             if (!hasUsageStatsPermission()) {
-                Toast.makeText(this, "Necesitas dar permiso de acceso de uso a Freezy.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_USAGE_TOAST), Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
@@ -299,7 +409,7 @@ class MainActivity : AppCompatActivity() {
 
             val useRoot = prefs.getBoolean("use_root", false)
             if (useRoot && !hasRootAccess()) {
-                Toast.makeText(this, "Permiso Root no disponible o denegado.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_ROOT_DENIED_TOAST), Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
@@ -321,6 +431,21 @@ class MainActivity : AppCompatActivity() {
         // Verificación real para mostrar/ocultar el botón de cierre
         val isRunning = isServiceRunning(BubbleService::class.java)
         findViewById<Button>(R.id.btn_close_bubble).visibility = if (isRunning) View.VISIBLE else View.GONE
+        
+        startLicenseCountdown()
+
+        // Recargar el valor de tiempo guardado para asegurar consistencia al volver a entrar
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val customTimeFloat = prefs.getFloat("custom_time_float", 3.0f).coerceAtLeast(1.0f).coerceAtMost(5.0f)
+        val seekbarTime = findViewById<SeekBar>(R.id.seekbar_time)
+        val tvTimeLabel = findViewById<TextView>(R.id.tv_time_label)
+        seekbarTime?.progress = (customTimeFloat * 10).toInt()
+        tvTimeLabel?.text = String.format("%.1f Segundos", customTimeFloat)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopLicenseCountdown()
     }
 
     private fun isServiceRunning(serviceClass: Class<*>): Boolean {
@@ -422,7 +547,7 @@ class MainActivity : AppCompatActivity() {
         val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
 
         if (endpointUrl.isEmpty() || key.isEmpty() || username.isEmpty()) {
-            android.widget.Toast.makeText(this, "Error: Datos de configuración incompletos", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_INCOMPLETE_DATA), android.widget.Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -452,7 +577,7 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         btnFreezy.isEnabled = true
                         btnFreezy.alpha = 1.0f
-                        android.widget.Toast.makeText(this@MainActivity, "Error de validación al iniciar", android.widget.Toast.LENGTH_LONG).show()
+                        android.widget.Toast.makeText(this@MainActivity, NativeBridge.getNativeString(NativeBridge.STRING_VALIDATION_ERROR_INIT), android.widget.Toast.LENGTH_LONG).show()
                     }
                     return@Thread
                 }
@@ -490,9 +615,9 @@ class MainActivity : AppCompatActivity() {
                             val warning = jsonResponse.optString("update_warning", "")
                             if (warning.isNotEmpty()) {
                                 AlertDialog.Builder(this@MainActivity)
-                                    .setTitle("Aviso de Actualización")
+                                    .setTitle(NativeBridge.getNativeString(NativeBridge.STRING_UPDATE_TITLE))
                                     .setMessage(warning)
-                                    .setPositiveButton("Entendido") { _, _ ->
+                                    .setPositiveButton(NativeBridge.getNativeString(NativeBridge.STRING_UNDERSTOOD)) { _, _ ->
                                         proceedWithLaunch()
                                     }
                                     .setCancelable(false)
@@ -524,7 +649,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     btnFreezy.isEnabled = true
                     btnFreezy.alpha = 1.0f
-                    android.widget.Toast.makeText(this@MainActivity, "Por favor espere un momento.", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(this@MainActivity, NativeBridge.getNativeString(NativeBridge.STRING_PLEASE_WAIT), android.widget.Toast.LENGTH_LONG).show()
                     Logger.log(this@MainActivity, "Error de conexión al iniciar: ${e.message}")
                 }
             }
@@ -543,7 +668,7 @@ class MainActivity : AppCompatActivity() {
                 launchGameAndBubble()
             }
         } else {
-            android.widget.Toast.makeText(this, "Free Fire no detectado", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_FF_NOT_DETECTED), android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -551,13 +676,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun checkDebugger() {
         if (android.os.Debug.isDebuggerConnected()) {
-            Toast.makeText(this, "Debugger detectado.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_DEBUGGER_DETECTED), Toast.LENGTH_SHORT).show()
             Logger.log(this, "Alerta: Debugger conectado.")
         }
     }
 
     private fun updateModeUI(mode: Int, btnA: TextView, btnC: TextView, btnM: TextView, indicator: View, layoutCustomTime: View, animate: Boolean) {
-        val targetX = mode * indicator.width.toFloat()
+        val parent = btnA.parent as View
+        val padding = parent.paddingLeft + parent.paddingRight
+        val segmentWidth = if (parent.width > 0) (parent.width - padding) / 3f else indicator.layoutParams.width.toFloat()
+        val targetX = mode * segmentWidth
         if (animate) {
             ObjectAnimator.ofFloat(indicator, "translationX", targetX).apply {
                 duration = 300
@@ -570,18 +698,18 @@ class MainActivity : AppCompatActivity() {
         val useRoot = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false)
         if (useRoot) {
             indicator.background = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.shape_pill_purple)
-            findViewById<TextView>(R.id.tv_time_label)?.setTextColor(Color.parseColor("#D500F9"))
+            findViewById<TextView>(R.id.tv_time_label)?.setTextColor(Color.parseColor("#FF5900"))
             
-            btnA.setTextColor(if (mode == 0) Color.WHITE else Color.parseColor("#888888"))
-            btnC.setTextColor(if (mode == 1) Color.WHITE else Color.parseColor("#888888"))
-            btnM.setTextColor(if (mode == 2) Color.WHITE else Color.parseColor("#888888"))
+            btnA.setTextColor(if (mode == 0) Color.parseColor("#F5F6F8") else Color.parseColor("#6E7582"))
+            btnC.setTextColor(if (mode == 1) Color.parseColor("#F5F6F8") else Color.parseColor("#6E7582"))
+            btnM.setTextColor(if (mode == 2) Color.parseColor("#F5F6F8") else Color.parseColor("#6E7582"))
         } else {
             indicator.background = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.shape_pill_white)
-            findViewById<TextView>(R.id.tv_time_label)?.setTextColor(Color.WHITE)
+            findViewById<TextView>(R.id.tv_time_label)?.setTextColor(Color.parseColor("#00FF9D"))
             
-            btnA.setTextColor(if (mode == 0) Color.BLACK else Color.parseColor("#888888"))
-            btnC.setTextColor(if (mode == 1) Color.BLACK else Color.parseColor("#888888"))
-            btnM.setTextColor(if (mode == 2) Color.BLACK else Color.parseColor("#888888"))
+            btnA.setTextColor(if (mode == 0) Color.parseColor("#0D0E12") else Color.parseColor("#6E7582"))
+            btnC.setTextColor(if (mode == 1) Color.parseColor("#0D0E12") else Color.parseColor("#6E7582"))
+            btnM.setTextColor(if (mode == 2) Color.parseColor("#0D0E12") else Color.parseColor("#6E7582"))
         }
 
         layoutCustomTime.visibility = if (mode == 1) View.VISIBLE else View.GONE
@@ -609,18 +737,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun detectFreeFire(): String? {
-        val packages = listOf("com.dts.freefiremax", "com.dts.freefireth")
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val useMax = prefs.getBoolean("use_ff_max", false)
+        
+        val primaryPkg = if (useMax) "com.dts.freefiremax" else "com.dts.freefireth"
+        val secondaryPkg = if (useMax) "com.dts.freefireth" else "com.dts.freefiremax"
+        
         val pm = packageManager
         
-        for (pkg in packages) {
+        try {
+            pm.getPackageInfo(primaryPkg, 0)
+            return primaryPkg
+        } catch (e: PackageManager.NameNotFoundException) {
             try {
-                pm.getPackageInfo(pkg, 0)
-                return pkg // Retorna el primero que encuentre
-            } catch (e: PackageManager.NameNotFoundException) {
-                continue
+                pm.getPackageInfo(secondaryPkg, 0)
+                // Si el primario no está, retorna el secundario (con un log útil si tuvieras)
+                return secondaryPkg
+            } catch (e2: PackageManager.NameNotFoundException) {
+                return null
             }
         }
-        return null // No se encontró ninguna versión
     }
 
     private fun hasUsageStatsPermission(): Boolean {
@@ -684,15 +820,122 @@ class MainActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    private fun checkIsPremiumLicense(prefs: SharedPreferences): Boolean {
+    private fun parseDateTime(dateStr: String): java.util.Date? {
+        if (dateStr.isEmpty() || dateStr == "--") return null
+        val formats = arrayOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd",
+            "dd/MM/yyyy"
+        )
+        for (format in formats) {
+            try {
+                val sdf = java.text.SimpleDateFormat(format, java.util.Locale.getDefault())
+                if (format.contains("'Z'")) {
+                    sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                }
+                val date = sdf.parse(dateStr)
+                if (date != null) return date
+            } catch (e: Exception) {
+                // Try next format
+            }
+        }
+        return null
+    }
+
+    private fun startLicenseCountdown() {
+        licenseRunnable?.let { licenseHandler.removeCallbacks(it) }
+
+        val progressLicenseDays = findViewById<ProgressBar>(R.id.progress_license_days)
+        val tvLicensePercent = findViewById<TextView>(R.id.tv_license_percent)
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+
+        val actStr = prefs.getString("activation_date", "") ?: ""
+        val expStr = prefs.getString("expiration_date", "") ?: ""
+
+        var actDate = parseDateTime(actStr)
+        var expDate = parseDateTime(expStr)
+
+        if (actDate == null && actStr.isNotEmpty()) {
+            try { actDate = java.util.Date(java.lang.Long.parseLong(actStr)) } catch (e: Exception) {}
+        }
+        if (expDate == null && expStr.isNotEmpty()) {
+            try { expDate = java.util.Date(java.lang.Long.parseLong(expStr)) } catch (e: Exception) {}
+        }
+
+        if (actDate == null || expDate == null) {
+            progressLicenseDays?.progress = 100
+            tvLicensePercent?.text = "--"
+            return
+        }
+
+        val actTime = actDate.time
+        var expTime = expDate.time
+
+        // Si la activación y expiración ocurren en el mismo milisegundo (ej. formatos truncados sin hora)
+        // se asume que la licencia expira al final de ese día (+ 23h 59m 59s).
+        if (actTime == expTime) {
+            expTime += 24 * 60 * 60 * 1000 - 1000
+        }
+
+        val totalDuration = expTime - actTime
+
+        val runnable = object : Runnable {
+            override fun run() {
+                val today = java.util.Date()
+                val remainingMs = expTime - today.time
+
+                if (remainingMs > 0) {
+                    val elapsed = today.time - actTime
+                    val progressVal = if (totalDuration > 0) {
+                        val percent = 100 - ((elapsed.toFloat() / totalDuration.toFloat()) * 100).toInt()
+                        percent.coerceIn(0, 100)
+                    } else {
+                        100
+                    }
+                    progressLicenseDays?.progress = progressVal
+
+                    val seconds = (remainingMs / 1000) % 60
+                    val minutes = (remainingMs / (1000 * 60)) % 60
+                    val hours = (remainingMs / (1000 * 60 * 60)) % 24
+                    val days = remainingMs / (1000 * 60 * 60 * 24)
+
+                    val countdownText = String.format(
+                        java.util.Locale.getDefault(),
+                        "%dd %02dh %02dm %02ds",
+                        days, hours, minutes, seconds
+                    )
+                    tvLicensePercent?.text = countdownText
+
+                    licenseHandler.postDelayed(this, 1000)
+                } else {
+                    progressLicenseDays?.progress = 0
+                    tvLicensePercent?.text = "Expirado"
+                }
+            }
+        }
+
+        licenseRunnable = runnable
+        licenseHandler.post(runnable)
+    }
+
+    private fun stopLicenseCountdown() {
+        licenseRunnable?.let {
+            licenseHandler.removeCallbacks(it)
+            licenseRunnable = null
+        }
+    }
+
+    private fun isPremiumLicense(): Boolean {
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
         var isPremiumLicense = false
         val actDate = prefs.getString("activation_date", "")
         val expDate = prefs.getString("expiration_date", "")
         if (!actDate.isNullOrEmpty() && !expDate.isNullOrEmpty() && actDate != "--" && expDate != "--") {
             try {
-                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
-                val d1 = sdf.parse(actDate)
-                val d2 = sdf.parse(expDate)
+                val d1 = parseDateTime(actDate)
+                val d2 = parseDateTime(expDate)
                 if (d1 != null && d2 != null) {
                     val diffMs = d2.time - d1.time
                     val diffDays = java.util.concurrent.TimeUnit.DAYS.convert(diffMs, java.util.concurrent.TimeUnit.MILLISECONDS)

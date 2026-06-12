@@ -59,13 +59,29 @@ strings = {
     56: "Pega tu licencia aqui",
     57: "INGRESAR",
     58: "Necesitas dar permiso para mostrar sobre otras apps.",
-    59: "Permiso Root no disponible o denegado."
+    59: "Permiso Root no disponible o denegado.",
+    60: "Validando licencia...",
+    61: "ACCESO CONCEDIDO",
+    62: "ACTUALIZACION",
+    63: "ENTENDIDO",
+    64: "Datos incompletos.",
+    65: "Error de conexion al iniciar.",
+    66: "Modo Root activado.",
+    67: "Acceso Root denegado.",
+    68: "Otorga el permiso de superposicion.",
+    69: "Otorga el permiso de acceso de uso.",
+    70: "Free Fire no detectado.",
+    71: "Debugger detectado.",
+    72: "Por favor espera...",
+    73: "JUEGO OBJETIVO",
+    74: "Free Fire",
+    75: "FF MAX"
 }
 
 for id, s in strings.items():
     enc = xor_encrypt(s)
     hex_str = ", ".join([f"0x{b:02X}" for b in enc])
     print(f"    }} else if (id == {id}) {{")
-    print(f"        char s[] = {{{hex_str}}};")
+    print(f"        unsigned char s[] = {{{hex_str}}};")
     print(f"        xor_cipher(s, sizeof(s) - 1);")
-    print(f"        return env->NewStringUTF(s);")
+    print(f"        return env->NewStringUTF((char*)s);")

@@ -4,33 +4,34 @@
     android:layout_height="wrap_content"
     android:background="@drawable/bg_glass_dialog"
     android:orientation="vertical"
-    android:padding="20dp">
+    android:padding="24dp">
 
     <!-- Header -->
     <RelativeLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="20dp">
+        android:layout_marginBottom="24dp">
 
         <TextView
             android:id="@+id/btn_close_dialog_x"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="✕"
-            android:textColor="#FFFFFF"
+            android:textColor="@color/colorAccentDanger"
             android:textSize="22sp"
             android:textStyle="bold"
             android:layout_alignParentLeft="true"
             android:layout_centerVertical="true"
-            android:padding="10dp"/>
+            android:padding="8dp"/>
 
         <TextView
             android:id="@+id/tv_title_settings"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
+            android:textColor="@color/colorAccentPrimary"
+            android:textSize="20sp"
             android:textStyle="bold"
+            android:letterSpacing="0.05"
             android:layout_centerInParent="true"/>
     </RelativeLayout>
 
@@ -40,24 +41,26 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:background="@drawable/bg_glass_tile"
-        android:padding="16dp"
-        android:layout_marginBottom="12dp">
+        android:padding="18dp"
+        android:layout_marginBottom="16dp">
         
         <TextView
             android:id="@+id/tv_label_info"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="#BBBBBB"
-            android:textSize="10sp"
+            android:textColor="@color/colorAccentPrimary"
+            android:textSize="11sp"
             android:textStyle="bold"
+            android:letterSpacing="0.08"
             android:layout_marginBottom="8dp"/>
 
         <TextView
             android:id="@+id/tv_version"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="#EEEEEE"
-            android:textSize="13sp" />
+            android:textColor="@color/colorTextPrimary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-light" />
     </LinearLayout>
 
     <!-- Tile: Acciones -->
@@ -66,34 +69,40 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:background="@drawable/bg_glass_tile"
-        android:padding="16dp">
+        android:padding="18dp">
         
         <TextView
             android:id="@+id/tv_label_support"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="#BBBBBB"
-            android:textSize="10sp"
+            android:textColor="@color/colorAccentPrimary"
+            android:textSize="11sp"
             android:textStyle="bold"
-            android:layout_marginBottom="12dp"/>
+            android:letterSpacing="0.08"
+            android:layout_marginBottom="14dp"/>
 
-        <Button
+        <androidx.appcompat.widget.AppCompatButton
             android:id="@+id/btn_view_logs"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:textSize="12sp"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#333333"
-            android:layout_marginBottom="8dp" />
+            android:textSize="13sp"
+            android:textColor="#0C0D10"
+            android:textStyle="bold"
+            android:background="@drawable/shape_button_tech"
+            android:backgroundTint="@color/colorAccentPrimary"
+            android:elevation="4dp"
+            android:layout_marginBottom="10dp" />
 
-        <Button
+        <androidx.appcompat.widget.AppCompatButton
             android:id="@+id/btn_logout"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:textSize="12sp"
+            android:textSize="13sp"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#991A1A" />
+            android:textStyle="bold"
+            android:background="@drawable/shape_button_tech"
+            android:backgroundTint="@color/colorAccentDanger"
+            android:elevation="4dp" />
     </LinearLayout>
-
 
 </LinearLayout>

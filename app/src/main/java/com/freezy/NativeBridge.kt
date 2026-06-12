@@ -91,4 +91,20 @@ object NativeBridge {
     const val STRING_LOGIN_BTN = 57
     const val STRING_OVERLAY_REQ = 58
     const val STRING_ROOT_REQ = 59
+    const val STRING_SPLASH_FETCHING = 60
+    const val STRING_SPLASH_GRANTED = 61
+    const val STRING_UPDATE_TITLE = 62
+    const val STRING_UNDERSTOOD = 63
+    const val STRING_INCOMPLETE_DATA = 64
+    const val STRING_VALIDATION_ERROR_INIT = 65
+    const val STRING_ROOT_ACTIVATED = 66
+    const val STRING_ROOT_DENIED_TOAST = 67
+    const val STRING_OVERLAY_TOAST = 68
+    const val STRING_USAGE_TOAST = 69
+    const val STRING_FF_NOT_DETECTED = 70
+    const val STRING_DEBUGGER_DETECTED = 71
+    const val STRING_PLEASE_WAIT = 72
+    const val STRING_GAME_TARGET = 73
+    const val STRING_FREE_FIRE = 74
+    const val STRING_FF_MAX = 75
 }

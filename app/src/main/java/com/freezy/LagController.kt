@@ -42,12 +42,25 @@ object LagController {
         return true // Retorna true si el cambio fue exitoso
     }
 
-    fun ejecutarComandoRoot(comando: String) {
+    fun activarFakeLagRoot() {
         Thread {
             try {
                 val process = Runtime.getRuntime().exec("su")
                 val os = DataOutputStream(process.outputStream)
-                os.writeBytes("$comando\n")
+                
+                // Comandos secuenciales en una misma sesión de terminal root
+                val cmds = listOf(
+                    "iptables -D INPUT -p udp --sport 7000:25000 -j FREEZY_FAKELAG",
+                    "iptables -F FREEZY_FAKELAG",
+                    "iptables -X FREEZY_FAKELAG",
+                    "iptables -N FREEZY_FAKELAG",
+                    "iptables -I INPUT -p udp --sport 7000:25000 -j FREEZY_FAKELAG",
+                    "iptables -A FREEZY_FAKELAG -j DROP"
+                )
+                
+                for (cmd in cmds) {
+                    os.writeBytes("$cmd\n")
+                }
                 os.writeBytes("exit\n")
                 os.flush()
                 process.waitFor()
@@ -57,24 +70,27 @@ object LagController {
         }.start()
     }
 
-    fun activarFakeLagRoot() {
-        // Asegurarse de limpiar cualquier regla previa
-        desactivarFakeLagRoot()
-
-        // 1. Crear la cadena personalizada para Fake Lag
-        ejecutarComandoRoot("iptables -N FREEZY_FAKELAG")
-        // 2. Enrutar tráfico UDP entrante del juego a nuestra cadena
-        ejecutarComandoRoot("iptables -I INPUT -p udp --sport 7000:25000 -j FREEZY_FAKELAG")
-        // 3. Bloquear todo el tráfico entrante del juego
-        ejecutarComandoRoot("iptables -A FREEZY_FAKELAG -j DROP")
-    }
-
     fun desactivarFakeLagRoot() {
-        // 1. Eliminar la regla de redirección en INPUT
-        ejecutarComandoRoot("iptables -D INPUT -p udp --sport 7000:25000 -j FREEZY_FAKELAG")
-        // 2. Vaciar las sub-reglas
-        ejecutarComandoRoot("iptables -F FREEZY_FAKELAG")
-        // 3. Eliminar la cadena personalizada
-        ejecutarComandoRoot("iptables -X FREEZY_FAKELAG")
+        Thread {
+            try {
+                val process = Runtime.getRuntime().exec("su")
+                val os = DataOutputStream(process.outputStream)
+                
+                val cmds = listOf(
+                    "iptables -D INPUT -p udp --sport 7000:25000 -j FREEZY_FAKELAG",
+                    "iptables -F FREEZY_FAKELAG",
+                    "iptables -X FREEZY_FAKELAG"
+                )
+                
+                for (cmd in cmds) {
+                    os.writeBytes("$cmd\n")
+                }
+                os.writeBytes("exit\n")
+                os.flush()
+                process.waitFor()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }.start()
     }
 }

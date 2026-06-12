@@ -55,13 +55,13 @@
                 android:layout_height="32dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_arrow_back"
-                android:tint="#FFFFFF" />
+                android:tint="@color/colorTextPrimary" />
                 
             <TextView
                 android:id="@+id/tv_bubble_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/colorTextPrimary"
                 android:textStyle="bold"
                 android:textSize="14sp"
                 android:layout_marginStart="12dp"/>
@@ -80,7 +80,7 @@
                 android:id="@+id/recoil_switch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/colorTextPrimary"
                 android:textSize="12sp"
                 android:thumb="@drawable/custom_seekbar_thumb" />
 
@@ -88,7 +88,7 @@
                 android:id="@+id/recoil_percentage"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/colorTextPrimary"
                 android:textSize="11sp"
                 android:layout_marginTop="4dp" />
 
@@ -118,7 +118,7 @@
                 android:id="@+id/fov_switch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/colorTextPrimary"
                 android:textSize="12sp"
                 android:thumb="@drawable/custom_seekbar_thumb" />
 
@@ -126,7 +126,7 @@
                 android:id="@+id/fov_size_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/colorTextPrimary"
                 android:textSize="11sp"
                 android:layout_marginTop="4dp" />
 

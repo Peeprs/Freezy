@@ -97,7 +97,7 @@ class BubbleService : Service() {
         }
 
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (isRootMode) Color.parseColor("#D500F9") else Color.WHITE
+            color = if (isRootMode) Color.parseColor("#FF5900") else Color.parseColor("#00FF9D")
             style = Paint.Style.STROKE
             strokeWidth = 16f
             strokeCap = Paint.Cap.ROUND
@@ -115,7 +115,7 @@ class BubbleService : Service() {
             val pad = paint.strokeWidth / 2f + 2f
             rect.set(pad, pad, width - pad, height - pad)
             
-            paint.color = if (isRootMode) Color.parseColor("#D500F9") else Color.WHITE
+            paint.color = if (isRootMode) Color.parseColor("#FF5900") else Color.parseColor("#00FF9D")
             paint.alpha = 255
             canvas.drawArc(rect, -90f, 360f * progress, false, paint)
         }
@@ -147,9 +147,9 @@ class BubbleService : Service() {
         if (this::bubbleIcon.isInitialized) {
             val isRootMode = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false)
             if (isRootMode) {
-                bubbleIcon.setColorFilter(Color.parseColor("#D500F9"), android.graphics.PorterDuff.Mode.SRC_IN)
+                bubbleIcon.setColorFilter(Color.parseColor("#FF5900"), android.graphics.PorterDuff.Mode.SRC_IN)
             } else {
-                bubbleIcon.setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
+                bubbleIcon.setColorFilter(Color.parseColor("#00FF9D"), android.graphics.PorterDuff.Mode.SRC_IN)
             }
             if (this::arcOverlay.isInitialized) {
                 arcOverlay.updateMode(isRootMode)
@@ -359,9 +359,9 @@ class BubbleService : Service() {
 
         // Aplicar tinte distintivo al ícono de Play según el modo
         if (useRoot) {
-            bubbleIcon.setColorFilter(Color.parseColor("#D500F9"), android.graphics.PorterDuff.Mode.SRC_IN)
+            bubbleIcon.setColorFilter(Color.parseColor("#FF5900"), android.graphics.PorterDuff.Mode.SRC_IN)
         } else {
-            bubbleIcon.setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
+            bubbleIcon.setColorFilter(Color.parseColor("#00FF9D"), android.graphics.PorterDuff.Mode.SRC_IN)
         }
 
         // Agregar la vista de arco circular programáticamente encima del ícono (en bubbleView)
@@ -501,7 +501,7 @@ class BubbleService : Service() {
         params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -524,23 +524,26 @@ class BubbleService : Service() {
             
             // Tintar icono
             if (isFakeLagActive) {
-                btnFakeLag.setColorFilter(Color.parseColor("#D500F9"), android.graphics.PorterDuff.Mode.SRC_IN)
+                val colorStr = if (useRoot) "#FF5900" else "#00FF9D"
+                btnFakeLag.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
                 btnFakeLag.alpha = 1.0f
             } else {
-                val colorStr = if (useRoot) "#D500F9" else "#FFFFFF"
+                val colorStr = if (useRoot) "#FF5900" else "#00FF9D"
                 btnFakeLag.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
                 btnFakeLag.alpha = if (useRoot) 0.6f else 1.0f
             }
             
-            // Tintar fondo de cristal para feedback premium (Púrpura Neón)
+            // Tintar fondo de cristal para feedback premium (Naranja o Menta Neón)
             val bgFakeLag = caraFakeLag.background.mutate() as? android.graphics.drawable.GradientDrawable
             if (bgFakeLag != null) {
                 if (isFakeLagActive) {
-                    bgFakeLag.setColor(Color.parseColor("#99D500F9"))
-                    bgFakeLag.setStroke((2.5f * resources.displayMetrics.density).toInt(), Color.parseColor("#D500F9"))
+                    val colorStr = if (useRoot) "#33FF5900" else "#3300FF9D"
+                    val strokeColorStr = if (useRoot) "#FF5900" else "#00FF9D"
+                    bgFakeLag.setColor(Color.parseColor(colorStr))
+                    bgFakeLag.setStroke((2.5f * resources.displayMetrics.density).toInt(), Color.parseColor(strokeColorStr))
                 } else {
-                    bgFakeLag.setColor(Color.parseColor("#991A1A1A"))
-                    bgFakeLag.setStroke((1.5f * resources.displayMetrics.density).toInt(), Color.parseColor("#80FFFFFF"))
+                    bgFakeLag.setColor(Color.parseColor("#E614161B"))
+                    bgFakeLag.setStroke((1.5f * resources.displayMetrics.density).toInt(), Color.parseColor("#222630"))
                 }
             }
         }
@@ -696,20 +699,8 @@ class BubbleService : Service() {
         playSoundFromRes(R.raw.coin_on)
         Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_ACTIVE) + " (Root: $useRoot)")
         
-
-        
         if (useRoot) {
-            val rootModeType = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getInt("root_mode_type", 0)
-            Thread {
-                if (rootModeType == 1) {
-                    executeRootCommand("iptables -I OUTPUT -p udp --dport 7000:25000 -j DROP")
-                    executeRootCommand("iptables -I OUTPUT -p udp --dport 7000:25000 -m length --length 80:1500 -j ACCEPT")
-                    executeRootCommand("iptables -I OUTPUT -p udp --dport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
-                } else {
-                    executeRootCommand("iptables -I INPUT -p udp --sport 7000:25000 -j DROP")
-                    executeRootCommand("iptables -I INPUT -p udp --sport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
-                }
-            }.start()
+            LagController.toggleFakeLag(true, true)
         } else {
             try {
                 // Iniciar la VPN dinámicamente
@@ -717,19 +708,18 @@ class BubbleService : Service() {
                     putExtra("TARGET_PACKAGE", targetPackage ?: "com.dts.freefiremax")
                 }
                 startService(vpnIntent)
-                AntigravityFirewall.setLagActive(true)
+                LagController.toggleFakeLag(true, false)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
+        actualizarUI()
     }
 
     private fun stopFreeze(useRoot: Boolean) {
         playSoundFromRes(R.raw.coin_off)
         Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_DEACTIVATED))
         isFreezing = false
-        
-
         
         if (::arcOverlay.isInitialized) {
             fillAnimator?.cancel()
@@ -742,20 +732,10 @@ class BubbleService : Service() {
             bubbleIcon.setImageResource(R.drawable.ic_play_white)
         }
         if (useRoot) {
-            val rootModeType = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getInt("root_mode_type", 0)
-            Thread {
-                if (rootModeType == 1) {
-                    executeRootCommand("iptables -D OUTPUT -p udp --dport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
-                    executeRootCommand("iptables -D OUTPUT -p udp --dport 7000:25000 -m length --length 80:1500 -j ACCEPT")
-                    executeRootCommand("iptables -D OUTPUT -p udp --dport 7000:25000 -j DROP")
-                } else {
-                    executeRootCommand("iptables -D INPUT -p udp --sport 7000:25000 -m length --length 0:80 -m limit --limit 3/sec --limit-burst 1 -j ACCEPT")
-                    executeRootCommand("iptables -D INPUT -p udp --sport 7000:25000 -j DROP")
-                }
-            }.start()
+            LagController.toggleFakeLag(false, true)
         } else {
             try {
-                AntigravityFirewall.setLagActive(false)
+                LagController.toggleFakeLag(false, false)
                 
                 // Detener la VPN de inmediato
                 val vpnIntent = Intent(this, AntigravityFirewall::class.java).apply {
@@ -766,6 +746,7 @@ class BubbleService : Service() {
                 e.printStackTrace()
             }
         }
+        actualizarUI()
     }
 
     private fun playSoundFromRes(resId: Int) {
