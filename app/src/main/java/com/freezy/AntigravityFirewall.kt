@@ -88,7 +88,8 @@ class AntigravityFirewall : VpnService() {
             builder.setSession("FreezyProxy")
                 .addAddress("10.0.0.2", 32)
                 .addRoute("0.0.0.0", 0)   // Capturar todo el tráfico IPv4
-                .setMtu(65535)             // Evitar fragmentación IP entregando paquetes reensamblados al motor nativo
+            
+            builder.setMtu(65535)             // Evitar fragmentación IP entregando paquetes reensamblados al motor nativo
 
             // Aislamiento de Aplicación Estricto
             try {
@@ -136,6 +137,7 @@ class AntigravityFirewall : VpnService() {
             stopSelf()
         }
     }
+
 
     private fun shutdown() {
         stopNativeEngine()

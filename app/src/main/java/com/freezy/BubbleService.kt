@@ -82,6 +82,7 @@ class BubbleService : Service() {
 
 
     // Vista personalizada que dibuja el arco circular de progreso
+    // Vista personalizada que dibuja el arco circular de progreso
     inner class ArcProgressView(context: Context, var isRootMode: Boolean) : View(context) {
         fun updateMode(rootMode: Boolean) {
             this.isRootMode = rootMode
@@ -96,8 +97,12 @@ class BubbleService : Service() {
             }
         }
 
+        private fun getActiveColor(): Int {
+            return if (isRootMode) Color.parseColor("#FF5900") else Color.parseColor("#00FF9D")
+        }
+
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (isRootMode) Color.parseColor("#FF5900") else Color.parseColor("#00FF9D")
+            color = getActiveColor()
             style = Paint.Style.STROKE
             strokeWidth = 16f
             strokeCap = Paint.Cap.ROUND
@@ -115,7 +120,7 @@ class BubbleService : Service() {
             val pad = paint.strokeWidth / 2f + 2f
             rect.set(pad, pad, width - pad, height - pad)
             
-            paint.color = if (isRootMode) Color.parseColor("#FF5900") else Color.parseColor("#00FF9D")
+            paint.color = getActiveColor()
             paint.alpha = 255
             canvas.drawArc(rect, -90f, 360f * progress, false, paint)
         }
@@ -217,7 +222,7 @@ class BubbleService : Service() {
             try {
                 val challengeEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl.replace("/verify", "/challenge") else "$endpointUrl/challenge"
                 val verifyEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl else "$endpointUrl/verify"
-                val hwid = NativeBridge.getNativeHWID()
+                val hwid = NativeBridge.getHWID(this@BubbleService)
                 val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
 
                 val challengeConn = URL(challengeEndpoint).openConnection() as HttpURLConnection
@@ -498,6 +503,54 @@ class BubbleService : Service() {
             override fun onStopTrackingTouch(p0: SeekBar?) {}
         })
 
+        // Configuración de controles de red Jitter & Packet Drop (Fase 5 y 6)
+        val jitterSeekBar = bubbleView.findViewById<SeekBar>(R.id.jitter_seekbar)
+        val jitterText = bubbleView.findViewById<TextView>(R.id.tv_jitter_label)
+        val dropSeekBar = bubbleView.findViewById<SeekBar>(R.id.drop_seekbar)
+        val dropText = bubbleView.findViewById<TextView>(R.id.tv_drop_label)
+
+        val qosTitleText = bubbleView.findViewById<TextView>(R.id.tv_qos_title)
+        qosTitleText?.text = NativeBridge.getNativeString(NativeBridge.STRING_QOS_TITLE)
+
+        val labelJitter = NativeBridge.getNativeString(NativeBridge.STRING_JITTER_LABEL)
+        val labelDrop = NativeBridge.getNativeString(NativeBridge.STRING_DROP_LABEL)
+
+        val initialJitter = prefs.getInt("jitter_ms", 0)
+        val initialDrop = prefs.getInt("drop_probability", 10)
+
+        jitterSeekBar.progress = initialJitter
+        jitterText.text = "$labelJitter: ${initialJitter}ms"
+        NativeBridge.setNativeJitterMs(initialJitter)
+
+        dropSeekBar.progress = initialDrop
+        dropText.text = "$labelDrop: ${initialDrop}%"
+        NativeBridge.setNativeDropProbability(initialDrop)
+
+        jitterSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                jitterText.text = "$labelJitter: ${progress}ms"
+                if (fromUser) {
+                    prefs.edit().putInt("jitter_ms", progress).apply()
+                    NativeBridge.setNativeJitterMs(progress)
+                    actualizarUI()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        dropSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                dropText.text = "$labelDrop: ${progress}%"
+                if (fromUser) {
+                    prefs.edit().putInt("drop_probability", progress).apply()
+                    NativeBridge.setNativeDropProbability(progress)
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
         params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -520,35 +573,30 @@ class BubbleService : Service() {
         
         // 1. Actualizar Fake Lag UI (incluyendo modo Root y No-Root)
         if (::btnFakeLag.isInitialized && ::caraFakeLag.isInitialized) {
-            val isFakeLagActive = if (useRoot) LagController.fakeLagActivo else isFreezing
+            val isActive = if (useRoot) LagController.fakeLagActivo else isFreezing
+            val colorStr = if (useRoot) "#FF5900" else "#00FF9D"
             
             // Tintar icono
-            if (isFakeLagActive) {
-                val colorStr = if (useRoot) "#FF5900" else "#00FF9D"
-                btnFakeLag.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
+            btnFakeLag.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
+            if (isActive) {
                 btnFakeLag.alpha = 1.0f
             } else {
-                val colorStr = if (useRoot) "#FF5900" else "#00FF9D"
-                btnFakeLag.setColorFilter(Color.parseColor(colorStr), android.graphics.PorterDuff.Mode.SRC_IN)
                 btnFakeLag.alpha = if (useRoot) 0.6f else 1.0f
             }
             
-            // Tintar fondo de cristal para feedback premium (Naranja o Menta Neón)
+            // Tintar fondo de cristal para feedback premium (Naranja para Root, Verde para No-Root)
             val bgFakeLag = caraFakeLag.background.mutate() as? android.graphics.drawable.GradientDrawable
             if (bgFakeLag != null) {
-                if (isFakeLagActive) {
-                    val colorStr = if (useRoot) "#33FF5900" else "#3300FF9D"
-                    val strokeColorStr = if (useRoot) "#FF5900" else "#00FF9D"
-                    bgFakeLag.setColor(Color.parseColor(colorStr))
-                    bgFakeLag.setStroke((2.5f * resources.displayMetrics.density).toInt(), Color.parseColor(strokeColorStr))
+                if (isActive) {
+                    val bgStyleColor = if (useRoot) "#33FF5900" else "#3300FF9D"
+                    bgFakeLag.setColor(Color.parseColor(bgStyleColor))
+                    bgFakeLag.setStroke((2.5f * resources.displayMetrics.density).toInt(), Color.parseColor(colorStr))
                 } else {
                     bgFakeLag.setColor(Color.parseColor("#E614161B"))
                     bgFakeLag.setStroke((1.5f * resources.displayMetrics.density).toInt(), Color.parseColor("#222630"))
                 }
             }
         }
-
-
 
         if (::arcOverlay.isInitialized) {
             arcOverlay.updateMode(useRoot)
@@ -633,6 +681,7 @@ class BubbleService : Service() {
     private fun onBubbleTapped() {
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
+
         val mode = prefs.getInt("mode", 0)
 
         // Modo Manual: el tap siempre hace toggle (ON/OFF)

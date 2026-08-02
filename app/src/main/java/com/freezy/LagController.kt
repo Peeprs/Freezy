@@ -48,7 +48,6 @@ object LagController {
                 val process = Runtime.getRuntime().exec("su")
                 val os = DataOutputStream(process.outputStream)
                 
-                // Comandos secuenciales en una misma sesión de terminal root
                 val cmds = listOf(
                     "iptables -D INPUT -p udp --sport 7000:25000 -j FREEZY_FAKELAG",
                     "iptables -F FREEZY_FAKELAG",

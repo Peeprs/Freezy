@@ -125,6 +125,9 @@ class MainActivity : AppCompatActivity() {
             updateModeUI(currentMode, btnModeAuto, btnModeCustom, btnModeManual, indicatorView, layoutCustomTime, false)
         }
 
+        // Siempre forzar feature 0 (Fake Lag)
+        prefs.edit().putInt("selected_feature", 0).apply()
+
         val customTimeFloat = prefs.getFloat("custom_time_float", 3.0f).coerceAtLeast(1.0f).coerceAtMost(5.0f)
         seekbarTime.max = 50 // Máximo 5.0 segundos (50 / 10)
         seekbarTime.progress = (customTimeFloat * 10).toInt()
@@ -543,7 +546,7 @@ class MainActivity : AppCompatActivity() {
         val endpointUrl = prefs.getString("secure_endpoint", "") ?: ""
         val key = prefs.getString("saved_key", "") ?: ""
         val username = prefs.getString("saved_username", "") ?: ""
-        val hwid = NativeBridge.getNativeHWID()
+        val hwid = NativeBridge.getHWID(this)
         val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
 
         if (endpointUrl.isEmpty() || key.isEmpty() || username.isEmpty()) {
@@ -627,8 +630,23 @@ class MainActivity : AppCompatActivity() {
                             }
                         } else {
                             val message = jsonResponse.optString("message", "Licencia inválida")
-                            android.widget.Toast.makeText(this@MainActivity, message, android.widget.Toast.LENGTH_LONG).show()
-                            Logger.log(this@MainActivity, "Fallo de licencia al iniciar: $message")
+                            val isExp = message.contains("expir", true) || message.contains("expired", true)
+                            if (isExp) {
+                                android.widget.Toast.makeText(this@MainActivity, "Licencia Expirada", android.widget.Toast.LENGTH_LONG).show()
+                                Logger.log(this@MainActivity, "Licencia expirada al iniciar. Cerrando sesión.")
+                                
+                                prefs.edit()
+                                    .putBoolean("is_logged_in", false)
+                                    .remove("expiration_date")
+                                    .remove("activation_date")
+                                    .apply()
+                                
+                                startActivity(Intent(this@MainActivity, LoginActivity::class.java))
+                                finish()
+                            } else {
+                                android.widget.Toast.makeText(this@MainActivity, message, android.widget.Toast.LENGTH_LONG).show()
+                                Logger.log(this@MainActivity, "Fallo de licencia al iniciar: $message")
+                            }
                         }
                     }
                 } else {
@@ -638,11 +656,26 @@ class MainActivity : AppCompatActivity() {
                     } catch (e: Exception) {
                         "Error: $responseCode"
                     }
-                    runOnUiThread {
+                     runOnUiThread {
                         btnFreezy.isEnabled = true
                         btnFreezy.alpha = 1.0f
-                        android.widget.Toast.makeText(this@MainActivity, serverMessage, android.widget.Toast.LENGTH_LONG).show()
-                        Logger.log(this@MainActivity, "Fallo al iniciar: $serverMessage")
+                        val isExp = serverMessage.contains("expir", true) || serverMessage.contains("expired", true)
+                        if (isExp) {
+                            android.widget.Toast.makeText(this@MainActivity, "Licencia Expirada", android.widget.Toast.LENGTH_LONG).show()
+                            Logger.log(this@MainActivity, "Licencia expirada al iniciar (Error). Cerrando sesión.")
+                            
+                            prefs.edit()
+                                .putBoolean("is_logged_in", false)
+                                .remove("expiration_date")
+                                .remove("activation_date")
+                                .apply()
+                            
+                            startActivity(Intent(this@MainActivity, LoginActivity::class.java))
+                            finish()
+                        } else {
+                            android.widget.Toast.makeText(this@MainActivity, serverMessage, android.widget.Toast.LENGTH_LONG).show()
+                            Logger.log(this@MainActivity, "Fallo al iniciar: $serverMessage")
+                        }
                     }
                 }
             } catch (e: Exception) {

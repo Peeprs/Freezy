@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
@@ -91,29 +92,7 @@ class LoginActivity : AppCompatActivity() {
         val layoutLogin = findViewById<android.view.View>(com.system.network.ui.R.id.layout_login)
         val tvSplashStatus = findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_splash_status)
 
-        // Si el usuario ya metió la Key correcta antes, hacemos la carga (Splash)
-        if (prefs.getBoolean("is_logged_in", false)) {
-            layoutSplash.visibility = android.view.View.VISIBLE
-            layoutLogin.visibility = android.view.View.GONE
-            startPulseAnimation()
-            
-            // Simular validación de sesión o carga de datos (1.5 segundos)
-            Thread {
-                Thread.sleep(1500)
-                runOnUiThread {
-                    playAccessGrantedAnimation {
-                        startActivity(Intent(this@LoginActivity, MainActivity::class.java))
-                        finish()
-                    }
-                }
-            }.start()
-            return
-        } else {
-            layoutSplash.visibility = android.view.View.GONE
-            layoutLogin.visibility = android.view.View.VISIBLE
-        }
-        
-        // Cargar strings ofuscados de C++ para los campos de login
+        // Cargar strings ofuscados de C++ para los campos de login (Inicializar siempre primero)
         findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_app_name)?.text = NativeBridge.getNativeString(NativeBridge.STRING_APP_NAME)
         findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_label_user)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LABEL_USER)
         findViewById<android.widget.EditText>(com.system.network.ui.R.id.et_user)?.hint = NativeBridge.getNativeString(NativeBridge.STRING_HINT_USER)
@@ -130,6 +109,87 @@ class LoginActivity : AppCompatActivity() {
         // Restaurar datos guardados para comodidad del usuario
         etUser.setText(prefs.getString("saved_username", ""))
         etKey.setText(prefs.getString("saved_key", ""))
+
+        // Si el usuario ya metió la Key correcta antes, hacemos la carga (Splash)
+        if (prefs.getBoolean("is_logged_in", false)) {
+            layoutSplash.visibility = android.view.View.VISIBLE
+            layoutLogin.visibility = android.view.View.GONE
+            startPulseAnimation()
+
+            val expDateStr = prefs.getString("expiration_date", "") ?: ""
+            var isExpired = false
+            if (expDateStr.isNotEmpty() && expDateStr != "--") {
+                try {
+                    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                    val d2 = sdf.parse(expDateStr)
+                    if (d2 != null) {
+                        val endOfDay = d2.time + (24L * 60 * 60 * 1000 - 1000)
+                        if (System.currentTimeMillis() > endOfDay) {
+                            isExpired = true
+                        }
+                    }
+                } catch (e: Exception) {
+                    try {
+                        val expTime = java.lang.Long.parseLong(expDateStr)
+                        if (System.currentTimeMillis() > expTime) {
+                            isExpired = true
+                        }
+                    } catch (ex: Exception) {}
+                }
+            }
+
+            if (isExpired) {
+                Thread {
+                    Thread.sleep(1500)
+                    runOnUiThread {
+                        stopPulseAnimation()
+                        val ivSplashLogo = findViewById<ImageView>(R.id.iv_splash_logo)
+                        ivSplashLogo.setImageResource(com.system.network.ui.R.drawable.ic_cross_red)
+                        ivSplashLogo.setColorFilter(android.graphics.Color.parseColor("#FF3B30"), android.graphics.PorterDuff.Mode.SRC_IN)
+                        tvSplashStatus.text = "Licencia Expirada"
+                        tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
+
+                        // Cierra sesión
+                        prefs.edit()
+                            .putBoolean("is_logged_in", false)
+                            .remove("expiration_date")
+                            .remove("activation_date")
+                            .apply()
+
+                        Thread {
+                            Thread.sleep(2500)
+                            runOnUiThread {
+                                ivSplashLogo.setImageResource(com.system.network.ui.R.mipmap.ic_launcher)
+                                ivSplashLogo.clearColorFilter()
+                                tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#00FF9D"))
+                                tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_SPLASH_FETCHING)
+
+                                layoutSplash.visibility = android.view.View.GONE
+                                layoutLogin.visibility = android.view.View.VISIBLE
+                                btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+                                btnLogin.isEnabled = true
+                            }
+                        }.start()
+                    }
+                }.start()
+                return
+            }
+
+            // Simular validación de sesión o carga de datos (1.5 segundos)
+            Thread {
+                Thread.sleep(1500)
+                runOnUiThread {
+                    playAccessGrantedAnimation {
+                        startActivity(Intent(this@LoginActivity, MainActivity::class.java))
+                        finish()
+                    }
+                }
+            }.start()
+            return
+        } else {
+            layoutSplash.visibility = android.view.View.GONE
+            layoutLogin.visibility = android.view.View.VISIBLE
+        }
 
         btnLogin.setOnClickListener {
             val username = etUser.text.toString().trim()
@@ -163,7 +223,7 @@ class LoginActivity : AppCompatActivity() {
                     val challengeEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl.replace("/verify", "/challenge") else "$endpointUrl/challenge"
                     val verifyEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl else "$endpointUrl/verify"
 
-                    val hwid = NativeBridge.getNativeHWID()
+                    val hwid = NativeBridge.getHWID(this@LoginActivity)
                     val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
                     
                     // PASO 1.5: Certificate Pinning
@@ -324,19 +384,43 @@ class LoginActivity : AppCompatActivity() {
                         } else {
                             val message = jsonObject.optString("message", NativeBridge.getNativeString(NativeBridge.STRING_INVALID_LICENSE))
                             runOnUiThread {
-                                Toast.makeText(
-                                                this@LoginActivity,
-                                                message,
-                                                Toast.LENGTH_LONG
-                                        )
-                                        .show()
-                                btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
-                                btnLogin.isEnabled = true
-                                
-                                // Regresar al login form
-                                layoutSplash.visibility = android.view.View.GONE
-                                layoutLogin.visibility = android.view.View.VISIBLE
-                                stopPulseAnimation()
+                                val isExp = message.contains("expir", true) || message.contains("expired", true)
+                                if (isExp) {
+                                    stopPulseAnimation()
+                                    val ivSplashLogo = findViewById<ImageView>(R.id.iv_splash_logo)
+                                    ivSplashLogo.setImageResource(com.system.network.ui.R.drawable.ic_cross_red)
+                                    ivSplashLogo.setColorFilter(android.graphics.Color.parseColor("#FF3B30"), android.graphics.PorterDuff.Mode.SRC_IN)
+                                    tvSplashStatus.text = "Licencia Expirada"
+                                    tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
+
+                                    prefs.edit()
+                                        .putBoolean("is_logged_in", false)
+                                        .remove("expiration_date")
+                                        .remove("activation_date")
+                                        .apply()
+
+                                    Thread {
+                                        Thread.sleep(2500)
+                                        runOnUiThread {
+                                            ivSplashLogo.setImageResource(com.system.network.ui.R.mipmap.ic_launcher)
+                                            ivSplashLogo.clearColorFilter()
+                                            tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#00FF9D"))
+                                            tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_SPLASH_FETCHING)
+
+                                            layoutSplash.visibility = android.view.View.GONE
+                                            layoutLogin.visibility = android.view.View.VISIBLE
+                                            btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+                                            btnLogin.isEnabled = true
+                                        }
+                                    }.start()
+                                } else {
+                                    Toast.makeText(this@LoginActivity, message, Toast.LENGTH_LONG).show()
+                                    btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+                                    btnLogin.isEnabled = true
+                                    layoutSplash.visibility = android.view.View.GONE
+                                    layoutLogin.visibility = android.view.View.VISIBLE
+                                    stopPulseAnimation()
+                                }
                             }
                         }
                     } else {
@@ -353,19 +437,43 @@ class LoginActivity : AppCompatActivity() {
                         }
 
                         runOnUiThread {
-                            Toast.makeText(
-                                            this@LoginActivity,
-                                            errorMessage,
-                                            Toast.LENGTH_LONG
-                                    )
-                                    .show()
-                            btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
-                            btnLogin.isEnabled = true
-                            
-                            // Regresar al login form
-                            layoutSplash.visibility = android.view.View.GONE
-                            layoutLogin.visibility = android.view.View.VISIBLE
-                            stopPulseAnimation()
+                            val isExp = errorMessage.contains("expir", true) || errorMessage.contains("expired", true)
+                            if (isExp) {
+                                stopPulseAnimation()
+                                val ivSplashLogo = findViewById<ImageView>(R.id.iv_splash_logo)
+                                ivSplashLogo.setImageResource(com.system.network.ui.R.drawable.ic_cross_red)
+                                ivSplashLogo.setColorFilter(android.graphics.Color.parseColor("#FF3B30"), android.graphics.PorterDuff.Mode.SRC_IN)
+                                tvSplashStatus.text = "Licencia Expirada"
+                                tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
+
+                                prefs.edit()
+                                    .putBoolean("is_logged_in", false)
+                                    .remove("expiration_date")
+                                    .remove("activation_date")
+                                    .apply()
+
+                                Thread {
+                                    Thread.sleep(2500)
+                                    runOnUiThread {
+                                        ivSplashLogo.setImageResource(com.system.network.ui.R.mipmap.ic_launcher)
+                                        ivSplashLogo.clearColorFilter()
+                                        tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#00FF9D"))
+                                        tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_SPLASH_FETCHING)
+
+                                        layoutSplash.visibility = android.view.View.GONE
+                                        layoutLogin.visibility = android.view.View.VISIBLE
+                                        btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+                                        btnLogin.isEnabled = true
+                                    }
+                                }.start()
+                            } else {
+                                Toast.makeText(this@LoginActivity, errorMessage, Toast.LENGTH_LONG).show()
+                                btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+                                btnLogin.isEnabled = true
+                                layoutSplash.visibility = android.view.View.GONE
+                                layoutLogin.visibility = android.view.View.VISIBLE
+                                stopPulseAnimation()
+                            }
                         }
                     }
                 } catch (e: Exception) {

@@ -33,6 +33,7 @@ void notify_ui_firing_state(bool is_firing) {
         env->CallVoidMethod(g_ui_callback, methodId, is_firing);
         LOGD("UI callback: firing state = %d", is_firing);
     }
+    env->DeleteLocalRef(callbackClass);
     
     g_jvm->DetachCurrentThread();
 }

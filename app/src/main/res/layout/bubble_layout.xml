@@ -5,13 +5,10 @@
     android:layout_height="wrap_content">
 
     <!-- CARA 1: Burbuja Fake Lag -->
-    <LinearLayout
+    <RelativeLayout
         android:id="@+id/cara_fake_lag"
         android:layout_width="59dp"
         android:layout_height="59dp"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:padding="4dp"
         android:background="@drawable/bg_glass_bubble">
         
         <ImageView
@@ -20,7 +17,8 @@
             android:layout_height="36dp"
             android:padding="6dp"
             android:src="@drawable/ic_play_white"
-            android:contentDescription="Fake Lag" />
+            android:contentDescription="Fake Lag"
+            android:layout_centerInParent="true" />
 
         <!-- Dummy hidden bubble_icon to ensure legacy code references do not crash -->
         <ImageView
@@ -29,7 +27,8 @@
             android:layout_height="0dp"
             android:visibility="gone"
             android:src="@drawable/ic_play_white" />
-    </LinearLayout>
+
+    </RelativeLayout>
 
     <!-- CARA 2: NoRecoil Menu (Oculto) -->
     <LinearLayout
@@ -142,6 +141,88 @@
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Tile Network Config (Jitter & Packet Drop) (Fase 5) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_glass_tile"
+            android:padding="10dp"
+            android:layout_marginTop="10dp">
+            
+            <TextView
+                android:id="@+id/tv_qos_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/colorAccentPrimary"
+                android:text="AJUSTES DE RED (QoS)"
+                android:textStyle="bold"
+                android:textSize="10sp"
+                android:letterSpacing="0.08"
+                android:layout_marginBottom="6dp" />
+
+            <!-- Jitter Slider -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="4dp">
+                
+                <TextView
+                    android:id="@+id/tv_jitter_label"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textColor="@color/colorTextPrimary"
+                    android:textSize="11sp"
+                    android:text="Jitter Buffer: 0ms" />
+            </LinearLayout>
+
+            <SeekBar 
+                android:id="@+id/jitter_seekbar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/custom_seekbar_track"
+                android:thumb="@drawable/custom_seekbar_thumb"
+                android:splitTrack="false"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginBottom="8dp" />
+
+            <!-- Probabilistic Drop Slider -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="4dp">
+                
+                <TextView
+                    android:id="@+id/tv_drop_label"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textColor="@color/colorTextPrimary"
+                    android:textSize="11sp"
+                    android:text="Descarte de Paquetes: 10%" />
+            </LinearLayout>
+
+            <SeekBar 
+                android:id="@+id/drop_seekbar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="50"
+                android:progress="10"
+                android:progressDrawable="@drawable/custom_seekbar_track"
+                android:thumb="@drawable/custom_seekbar_thumb"
+                android:splitTrack="false"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp" />
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>

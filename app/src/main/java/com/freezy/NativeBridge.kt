@@ -21,10 +21,29 @@ object NativeBridge {
     external fun registerUiCallback(callback: Any)
 
     @JvmStatic
+    external fun setNativeMaxDesyncMs(ms: Long)
+
+    @JvmStatic
+    external fun setNativeJitterMs(ms: Int)
+
+    @JvmStatic
+    external fun setNativeDropProbability(probability: Int)
+
+    @JvmStatic
     external fun getNativeString(id: Int): String
 
     @JvmStatic
-    external fun getNativeHWID(): String
+    private external fun getNativeHWID(androidId: String, hardwareInfo: String): String
+
+    @JvmStatic
+    fun getHWID(context: android.content.Context): String {
+        val androidId = android.provider.Settings.Secure.getString(
+            context.contentResolver,
+            android.provider.Settings.Secure.ANDROID_ID
+        ) ?: "UNKNOWN_ANDROID_ID"
+        val hardwareInfo = "${android.os.Build.BOARD}-${android.os.Build.BRAND}-${android.os.Build.DEVICE}-${android.os.Build.HARDWARE}-${android.os.Build.MODEL}-${android.os.Build.PRODUCT}"
+        return getNativeHWID(androidId, hardwareInfo)
+    }
 
     @JvmStatic
     external fun setSecurePayload(payload: String)
@@ -107,4 +126,7 @@ object NativeBridge {
     const val STRING_GAME_TARGET = 73
     const val STRING_FREE_FIRE = 74
     const val STRING_FF_MAX = 75
+    const val STRING_QOS_TITLE = 76
+    const val STRING_JITTER_LABEL = 77
+    const val STRING_DROP_LABEL = 78
 }

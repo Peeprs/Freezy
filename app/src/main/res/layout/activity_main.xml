@@ -102,8 +102,11 @@
             android:visibility="gone"
             android:layout_marginBottom="16dp"/>
 
+
+
         <!-- Custom Animated Switches -->
         <FrameLayout
+            android:id="@+id/layout_mode_selector"
             android:layout_width="match_parent"
             android:layout_height="44dp"
             android:background="@drawable/shape_pill_dark"
@@ -192,6 +195,8 @@
                 android:splitTrack="false"
                 android:layout_marginTop="16dp"/>
         </LinearLayout>
+
+
     </LinearLayout>
 
     <!-- Card de Selección de Juego -->

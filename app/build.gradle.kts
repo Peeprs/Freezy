@@ -14,7 +14,7 @@ android {
 
     defaultConfig {
         applicationId = "com.system.network.ui" // Nombre camuflado contra Anti-Cheats
-        minSdk = 29 // Android 10
+        minSdk = 28 // Android 9 (Pie)
         targetSdk = 36
         versionCode = 10
         versionName = "3.0.0"

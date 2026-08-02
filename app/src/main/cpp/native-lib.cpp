@@ -25,6 +25,7 @@
 #define TAG  "FreezyNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  TAG, __VA_ARGS__)
 
 /* ── CSPRNG: Generador de números aleatorios seguro (CWE-330 fix) ────────── */
 /* Lee entropía del kernel Linux via /dev/urandom en lugar de usar rand()     */
@@ -124,11 +125,11 @@ static int          g_tcp_flow_count = 0;
 static pthread_mutex_t g_flows_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 struct PacketBuffer {
-    uint8_t data[4096];
+    uint8_t data[65536]; // Ajustado para evitar truncado de paquetes con MTU de 65535
     int len;
 };
 
-static const int BUFFER_POOL_SIZE = 128;
+static const int BUFFER_POOL_SIZE = 64; // Optimización de pool para limitar consumo a 4MB
 static PacketBuffer g_buffer_pool[BUFFER_POOL_SIZE];
 static std::atomic<int> g_buffer_pool_index{0};
 
@@ -195,6 +196,7 @@ static bool epoll_del(int fd) {
 // Set from Kotlin: true = drop incoming UDP (lag switch ON)
 extern "C" std::atomic<bool> gLagActive{false};
 static std::atomic<uint64_t> g_last_keepalive_time{0};
+static std::atomic<uint64_t> g_max_desync_ms{800}; // Configurable dinámicamente por JNI (Paso 7 Watchdog)
 
 /* ── JNI callback to protect a socket ───────────────────────────────────── */
 static JavaVM*    g_jvm     = nullptr;
@@ -294,7 +296,7 @@ static uint64_t get_now_ms() {
 }
 
 /* ── Asymmetric Delay Queue Structure ──────────────────────────────────────── */
-static const int MAX_DELAY_QUEUE_SIZE = 512;
+static const int MAX_DELAY_QUEUE_SIZE = 256; // Optimización de consumo de memoria RAM
 struct DelayedPacket {
     bool     is_ipv6;
     uint32_t src_ip;
@@ -304,7 +306,7 @@ struct DelayedPacket {
     uint8_t  src_ip6[16];
     uint8_t  dst_ip6[16];
     
-    uint8_t  payload[2048];
+    uint8_t  payload[65536]; // Ajustado a 64KB para evitar truncado de paquetes grandes de juego
     int      payload_len;
     uint64_t timestamp; // Time when it was buffered
 };
@@ -319,7 +321,7 @@ static void delay_queue_push(bool is_ipv6,
                              const uint8_t* src_ip, uint16_t src_port,
                              const uint8_t* dst_ip, uint16_t dst_port,
                              const uint8_t* payload, int plen) {
-    if (plen > 2048) return; // Supera tamaño del buffer de cola
+    if (plen > 65536) return; // Supera tamaño del buffer de cola
     
     pthread_mutex_lock(&g_delay_queue_mtx);
     if (g_delay_queue_count >= MAX_DELAY_QUEUE_SIZE) {
@@ -367,7 +369,7 @@ static void delay_queue_flush(int tun_fd) {
         int idx = g_delay_queue_head;
         DelayedPacket& pkt = g_delay_queue[idx];
         
-        DBG_LOG("LAG-FLUSH: Releasing packet size=%d, held for %llu ms", pkt.payload_len, now - pkt.timestamp);
+        DBG_LOG("LAG-FLUSH: Releasing packet size=%d, held for %llu ms", pkt.payload_len, (unsigned long long)(now - pkt.timestamp));
         
         if (pkt.is_ipv6) {
             write_ipv6_to_tun(tun_fd,
@@ -405,10 +407,98 @@ static bool handle_lag_evasion(int plen) {
     return false; // Retener en cola
 }
 
-/* ── Probabilistic Packet Drop ─────────────────────────────────────────────── */
+/* ── Jitter Outbound Queue (Paso 12) ───────────────────────────────────────── */
+struct OutboundPacket {
+    int      sock;
+    uint8_t  payload[65536];
+    int      payload_len;
+    sockaddr_storage dst_addr;
+    socklen_t dst_addr_len;
+    uint64_t timestamp;
+};
+
+static const int MAX_OUTBOUND_QUEUE_SIZE = 256;
+static OutboundPacket g_outbound_queue[MAX_OUTBOUND_QUEUE_SIZE];
+static int g_outbound_queue_head = 0;
+static int g_outbound_queue_tail = 0;
+static int g_outbound_queue_count = 0;
+static pthread_mutex_t g_outbound_queue_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+static std::atomic<uint32_t> g_outbound_jitter_ms{0};
+static std::atomic<int> g_drop_probability{10};
+
+static void outbound_queue_push(int sock, const uint8_t* payload, int plen, const sockaddr* dst, socklen_t dst_len) {
+    if (plen > 65536) return;
+    pthread_mutex_lock(&g_outbound_queue_mtx);
+    if (g_outbound_queue_count >= MAX_OUTBOUND_QUEUE_SIZE) {
+        OutboundPacket& oldest = g_outbound_queue[g_outbound_queue_head];
+        sendto(oldest.sock, oldest.payload, oldest.payload_len, 0, (sockaddr*)&oldest.dst_addr, oldest.dst_addr_len);
+        g_outbound_queue_head = (g_outbound_queue_head + 1) % MAX_OUTBOUND_QUEUE_SIZE;
+        g_outbound_queue_count--;
+    }
+    
+    int idx = g_outbound_queue_tail;
+    g_outbound_queue[idx].sock = sock;
+    memcpy(g_outbound_queue[idx].payload, payload, plen);
+    g_outbound_queue[idx].payload_len = plen;
+    memcpy(&g_outbound_queue[idx].dst_addr, dst, dst_len);
+    g_outbound_queue[idx].dst_addr_len = dst_len;
+    g_outbound_queue[idx].timestamp = get_now_ms();
+    
+    g_outbound_queue_tail = (g_outbound_queue_tail + 1) % MAX_OUTBOUND_QUEUE_SIZE;
+    g_outbound_queue_count++;
+    pthread_mutex_unlock(&g_outbound_queue_mtx);
+}
+
+static void process_outbound_queue() {
+    pthread_mutex_lock(&g_outbound_queue_mtx);
+    uint64_t now = get_now_ms();
+    uint32_t jitter = g_outbound_jitter_ms.load();
+    while (g_outbound_queue_count > 0) {
+        int idx = g_outbound_queue_head;
+        OutboundPacket& pkt = g_outbound_queue[idx];
+        if (now - pkt.timestamp >= jitter) {
+            sendto(pkt.sock, pkt.payload, pkt.payload_len, 0, (sockaddr*)&pkt.dst_addr, pkt.dst_addr_len);
+            g_outbound_queue_head = (g_outbound_queue_head + 1) % MAX_OUTBOUND_QUEUE_SIZE;
+            g_outbound_queue_count--;
+        } else {
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_outbound_queue_mtx);
+}
+
+static void clear_outbound_queue() {
+    pthread_mutex_lock(&g_outbound_queue_mtx);
+    while (g_outbound_queue_count > 0) {
+        int idx = g_outbound_queue_head;
+        OutboundPacket& pkt = g_outbound_queue[idx];
+        sendto(pkt.sock, pkt.payload, pkt.payload_len, 0, (sockaddr*)&pkt.dst_addr, pkt.dst_addr_len);
+        g_outbound_queue_head = (g_outbound_queue_head + 1) % MAX_OUTBOUND_QUEUE_SIZE;
+        g_outbound_queue_count--;
+    }
+    pthread_mutex_unlock(&g_outbound_queue_mtx);
+}
+
+/* ── QoS Local Filter (Paso 13) ────────────────────────────────────────────── */
+static bool qos_should_throttle_tcp() {
+    static uint64_t last_tcp_time = 0;
+    static int tcp_packet_count = 0;
+    uint64_t now = get_now_ms();
+    if (now - last_tcp_time > 100) {
+        last_tcp_time = now;
+        tcp_packet_count = 0;
+    }
+    tcp_packet_count++;
+    return (tcp_packet_count > 10);
+}
+
+/* ── Probabilistic Packet Drop (Paso 14) ───────────────────────────────────── */
 static bool should_probabilistic_drop() {
-    uint16_t r = secure_random_u16();
-    return (r % 10 == 0); // 10% probabilidad de descarte realista
+    int prob = g_drop_probability.load();
+    if (prob <= 0) return false;
+    uint16_t r = secure_random_u16() % 100;
+    return (r < prob);
 }
 
 /* Helper para identificar puertos de servidores del juego (Free Fire) */
@@ -625,6 +715,7 @@ static void cleanup_flows() {
     }
     g_tcp_flow_count = 0;
     pthread_mutex_unlock(&g_flows_mtx);
+    clear_outbound_queue();
 }
 
 static void write_tcp_to_tun(int tun_fd,
@@ -791,10 +882,25 @@ void* engine_thread(void*) {
     LOGI("Asymmetric UDP Proxy started. tun_fd=%d", g_tun_fd);
 
     // Establecer prioridad alta para el hilo de red nativo (evitar retrasos/jitter)
-    if (setpriority(PRIO_PROCESS, 0, -16) < 0) {
+    if (setpriority(PRIO_PROCESS, 0, -20) < 0) { // Set maximum priority (nice -20)
         LOGE("Failed to set thread priority: %s", strerror(errno));
     } else {
-        LOGI("Native network thread priority set to high (-16)");
+        LOGI("Native network thread priority set to high (-20)");
+    }
+
+    // Elevate schedule priority using pthread_setschedparam (Fase 4)
+    struct sched_param param;
+    param.sched_priority = sched_get_priority_max(SCHED_FIFO);
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) != 0) {
+        // Fallback to SCHED_RR
+        param.sched_priority = sched_get_priority_max(SCHED_RR);
+        if (pthread_setschedparam(pthread_self(), SCHED_RR, &param) != 0) {
+            LOGW("Could not set RT scheduling policy: %s. Relying on nice (-20).", strerror(errno));
+        } else {
+            LOGI("Native network thread scheduler set to SCHED_RR (Real-Time)");
+        }
+    } else {
+        LOGI("Native network thread scheduler set to SCHED_FIFO (Real-Time)");
     }
 
     g_epoll_fd = epoll_create1(0);
@@ -825,20 +931,33 @@ void* engine_thread(void*) {
     struct epoll_event events[MAX_EVENTS];
 
     while (g_running) {
-        int nfds = epoll_wait(g_epoll_fd, events, MAX_EVENTS, 100);
+        int timeout_ms = 100;
+        pthread_mutex_lock(&g_outbound_queue_mtx);
+        if (g_outbound_queue_count > 0) {
+            timeout_ms = 10;
+        }
+        pthread_mutex_unlock(&g_outbound_queue_mtx);
+
+        int nfds = epoll_wait(g_epoll_fd, events, MAX_EVENTS, timeout_ms);
         if (nfds < 0) {
             if (errno == EINTR) continue;
             LOGE("epoll_wait error: %s", strerror(errno));
             break;
         }
 
+        // Process outbound jitter queue (Paso 12)
+        if (g_outbound_jitter_ms.load() > 0) {
+            process_outbound_queue();
+        }
+
         // Safety timeout flush check for delayed packets (Requirement 12)
+        // Safety timeout flush check for delayed packets (Paso 7: Watchdog Dinámico)
         if (gLagActive.load()) {
             uint64_t now = get_now_ms();
             pthread_mutex_lock(&g_delay_queue_mtx);
             if (g_delay_queue_count > 0) {
                 uint64_t oldest_age = now - g_delay_queue[g_delay_queue_head].timestamp;
-                if (oldest_age > 2200) { // Safety limit: 2200ms
+                if (oldest_age > g_max_desync_ms.load()) { // Límite de seguridad dinámico
                     pthread_mutex_unlock(&g_delay_queue_mtx);
                     LOGI("Safety timeout limit reached: flushing delay queue (%d packets)", g_delay_queue_count);
                     delay_queue_flush(tun);
@@ -860,6 +979,29 @@ void* engine_thread(void*) {
 
         for (int i = 0; i < nfds; i++) {
             int fd = events[i].data.fd;
+            uint32_t evs = events[i].events;
+
+            // Paso 3: Gestión activa de errores y hangup en epoll
+            if (evs & (EPOLLERR | EPOLLHUP)) {
+                LOGE("EPOLLERR/EPOLLHUP detectado en fd %d", fd);
+                if (fd != tun && fd != g_pipe[0]) {
+                    epoll_del(fd);
+                    close(fd);
+                    pthread_mutex_lock(&g_flows_mtx);
+                    for (int j = 0; j < g_flow_count; j++) {
+                        if (g_flows[j].sock == fd) {
+                            g_flows[j].sock = -1;
+                        }
+                    }
+                    for (int j = 0; j < g_tcp_flow_count; j++) {
+                        if (g_tcp_flows[j].sock == fd) {
+                            g_tcp_flows[j].sock = -1;
+                        }
+                    }
+                    pthread_mutex_unlock(&g_flows_mtx);
+                }
+                continue;
+            }
 
             if (fd == g_pipe[0]) {
                 LOGI("Stop signal received via pipe.");
@@ -917,11 +1059,20 @@ void* engine_thread(void*) {
                                         dst.sin_family      = AF_INET;
                                         dst.sin_addr.s_addr = iph->daddr;
                                         dst.sin_port        = udph->dport;
-                                        sendto(sock, payload, plen, 0,
-                                               (sockaddr*)&dst, sizeof(dst));
+                                        
+                                        uint32_t jitter = g_outbound_jitter_ms.load();
+                                        if (is_game && jitter > 0) {
+                                            outbound_queue_push(sock, payload, plen, (sockaddr*)&dst, sizeof(dst));
+                                        } else {
+                                            sendto(sock, payload, plen, 0,
+                                                   (sockaddr*)&dst, sizeof(dst));
+                                        }
                                     }
                                 }
-                            } else if (iph->proto == 6 && n > ihl + 20) { // TCP (Early Protocol Filter: instant transparent bypass)
+                            } else if (iph->proto == 6 && n > ihl + 20) { // TCP (Early Protocol Filter: instant transparent bypass with QoS)
+                                if (qos_should_throttle_tcp()) {
+                                    usleep(1000); // 1ms slowdown to prioritize UDP
+                                }
                                 handle_tcp_packet(tun, iph, pkt_buf->data, n);
                             }
                         } else if (version == 6 && n > 40) { // IPv6 Zero-Copy Parsing
@@ -954,8 +1105,15 @@ void* engine_thread(void*) {
                                         dst.sin6_family = AF_INET6;
                                         memcpy(&dst.sin6_addr, ip6h->daddr, 16);
                                         dst.sin6_port = udph->dport;
-                                        sendto(sock, payload, plen, 0,
-                                               (sockaddr*)&dst, sizeof(dst));
+                                        
+                                        uint32_t jitter = g_outbound_jitter_ms.load();
+                                        bool is_game = is_game_port(ntohs(udph->dport));
+                                        if (is_game && jitter > 0) {
+                                            outbound_queue_push(sock, payload, plen, (sockaddr*)&dst, sizeof(dst));
+                                        } else {
+                                            sendto(sock, payload, plen, 0,
+                                                   (sockaddr*)&dst, sizeof(dst));
+                                        }
                                     }
                                 }
                             }
@@ -1133,6 +1291,11 @@ void* engine_thread(void*) {
     cleanup_flows();
     close(g_epoll_fd);
     g_epoll_fd = -1;
+    // Paso 1: Cerrar el extremo de lectura del pipe de forma segura en su propio hilo
+    if (g_pipe[0] > 0) {
+        close(g_pipe[0]);
+        g_pipe[0] = -1;
+    }
     LOGI("Asymmetric UDP Proxy stopped.");
     return nullptr;
 }
@@ -1150,6 +1313,7 @@ Java_com_freezy_AntigravityFirewall_startNativeEngine(
     g_svc_ref = env->NewGlobalRef(thiz);
     jclass cls = env->GetObjectClass(thiz);
     g_protect  = env->GetMethodID(cls, "protectSocket", "(I)Z");
+    env->DeleteLocalRef(cls);
 
     if (pipe(g_pipe) < 0) { LOGE("pipe() failed"); return; }
     g_tun_fd = fd;
@@ -1170,9 +1334,13 @@ Java_com_freezy_AntigravityFirewall_stopNativeEngine(
     if (!g_running) return;
     g_running = false;
     g_tun_fd  = -1;
-    if (g_pipe[1] > 0) { uint8_t b=1; write(g_pipe[1],&b,1);
-                          close(g_pipe[1]); close(g_pipe[0]);
-                          g_pipe[0]=g_pipe[1]=-1; }
+    // Paso 1: Solo cerrar el extremo de escritura y notificar al hilo
+    if (g_pipe[1] > 0) { 
+        uint8_t b = 1; 
+        write(g_pipe[1], &b, 1);
+        close(g_pipe[1]); 
+        g_pipe[1] = -1; 
+    }
     if (g_svc_ref) { env->DeleteGlobalRef(g_svc_ref); g_svc_ref = nullptr; }
     LOGI("Engine stop signaled.");
 }
@@ -1185,6 +1353,27 @@ Java_com_freezy_AntigravityFirewall_setLagActive(
     if (!active && g_tun_fd >= 0) {
         delay_queue_flush(g_tun_fd);
     }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_NativeBridge_setNativeMaxDesyncMs(
+        JNIEnv* /*env*/, jclass /*cls*/, jlong ms) {
+    g_max_desync_ms.store((uint64_t)ms);
+    LOGI("Native safety desync timeout updated to: %llu ms", (unsigned long long)ms);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_NativeBridge_setNativeJitterMs(
+        JNIEnv* /*env*/, jclass /*cls*/, jint ms) {
+    g_outbound_jitter_ms.store((uint32_t)ms);
+    LOGI("Native outbound jitter buffer latency updated to: %d ms", ms);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_NativeBridge_setNativeDropProbability(
+        JNIEnv* /*env*/, jclass /*cls*/, jint pct) {
+    g_drop_probability.store(pct);
+    LOGI("Native packet drop probability updated to: %d%%", pct);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -1522,6 +1711,18 @@ Java_com_freezy_NativeBridge_getNativeString(JNIEnv* env, jclass, jint id) {
         unsigned char s[] = {0x13, 0x13, 0x75, 0x18, 0x14, 0x0D, 0x00};
         xor_cipher(s, sizeof(s) - 1);
         return env->NewStringUTF((char*)s);
+    } else if (id == 76) {
+        unsigned char s[] = {0x14, 0x1f, 0x0, 0x6, 0x1, 0x10, 0x6, 0x75, 0x11, 0x10, 0x75, 0x7, 0x10, 0x11, 0x75, 0x7d, 0x4, 0x3a, 0x6, 0x7c, 0x00};
+        xor_cipher(s, sizeof(s) - 1);
+        return env->NewStringUTF((char*)s);
+    } else if (id == 77) {
+        unsigned char s[] = {0x1f, 0x3c, 0x21, 0x21, 0x30, 0x27, 0x75, 0x17, 0x20, 0x33, 0x33, 0x30, 0x27, 0x00};
+        xor_cipher(s, sizeof(s) - 1);
+        return env->NewStringUTF((char*)s);
+    } else if (id == 78) {
+        unsigned char s[] = {0x11, 0x30, 0x26, 0x36, 0x34, 0x27, 0x21, 0x30, 0x75, 0x31, 0x30, 0x75, 0x5, 0x34, 0x24, 0x20, 0x30, 0x21, 0x30, 0x26, 0x00};
+        xor_cipher(s, sizeof(s) - 1);
+        return env->NewStringUTF((char*)s);
     }
     return env->NewStringUTF("");
 }
@@ -1592,14 +1793,18 @@ std::string read_system_file(const char* path) {
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_freezy_NativeBridge_getNativeHWID(JNIEnv* env, jclass) {
-    std::string storage_name = read_system_file("/sys/block/mmcblk0/device/name"); 
-    if(storage_name.empty()) storage_name = read_system_file("/sys/block/sda/device/model");
-    if(storage_name.empty()) storage_name = "UNKNOWN_HWID_FALLBACK";
+Java_com_freezy_NativeBridge_getNativeHWID(JNIEnv* env, jclass, jstring androidId, jstring hardwareInfo) {
+    const char* id_str = env->GetStringUTFChars(androidId, nullptr);
+    const char* hw_str = env->GetStringUTFChars(hardwareInfo, nullptr);
+
+    std::string combined = std::string(id_str ? id_str : "") + "|" + std::string(hw_str ? hw_str : "");
+
+    if (id_str) env->ReleaseStringUTFChars(androidId, id_str);
+    if (hw_str) env->ReleaseStringUTFChars(hardwareInfo, hw_str);
 
     std::string salt = "FREEZY_SECRET_SALT_2026";
-    std::string hwid = sha256(storage_name + salt);
-    
+    std::string hwid = sha256(combined + salt);
+
     return env->NewStringUTF(hwid.c_str());
 }
 
