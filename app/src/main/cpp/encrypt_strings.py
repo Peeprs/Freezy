@@ -1,8 +1,22 @@
-def xor_encrypt(s, key=0x55):
-    return [ord(c) ^ key for c in s] + [0]
+# Cabecera generada: pega el bloque completo dentro de native-lib.cpp en el
+# lugar de xor_cipher/getNativeString (marcadores XOR_SECTION_BEGIN/END).
+#
+# Ofuscación XOR multi-byte: cada byte usa una posición de la clave,
+# así el cifrado ya no es reversible con un xor de un solo byte (0x55).
+XOR_KEY = bytes([0xF3, 0x71, 0x29, 0xA4, 0x0C, 0x6B, 0xD8, 0x52])
+
+
+def xor_encrypt(s, key=XOR_KEY):
+    data = s.encode("utf-8")
+    # Cifrar TODOS los bytes y AGREGAR un byte 0x00 al final.
+    # El C++ usa sizeof(s) - 1 = exactamente los bytes del mensaje,
+    # y el último 0x00 nunca se descifra (queda como terminador C).
+    # Con un array [] += [0] todos los mensajes salen con byte corrupto.
+    return [data[i] ^ key[i % len(key)] for i in range(len(data))] + [0]
+
 
 strings = {
-    1: "https://licencias-freezy.onrender.com/api/keys/verify",
+    1: "https://licenciasfreezy.vercel.app/api/keys/verify",
     2: "INICIAR FREEZY",
     3: "Validando conexion y licencia...",
     4: "Lanzando motor Freezy...",
@@ -14,6 +28,7 @@ strings = {
     10: "Tipo de Activacion",
     11: "Informacion de Licencia",
     12: "!! DESCARGO DE RESPONSABILIDAD",
+    13: "Si bien esta herramienta NO altera los archivos originales del juego, te otorga una ventaja extrema.\n\n⚠️ Uso de Datos y Dispositivo:\nSolicitamos acceso al 'Uso de Datos' para monitorear la ejecución del juego y activar las funciones correctamente. También almacenamos el nombre de tu dispositivo para la detección y prevención de fallas técnicas específicas reportadas anteriormente en modelos similares.\n\nEl uso abusivo puede causar baneos. El uso de esta herramienta es bajo tu propia responsabilidad.",
     14: "AJUSTES",
     15: "ACEPTO EL RIESGO",
     16: "Freezy Activo",
@@ -75,13 +90,48 @@ strings = {
     72: "Por favor espera...",
     73: "JUEGO OBJETIVO",
     74: "Free Fire",
-    75: "FF MAX"
+    75: "FF MAX",
+    76: "AJUSTES DE RED (QoS)",
+    77: "Jitter Buffer",
+    78: "Descarte de Paquetes",
+    # Pines TLS actuales del servidor (Sha256 SPKI, Base64), separados por
+    # comas. WebSecurity los usa SOLO si la lista no está vacía.
+    # Pines TLS actuales del servidor (Sha256 SPKI, Base64), separados por comas.
+    # verificado 2026-08-03: leaf=vercel.app intermedio=...
+    79: "ft9JFh9fyiSD0LI4vCAyVHDM1OKStfDBooxsWHHvngY=,yDu9og255NN5GEf+Bwa9rTrqFQ0EydZ0r1FCh9TdAW4=",
+    80: "Para evitar desincronizacion (antiban en gama baja), selecciona SIN RESTRICCIONES en el ahorro de bateria para Freezy.",
+    81: "Entorno no seguro. Cerrando.",
 }
 
-for id, s in strings.items():
+
+def hex_byte(b):
+    return f"0x{b:02X}"
+
+
+key_values = ", ".join(hex_byte(b) for b in XOR_KEY)
+print("// ==== XOR_SECTION_BEGIN (generado por encrypt_strings.py) ====")
+print("// XOR multi-byte: cada byte se descifra con key[i % KEY_LEN]")
+print("static const unsigned char XOR_KEY[] = {" + key_values + "};")
+print("static const size_t XOR_KEY_LEN = sizeof(XOR_KEY);")
+print()
+print("void xor_cipher(unsigned char* data, size_t len) {")
+print("    for (size_t i = 0; i < len; i++) {")
+print("        data[i] ^= XOR_KEY[i % XOR_KEY_LEN];")
+print("    }")
+print("}")
+print()
+print('extern "C" JNIEXPORT jstring JNICALL')
+print("Java_com_freezy_NativeBridge_getNativeString(JNIEnv* env, jclass, jint id) {")
+
+for i, (id_, s) in enumerate(strings.items()):
     enc = xor_encrypt(s)
-    hex_str = ", ".join([f"0x{b:02X}" for b in enc])
-    print(f"    }} else if (id == {id}) {{")
+    hex_str = ", ".join(hex_byte(b) for b in enc)
+    prefix = "if" if i == 0 else "else if"
+    print(f"    {prefix} (id == {id_}) {{")
     print(f"        unsigned char s[] = {{{hex_str}}};")
-    print(f"        xor_cipher(s, sizeof(s) - 1);")
-    print(f"        return env->NewStringUTF((char*)s);")
+    print("        xor_cipher(s, sizeof(s) - 1);")
+    print("        return env->NewStringUTF((char*)s);")
+    print("    }")
+print('    return env->NewStringUTF("");')
+print("}")
+print("// ==== XOR_SECTION_END ====")

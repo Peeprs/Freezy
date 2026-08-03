@@ -39,13 +39,8 @@ android {
             )
         }
         debug {
-            // Ofuscar también en debug para que MobSF no lea el código
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
     

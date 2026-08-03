@@ -54,8 +54,17 @@
 # ── 5. CRYPTO / SECURITY ──────────────────────────────────────────────
 # Preservar clases de cifrado para evitar que R8 las elimine como "no usadas"
 -keep class com.freezy.SecureCrypto { *; }
+-keep class com.freezy.SecurePrefs { *; }
+-keep class com.freezy.WebSecurity { *; }
+-keep class com.freezy.SecureLogger { *; }
+-keep class com.freezy.RootTools { *; }
 -keep class javax.crypto.** { *; }
 -keep class java.security.** { *; }
+
+# MainActivity — Tiene getSecureEndpoint() como método nativo privado
+-keep class com.freezy.MainActivity {
+    private native <methods>;
+}
 
 # ── 6. ELIMINAR LOGS EN RELEASE ────────────────────────────────────────
 # R8 puede eliminar completamente las llamadas a Log.* en release
@@ -79,9 +88,6 @@
 -keepattributes *Annotation*
 -keep class androidx.** { *; }
 -keep interface androidx.** { *; }
-
-# FileProvider (declarado en Manifest)
--keep class androidx.core.content.FileProvider { *; }
 
 # ── 8. REGLAS ANTI-DECOMPILACIÓN ───────────────────────────────────────
 # Optimizaciones agresivas que hacen más difícil la ingeniería inversa

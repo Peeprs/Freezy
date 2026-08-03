@@ -1,228 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/bubble_container"
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content">
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipChildren="false"
+    android:clipToPadding="false">
 
-    <!-- CARA 1: Burbuja Fake Lag -->
-    <RelativeLayout
+    <!-- Burbuja Fake Lag Cyber-Tech con Cristal Congelado y Picos de Nieve -->
+    <FrameLayout
         android:id="@+id/cara_fake_lag"
-        android:layout_width="59dp"
-        android:layout_height="59dp"
-        android:background="@drawable/bg_glass_bubble">
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipChildren="false"
+        android:clipToPadding="false">
         
+        <com.freezy.ui.CyberBubbleView
+            android:id="@+id/cyber_bubble_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Dummy hidden views for backward compatibility -->
         <ImageView
             android:id="@+id/btn_fake_lag"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:padding="6dp"
-            android:src="@drawable/ic_play_white"
-            android:contentDescription="Fake Lag"
-            android:layout_centerInParent="true" />
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone" />
 
-        <!-- Dummy hidden bubble_icon to ensure legacy code references do not crash -->
         <ImageView
             android:id="@+id/bubble_icon"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            android:visibility="gone"
-            android:src="@drawable/ic_play_white" />
+            android:visibility="gone" />
 
-    </RelativeLayout>
+    </FrameLayout>
 
-    <!-- CARA 2: NoRecoil Menu (Oculto) -->
-    <LinearLayout
-        android:id="@+id/recoil_menu"
-        android:layout_width="240dp"
-        android:layout_height="wrap_content"
-        android:visibility="gone"
-        android:orientation="vertical"
-        android:padding="16dp"
-        android:background="@drawable/bg_glass_menu">
-        
-        <LinearLayout
-            android:id="@+id/menu_header"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
-            
-            <ImageButton
-                android:id="@+id/btn_back_to_lag"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_arrow_back"
-                android:tint="@color/colorTextPrimary" />
-                
-            <TextView
-                android:id="@+id/tv_bubble_title"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/colorTextPrimary"
-                android:textStyle="bold"
-                android:textSize="14sp"
-                android:layout_marginStart="12dp"/>
-        </LinearLayout>
-        
-        <!-- Tile NoRecoil -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/bg_glass_tile"
-            android:padding="10dp"
-            android:layout_marginBottom="10dp">
-            
-            <Switch 
-                android:id="@+id/recoil_switch"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textColor="@color/colorTextPrimary"
-                android:textSize="12sp"
-                android:thumb="@drawable/custom_seekbar_thumb" />
-
-            <TextView 
-                android:id="@+id/recoil_percentage"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/colorTextPrimary"
-                android:textSize="11sp"
-                android:layout_marginTop="4dp" />
-
-            <SeekBar 
-                android:id="@+id/recoil_seekbar"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:max="100"
-                android:progress="50"
-                android:progressDrawable="@drawable/custom_seekbar_track"
-                android:thumb="@drawable/custom_seekbar_thumb"
-                android:splitTrack="false"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:layout_marginTop="6dp" />
-        </LinearLayout>
-
-        <!-- Tile FOV -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/bg_glass_tile"
-            android:padding="10dp">
-            
-            <Switch 
-                android:id="@+id/fov_switch"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textColor="@color/colorTextPrimary"
-                android:textSize="12sp"
-                android:thumb="@drawable/custom_seekbar_thumb" />
-
-            <TextView 
-                android:id="@+id/fov_size_text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/colorTextPrimary"
-                android:textSize="11sp"
-                android:layout_marginTop="4dp" />
-
-            <SeekBar 
-                android:id="@+id/fov_seekbar"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:max="600"
-                android:progress="0"
-                android:progressDrawable="@drawable/custom_seekbar_track"
-                android:thumb="@drawable/custom_seekbar_thumb"
-                android:splitTrack="false"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:layout_marginTop="6dp" />
-        </LinearLayout>
-
-        <!-- Tile Network Config (Jitter & Packet Drop) (Fase 5) -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/bg_glass_tile"
-            android:padding="10dp"
-            android:layout_marginTop="10dp">
-            
-            <TextView
-                android:id="@+id/tv_qos_title"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/colorAccentPrimary"
-                android:text="AJUSTES DE RED (QoS)"
-                android:textStyle="bold"
-                android:textSize="10sp"
-                android:letterSpacing="0.08"
-                android:layout_marginBottom="6dp" />
-
-            <!-- Jitter Slider -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="4dp">
-                
-                <TextView
-                    android:id="@+id/tv_jitter_label"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textColor="@color/colorTextPrimary"
-                    android:textSize="11sp"
-                    android:text="Jitter Buffer: 0ms" />
-            </LinearLayout>
-
-            <SeekBar 
-                android:id="@+id/jitter_seekbar"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:max="100"
-                android:progress="0"
-                android:progressDrawable="@drawable/custom_seekbar_track"
-                android:thumb="@drawable/custom_seekbar_thumb"
-                android:splitTrack="false"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:layout_marginBottom="8dp" />
-
-            <!-- Probabilistic Drop Slider -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="4dp">
-                
-                <TextView
-                    android:id="@+id/tv_drop_label"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textColor="@color/colorTextPrimary"
-                    android:textSize="11sp"
-                    android:text="Descarte de Paquetes: 10%" />
-            </LinearLayout>
-
-            <SeekBar 
-                android:id="@+id/drop_seekbar"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:max="50"
-                android:progress="10"
-                android:progressDrawable="@drawable/custom_seekbar_track"
-                android:thumb="@drawable/custom_seekbar_thumb"
-                android:splitTrack="false"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp" />
-        </LinearLayout>
-    </LinearLayout>
 </FrameLayout>

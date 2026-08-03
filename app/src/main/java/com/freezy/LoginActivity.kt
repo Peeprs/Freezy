@@ -18,13 +18,6 @@ import java.net.URL
 import org.json.JSONObject
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
-import java.security.cert.X509Certificate
-import java.security.MessageDigest
-import android.util.Base64
 
 class LoginActivity : AppCompatActivity() {
 
@@ -38,11 +31,18 @@ class LoginActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
-        
-        // Guardar el endpoint para que otros servicios lo usen
+
+        // Migrar a cifrado cualquier valor sensible guardado por versiones viejas
+        SecurePrefs.migrateLegacy(this)
+
+        // Guardar el endpoint (cifrado) para que otros servicios lo usen
         try {
-            val endpointUrl = getSecureEndpoint()
-            prefs.edit().putString("secure_endpoint", endpointUrl).apply()
+            val endpointUrl = try {
+                getSecureEndpoint()
+            } catch (e: Throwable) {
+                NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT)
+            }.ifEmpty { NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT) }
+            SecurePrefs.putSecureString(this, "secure_endpoint", endpointUrl)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -53,7 +53,7 @@ class LoginActivity : AppCompatActivity() {
             val btnAccept = dialogView.findViewById<Button>(R.id.btn_accept_risk)
             val btnExit = dialogView.findViewById<Button>(R.id.btn_exit_app)
             
-            btnAccept.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#00FF9D")))
+            btnAccept.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#00E5FF")))
             btnAccept.setTextColor(android.graphics.Color.parseColor("#0D0E12"))
             
             btnExit.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FF3B30")))
@@ -103,12 +103,12 @@ class LoginActivity : AppCompatActivity() {
         val etUser = findViewById<EditText>(R.id.et_user)
         val etKey = findViewById<EditText>(R.id.et_key)
         val btnLogin = findViewById<Button>(R.id.btn_login)
-        btnLogin.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#00FF9D")))
+        btnLogin.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#00E5FF")))
         btnLogin.setTextColor(android.graphics.Color.parseColor("#0D0E12"))
 
-        // Restaurar datos guardados para comodidad del usuario
-        etUser.setText(prefs.getString("saved_username", ""))
-        etKey.setText(prefs.getString("saved_key", ""))
+        // Restaurar datos guardados para comodidad del usuario (cifrados)
+        etUser.setText(SecurePrefs.getSecureString(this, "saved_username"))
+        etKey.setText(SecurePrefs.getSecureString(this, "saved_key"))
 
         // Si el usuario ya metió la Key correcta antes, hacemos la carga (Splash)
         if (prefs.getBoolean("is_logged_in", false)) {
@@ -116,7 +116,7 @@ class LoginActivity : AppCompatActivity() {
             layoutLogin.visibility = android.view.View.GONE
             startPulseAnimation()
 
-            val expDateStr = prefs.getString("expiration_date", "") ?: ""
+            val expDateStr = SecurePrefs.getSecureString(this, "expiration_date")
             var isExpired = false
             if (expDateStr.isNotEmpty() && expDateStr != "--") {
                 try {
@@ -146,7 +146,7 @@ class LoginActivity : AppCompatActivity() {
                         val ivSplashLogo = findViewById<ImageView>(R.id.iv_splash_logo)
                         ivSplashLogo.setImageResource(com.system.network.ui.R.drawable.ic_cross_red)
                         ivSplashLogo.setColorFilter(android.graphics.Color.parseColor("#FF3B30"), android.graphics.PorterDuff.Mode.SRC_IN)
-                        tvSplashStatus.text = "Licencia Expirada"
+                        tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_LICENSE_EXPIRED)
                         tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
 
                         // Cierra sesión
@@ -161,7 +161,7 @@ class LoginActivity : AppCompatActivity() {
                             runOnUiThread {
                                 ivSplashLogo.setImageResource(com.system.network.ui.R.mipmap.ic_launcher)
                                 ivSplashLogo.clearColorFilter()
-                                tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#00FF9D"))
+                                tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
                                 tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_SPLASH_FETCHING)
 
                                 layoutSplash.visibility = android.view.View.GONE
@@ -213,50 +213,28 @@ class LoginActivity : AppCompatActivity() {
             // Conexión real al servidor privado
             Thread {
                 try {
-                    val endpointUrl = getSecureEndpoint() // Obtenemos la URL de C++ (ofuscada)
+                    val endpointUrl = try {
+                        getSecureEndpoint()
+                    } catch (e: Throwable) {
+                        NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT)
+                    }.ifEmpty { NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT) }
                     
                     // PASO 1: Solicitar Desafío (Challenge)
-                    val challengeUrl = URL("$endpointUrl/challenge") // Asumiendo que getSecureEndpoint() devuelve algo como "http://ip:port/api/keys" pero el backend está en "/api/keys/challenge". Adaptar según la lógica. Wait.
-                    
-                    // El usuario tenía endpointUrl directo a "/api/keys/verify" o "https://.../api/keys"?
-                    // Vamos a arreglar eso después, por ahora usemos endpointUrl.replace("/verify", "/challenge")
                     val challengeEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl.replace("/verify", "/challenge") else "$endpointUrl/challenge"
                     val verifyEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl else "$endpointUrl/verify"
 
                     val hwid = NativeBridge.getHWID(this@LoginActivity)
                     val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
                     
-                    // PASO 1.5: Certificate Pinning
-                    val trustManager = object : X509TrustManager {
-                        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-                            if (chain.isNullOrEmpty()) throw java.security.cert.CertificateException("Certificado vacío")
-                            val cert = chain[0]
-                            val digest = MessageDigest.getInstance("SHA-256")
-                            val pubKeyHash = digest.digest(cert.publicKey.encoded)
-                            val pubKeyHashBase64 = Base64.encodeToString(pubKeyHash, Base64.NO_WRAP)
-                            
-                            val TARGET_HASH = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
-                            if (TARGET_HASH != "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" && pubKeyHashBase64 != TARGET_HASH) {
-                                throw java.security.cert.CertificateException("Pinning Fallido: Posible Man-in-the-Middle")
-                            }
-                        }
-                        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-                    }
-                    val sslContext = SSLContext.getInstance("TLS")
-                    sslContext.init(null, arrayOf<TrustManager>(trustManager), java.security.SecureRandom())
-                    
-                    val challengeConn = URL(challengeEndpoint).openConnection() as HttpURLConnection
-                    if (challengeConn is HttpsURLConnection) {
-                        challengeConn.sslSocketFactory = sslContext.socketFactory
-                    }
+                    // PASO 1.5: Conexión HTTPS segura
+                    val challengeConn = WebSecurity.open(challengeEndpoint) as HttpURLConnection
                     challengeConn.requestMethod = "POST"
                     challengeConn.setRequestProperty("Content-Type", "application/json")
                     challengeConn.connectTimeout = 30000
                     challengeConn.readTimeout = 30000
                     challengeConn.doOutput = true
 
-                    val currentAppVersion = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "1.08" }
+                    val currentAppVersion = com.system.network.ui.BuildConfig.VERSION_NAME
                     val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
                     challengeConn.outputStream.use { os ->
                         val input = challengeJson.toByteArray(Charsets.UTF_8)
@@ -273,8 +251,11 @@ class LoginActivity : AppCompatActivity() {
                         
                         runOnUiThread {
                             Toast.makeText(this@LoginActivity, errorMessage, Toast.LENGTH_LONG).show()
-                            btnLogin.text = "INGRESAR"
+                            btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
                             btnLogin.isEnabled = true
+                            layoutSplash.visibility = android.view.View.GONE
+                            layoutLogin.visibility = android.view.View.VISIBLE
+                            stopPulseAnimation()
                         }
                         return@Thread
                     }
@@ -291,11 +272,8 @@ class LoginActivity : AppCompatActivity() {
                     val hmacBytes = mac.doFinal(nonce.toByteArray(Charsets.UTF_8))
                     val hmacHex = hmacBytes.joinToString("") { "%02x".format(it) }
 
-                    // PASO 3: Enviar HMAC para Verificación
-                    val verifyConn = URL(verifyEndpoint).openConnection() as HttpURLConnection
-                    if (verifyConn is HttpsURLConnection) {
-                        verifyConn.sslSocketFactory = sslContext.socketFactory
-                    }
+                    // PASO 3: Enviar HMAC para Verificación (mismo pinning)
+                    val verifyConn = WebSecurity.open(verifyEndpoint) as HttpURLConnection
                     verifyConn.requestMethod = "POST"
                     verifyConn.setRequestProperty("Content-Type", "application/json")
                     verifyConn.connectTimeout = 30000
@@ -310,7 +288,6 @@ class LoginActivity : AppCompatActivity() {
 
                     if (verifyConn.responseCode == 200) {
                         val responseBody = verifyConn.inputStream.bufferedReader().readText()
-                        if (com.system.network.ui.BuildConfig.DEBUG) android.util.Log.d("LoginActivity", "Server Response: $responseBody")
                         val jsonObject = JSONObject(responseBody)
                         val isValid = jsonObject.getBoolean("valid")
 
@@ -345,15 +322,16 @@ class LoginActivity : AppCompatActivity() {
                             val expirationDate = expiresAt
                             
                             runOnUiThread {
-                                Logger.log(this@LoginActivity, "Licencia Validada")
+                                SecureLogger.log(this@LoginActivity, "Licencia Validada")
                                 prefs.edit()
                                         .putBoolean("is_logged_in", true)
-                                        .putString("saved_username", username)
-                                        .putString("saved_key", key)
-                                        .putString("activation_date", activationDate)
-                                        .putString("expiration_date", expirationDate)
-                                        // NO se guarda el payload descifrado en SharedPreferences
                                         .apply()
+                                // Datos sensibles cifrados con la clave del AndroidKeyStore
+                                SecurePrefs.putSecureString(this@LoginActivity, "saved_username", username)
+                                SecurePrefs.putSecureString(this@LoginActivity, "saved_key", key)
+                                SecurePrefs.putSecureString(this@LoginActivity, "activation_date", activationDate)
+                                SecurePrefs.putSecureString(this@LoginActivity, "expiration_date", expirationDate)
+                                // NO se guarda el payload descifrado en SharedPreferences
                                 Toast.makeText(
                                                 this@LoginActivity,
                                                 NativeBridge.getNativeString(NativeBridge.STRING_ACCESS_GRANTED),
@@ -390,7 +368,7 @@ class LoginActivity : AppCompatActivity() {
                                     val ivSplashLogo = findViewById<ImageView>(R.id.iv_splash_logo)
                                     ivSplashLogo.setImageResource(com.system.network.ui.R.drawable.ic_cross_red)
                                     ivSplashLogo.setColorFilter(android.graphics.Color.parseColor("#FF3B30"), android.graphics.PorterDuff.Mode.SRC_IN)
-                                    tvSplashStatus.text = "Licencia Expirada"
+                                    tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_LICENSE_EXPIRED)
                                     tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
 
                                     prefs.edit()
@@ -404,7 +382,7 @@ class LoginActivity : AppCompatActivity() {
                                         runOnUiThread {
                                             ivSplashLogo.setImageResource(com.system.network.ui.R.mipmap.ic_launcher)
                                             ivSplashLogo.clearColorFilter()
-                                            tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#00FF9D"))
+                                            tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
                                             tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_SPLASH_FETCHING)
 
                                             layoutSplash.visibility = android.view.View.GONE
@@ -443,7 +421,7 @@ class LoginActivity : AppCompatActivity() {
                                 val ivSplashLogo = findViewById<ImageView>(R.id.iv_splash_logo)
                                 ivSplashLogo.setImageResource(com.system.network.ui.R.drawable.ic_cross_red)
                                 ivSplashLogo.setColorFilter(android.graphics.Color.parseColor("#FF3B30"), android.graphics.PorterDuff.Mode.SRC_IN)
-                                tvSplashStatus.text = "Licencia Expirada"
+                                tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_LICENSE_EXPIRED)
                                 tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
 
                                 prefs.edit()
@@ -457,7 +435,7 @@ class LoginActivity : AppCompatActivity() {
                                     runOnUiThread {
                                         ivSplashLogo.setImageResource(com.system.network.ui.R.mipmap.ic_launcher)
                                         ivSplashLogo.clearColorFilter()
-                                        tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#00FF9D"))
+                                        tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
                                         tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_SPLASH_FETCHING)
 
                                         layoutSplash.visibility = android.view.View.GONE
@@ -526,7 +504,7 @@ class LoginActivity : AppCompatActivity() {
             logo.animate().scaleX(1.3f).scaleY(1.3f).setDuration(400).setInterpolator(android.view.animation.OvershootInterpolator()).start()
             
             textStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_SPLASH_GRANTED)
-            textStatus.setTextColor(android.graphics.Color.parseColor("#00FF9D"))
+            textStatus.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
             
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 onComplete()

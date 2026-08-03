@@ -129,4 +129,7 @@ object NativeBridge {
     const val STRING_QOS_TITLE = 76
     const val STRING_JITTER_LABEL = 77
     const val STRING_DROP_LABEL = 78
+    const val STRING_CERT_PIN = 79
+    const val STRING_BATTERY_HINT = 80
+    const val STRING_SEC_ALERT = 81
 }

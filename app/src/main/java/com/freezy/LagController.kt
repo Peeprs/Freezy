@@ -8,9 +8,8 @@ object LagController {
     var fakeLagActivo: Boolean = false
 
     fun initLicencia(context: android.content.Context) {
-        val prefs = context.getSharedPreferences("FreezyPrefs", android.content.Context.MODE_PRIVATE)
-        val expDate = prefs.getString("expiration_date", "")
-        if (!expDate.isNullOrEmpty() && expDate != "--") {
+        val expDate = SecurePrefs.getSecureString(context, "expiration_date")
+        if (expDate.isNotEmpty() && expDate != "--") {
             try {
                 val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
                 val d2 = sdf.parse(expDate)

@@ -9,10 +9,10 @@
     <color name="white">#FFFFFFFF</color>
 
     <!-- Cyber-Industrial Stealth UI Color Palette -->
-    <color name="colorBackgroundBase">#0A0B0D</color>
+    <color name="colorBackgroundBase">#0A0B0E</color>
     <color name="colorCardBackground">#14161B</color>
-    <color name="colorAccentPrimary">#00FF9D</color>
-    <color name="colorAccentSecondary">#FF5900</color>
+    <color name="colorAccentPrimary">#00E5FF</color>
+    <color name="colorAccentSecondary">#B026FF</color>
     <color name="colorAccentDanger">#FF3B30</color>
     <color name="colorTextPrimary">#F5F6F8</color>
     <color name="colorTextMuted">#6E7582</color>

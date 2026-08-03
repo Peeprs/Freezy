@@ -1,0 +1,115 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Trailing Particle Sparks (Speed Wake) -->
+    <!-- Particle 1: Top trail spark -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.7"
+        android:pathData="M11,15 L12.5,13.5 L14,15 L12.5,16.5 Z" />
+
+    <!-- Particle 2: Mid-low trail spark -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.8"
+        android:pathData="M7,26 L8.5,24.5 L10,26 L8.5,27.5 Z" />
+
+    <!-- Particle 3: Foot speed particle spark -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.6"
+        android:pathData="M13,38 L14,37 L15,38 L14,39 Z" />
+
+    <!-- Horizontal / Kinetic Speed Trails (Velocity Drift Lines) -->
+    <!-- Top Speed Line -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.75"
+        android:pathData="M6,18 L19,18" />
+
+    <!-- Mid Speed Line 1 (Longest Velocity Streak) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.0"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.9"
+        android:pathData="M3,23 L22,23" />
+
+    <!-- Mid Speed Line 2 -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.8"
+        android:pathData="M8,28 L20,28" />
+
+    <!-- Low Speed Line (Ground Drift Streak) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeAlpha="0.7"
+        android:pathData="M5,34 L18,34" />
+
+    <!-- Cyber Wireframe Running Figure -->
+    <!-- Cyber Head / Angular Helmet Visor -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M31.5,8 C33.4,8 35,9.6 35,11.5 C35,13.4 33.4,15 31.5,15 C29.6,15 28,13.4 28,11.5 C28,9.6 29.6,8 31.5,8 Z" />
+
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:pathData="M31.5,11.5 L36,11.5" />
+
+    <!-- Torso & Kinetic Spine (Angled forward sprint posture) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M30,16 L25,24 L27,30" />
+
+    <!-- Lead Arm (Thrust forward in sprint) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M28,19 L35,21 L39,18" />
+
+    <!-- Rear Arm (Trailing back with cyber kinetic angle) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M27,19 L21,21 L17,17" />
+
+    <!-- Lead Leg (High knee drive / forward stride) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M27,30 L35,32 L39,41" />
+
+    <!-- Trail Leg (Rear extended leg pushing off sprint) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M27,30 L20,35 L14,39" />
+
+    <!-- Kinetic Energy Accents (Visor & Chest Core Glow) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M27,21 L29,23 L27,25 L25,23 Z" />
+
+</vector>

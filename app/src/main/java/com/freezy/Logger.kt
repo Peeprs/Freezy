@@ -36,9 +36,10 @@ object Logger {
         if (!BuildConfig.DEBUG) return
 
         try {
+            // Redactar tokens/claves aunque el llamador olvide hacerlo
             val file = File(context.filesDir, LOG_FILE_NAME)
             val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-            val logMessage = "[$timestamp] $message\n"
+            val logMessage = "[$timestamp] ${SecureLogger.redact(message)}\n"
 
             FileWriter(file, true).use { writer ->
                 writer.append(logMessage)
