@@ -3,6 +3,14 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) load(FileInputStream(file))
+}
+
 android {
     namespace = "com.system.network.ui"
     compileSdk = 34
@@ -16,8 +24,8 @@ android {
         applicationId = "com.system.network.ui" // Nombre camuflado contra Anti-Cheats
         minSdk = 28 // Android 9 (Pie)
         targetSdk = 36
-        versionCode = 10
-        versionName = "3.0.0"
+        versionCode = 11
+        versionName = "4.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -33,6 +41,16 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             isDebuggable = false // MobSF detecta debuggable=true como riesgo
+
+            if (keystoreProperties.containsKey("STORE_FILE")) {
+                signingConfig = signingConfigs.create("release") {
+                    storeFile = rootProject.file(keystoreProperties["STORE_FILE"] as String)
+                    storePassword = keystoreProperties["STORE_PASS"] as String
+                    keyAlias = keystoreProperties["KEY_ALIAS"] as String
+                    keyPassword = keystoreProperties["STORE_PASS"] as String
+                }
+            }
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

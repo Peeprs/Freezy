@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_glass_dialog"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:id="@+id/tv_perm_header_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="🔑 PERMISOS REQUERIDOS"
+            android:textColor="@color/colorTextPrimary"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="6dp" />
+
+        <TextView
+            android:id="@+id/tv_perm_header_desc"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="Para garantizar el funcionamiento antiban, la burbuja flotante y la detección de juegos, concede los siguientes permisos esenciales:"
+            android:textColor="@color/colorTextMuted"
+            android:textSize="12sp"
+            android:lineSpacingExtra="2dp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Card 1: Overlay -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_glass_tile"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="1. Superposición de Aplicaciones"
+                    android:textColor="@color/colorTextPrimary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_status_overlay"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="❌ REQUERIDO"
+                    android:textColor="#FF3B30"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="8dp"
+                android:text="Permite desplegar el botón flotante (burbuja) y los controles por encima del juego durante la partida."
+                android:textColor="@color/colorTextMuted"
+                android:textSize="11sp"
+                android:lineSpacingExtra="1dp" />
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btn_grant_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:background="@drawable/shape_button_tech"
+                android:text="ACTIVAR PERMISO"
+                android:textColor="#0C0D10"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Card 2: Usage Stats -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_glass_tile"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="2. Acceso al Uso de Aplicaciones"
+                    android:textColor="@color/colorTextPrimary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_status_usage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="❌ REQUERIDO"
+                    android:textColor="#FF3B30"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="8dp"
+                android:text="Permite a la aplicación monitorear cuando Free Fire o Free Fire Max se abren para activar la protección automáticamente."
+                android:textColor="@color/colorTextMuted"
+                android:textSize="11sp"
+                android:lineSpacingExtra="1dp" />
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btn_grant_usage"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:background="@drawable/shape_button_tech"
+                android:text="ACTIVAR PERMISO"
+                android:textColor="#0C0D10"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Card 3: Battery Optimization -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_glass_tile"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="3. Sin Optimización de Batería"
+                    android:textColor="@color/colorTextPrimary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_status_battery"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="❌ REQUERIDO"
+                    android:textColor="#FF3B30"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="8dp"
+                android:text="Evita que el sistema operativo Android suspenda o cierre el servicio en segundo plano durante las partidas."
+                android:textColor="@color/colorTextMuted"
+                android:textSize="11sp"
+                android:lineSpacingExtra="1dp" />
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btn_grant_battery"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:background="@drawable/shape_button_tech"
+                android:text="ACTIVAR PERMISO"
+                android:textColor="#0C0D10"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_permission_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="Activa todos los permisos para continuar"
+            android:textColor="#FF3B30"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+</ScrollView>

@@ -15,6 +15,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import java.net.HttpURLConnection
 import java.net.URL
+import android.net.Uri
 import org.json.JSONObject
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -106,6 +107,100 @@ class LoginActivity : AppCompatActivity() {
         btnLogin.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#00E5FF")))
         btnLogin.setTextColor(android.graphics.Color.parseColor("#0D0E12"))
 
+        val btnGetKey = findViewById<Button>(R.id.btn_getkey)
+        btnGetKey.text = "GET KEY GRATIS"
+        btnGetKey.setTextColor(android.graphics.Color.parseColor("#00E5FF"))
+
+        // Deep link: freezy://activate?key=FREEZY-XXXX... -> rellenar la licencia
+        try {
+            val dataUri: Uri? = intent?.data
+            if (dataUri != null && dataUri.scheme == "freezy" && dataUri.host == "activate") {
+                dataUri.getQueryParameter("key")?.let { deepKey ->
+                    if (deepKey.isNotBlank()) {
+                        etKey.setText(deepKey.uppercase())
+                        Toast.makeText(this, "Licencia cargada desde GET KEY", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        btnGetKey.setOnLongClickListener {
+            Toast.makeText(this, "Genera una key viendo unos pasos cortos (GET KEY)", Toast.LENGTH_LONG).show()
+            true
+        }
+
+        btnGetKey.setOnClickListener {
+            btnGetKey.isEnabled = false
+            btnGetKey.text = "GENERANDO..."
+            Thread {
+                try {
+                    val endpointUrl = try {
+                        getSecureEndpoint()
+                    } catch (e: Throwable) {
+                        NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT)
+                    }.ifEmpty { NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT) }
+
+                    // Derivar base para la página y endpoint begin
+                    val baseApi = endpointUrl.substringBefore("/api")
+                    val beginEndpoint = baseApi + "/api/ads/begin"
+
+                    val hwid = NativeBridge.getHWID(this@LoginActivity)
+
+                    val beginConn = WebSecurity.open(beginEndpoint) as HttpURLConnection
+                    beginConn.requestMethod = "POST"
+                    beginConn.setRequestProperty("Content-Type", "application/json")
+                    beginConn.connectTimeout = 30000
+                    beginConn.readTimeout = 30000
+                    beginConn.doOutput = true
+                    val beginJson = "{\"hwid\": \"$hwid\"}"
+                    beginConn.outputStream.use { os ->
+                        val input = beginJson.toByteArray(Charsets.UTF_8)
+                        os.write(input, 0, input.size)
+                    }
+
+                    if (beginConn.responseCode != 200) {
+                        val errorStream = beginConn.errorStream
+                        val errorMessage = if (errorStream != null) {
+                            try { JSONObject(errorStream.bufferedReader().readText()).getString("message") }
+                            catch (e: Exception) { "No se pudo iniciar GET KEY." }
+                        } else { "No se pudo iniciar GET KEY." }
+
+                        runOnUiThread {
+                            Toast.makeText(this@LoginActivity, errorMessage, Toast.LENGTH_LONG).show()
+                            btnGetKey.isEnabled = true
+                            btnGetKey.text = "GET KEY GRATIS"
+                        }
+                        return@Thread
+                    }
+
+                    val beginResponse = beginConn.inputStream.bufferedReader().readText()
+                    val json = JSONObject(beginResponse)
+                    val token = json.getString("token")
+
+                    val getkeyUrl = "${baseApi}/getkey?token=${token}&hwid=${Uri.encode(hwid)}"
+
+                    runOnUiThread {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getkeyUrl)))
+                        } catch (e: Exception) {
+                            Toast.makeText(this@LoginActivity, "No hay navegador disponible.", Toast.LENGTH_LONG).show()
+                        }
+                        btnGetKey.isEnabled = true
+                        btnGetKey.text = "GET KEY GRATIS"
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    runOnUiThread {
+                        Toast.makeText(this@LoginActivity, "Error de conexión. Intenta de nuevo.", Toast.LENGTH_LONG).show()
+                        btnGetKey.isEnabled = true
+                        btnGetKey.text = "GET KEY GRATIS"
+                    }
+                }
+            }.start()
+        }
+
         // Restaurar datos guardados para comodidad del usuario (cifrados)
         etUser.setText(SecurePrefs.getSecureString(this, "saved_username"))
         etKey.setText(SecurePrefs.getSecureString(this, "saved_key"))
@@ -149,12 +244,8 @@ class LoginActivity : AppCompatActivity() {
                         tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_LICENSE_EXPIRED)
                         tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
 
-                        // Cierra sesión
-                        prefs.edit()
-                            .putBoolean("is_logged_in", false)
-                            .remove("expiration_date")
-                            .remove("activation_date")
-                            .apply()
+                        // Cierra sesión limpiando datos
+                        SessionGuard.clearSession(this@LoginActivity)
 
                         Thread {
                             Thread.sleep(2500)
@@ -362,8 +453,14 @@ class LoginActivity : AppCompatActivity() {
                         } else {
                             val message = jsonObject.optString("message", NativeBridge.getNativeString(NativeBridge.STRING_INVALID_LICENSE))
                             runOnUiThread {
-                                val isExp = message.contains("expir", true) || message.contains("expired", true)
-                                if (isExp) {
+                                if (SessionGuard.isBan(message)) {
+                                    stopPulseAnimation()
+                                    SessionGuard.showBlocked(this@LoginActivity, "CUENTA BANEADA", message)
+                                    btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+                                    btnLogin.isEnabled = true
+                                    layoutSplash.visibility = android.view.View.GONE
+                                    layoutLogin.visibility = android.view.View.VISIBLE
+                                } else if (SessionGuard.isExpired(message)) {
                                     stopPulseAnimation()
                                     val ivSplashLogo = findViewById<ImageView>(R.id.iv_splash_logo)
                                     ivSplashLogo.setImageResource(com.system.network.ui.R.drawable.ic_cross_red)
@@ -371,11 +468,7 @@ class LoginActivity : AppCompatActivity() {
                                     tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_LICENSE_EXPIRED)
                                     tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
 
-                                    prefs.edit()
-                                        .putBoolean("is_logged_in", false)
-                                        .remove("expiration_date")
-                                        .remove("activation_date")
-                                        .apply()
+                                    SessionGuard.clearSession(this@LoginActivity)
 
                                     Thread {
                                         Thread.sleep(2500)
@@ -415,8 +508,14 @@ class LoginActivity : AppCompatActivity() {
                         }
 
                         runOnUiThread {
-                            val isExp = errorMessage.contains("expir", true) || errorMessage.contains("expired", true)
-                            if (isExp) {
+                            if (SessionGuard.isBan(errorMessage)) {
+                                stopPulseAnimation()
+                                SessionGuard.showBlocked(this@LoginActivity, "CUENTA BANEADA", errorMessage)
+                                btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+                                btnLogin.isEnabled = true
+                                layoutSplash.visibility = android.view.View.GONE
+                                layoutLogin.visibility = android.view.View.VISIBLE
+                            } else if (SessionGuard.isExpired(errorMessage)) {
                                 stopPulseAnimation()
                                 val ivSplashLogo = findViewById<ImageView>(R.id.iv_splash_logo)
                                 ivSplashLogo.setImageResource(com.system.network.ui.R.drawable.ic_cross_red)
@@ -424,11 +523,7 @@ class LoginActivity : AppCompatActivity() {
                                 tvSplashStatus.text = NativeBridge.getNativeString(NativeBridge.STRING_LICENSE_EXPIRED)
                                 tvSplashStatus.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
 
-                                prefs.edit()
-                                    .putBoolean("is_logged_in", false)
-                                    .remove("expiration_date")
-                                    .remove("activation_date")
-                                    .apply()
+                                SessionGuard.clearSession(this@LoginActivity)
 
                                 Thread {
                                     Thread.sleep(2500)
@@ -509,6 +604,13 @@ class LoginActivity : AppCompatActivity() {
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 onComplete()
             }, 1200)
+        }
+    }
+
+    fun clearInputFields() {
+        runOnUiThread {
+            findViewById<EditText>(R.id.et_user)?.setText("")
+            findViewById<EditText>(R.id.et_key)?.setText("")
         }
     }
 

@@ -113,8 +113,9 @@ class BubbleService : Service() {
         if (::windowManager.isInitialized && ::bubbleView.isInitialized && bubbleView.parent != null) {
             val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
             val density = resources.displayMetrics.density
-            val sizePercent = prefs.getInt("bubble_size", 100).coerceIn(40, 100)
-            val sizePx = (66 * density * sizePercent / 100f).toInt()
+            val sizePercent = prefs.getInt("bubble_size", 20).coerceIn(0, 100)
+            // 0% = 50dp, 100% = 150dp (lineal)
+            val sizePx = ((50 + sizePercent) * density).toInt()
             params.width = sizePx
             params.height = sizePx
             try {
@@ -363,8 +364,7 @@ class BubbleService : Service() {
         handler.post {
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
-            val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
-            prefs.edit().putBoolean("is_logged_in", false).apply()
+            SessionGuard.clearSession(this)
 
             stopSelf()
 
@@ -441,8 +441,9 @@ class BubbleService : Service() {
         arcOverlay.visibility = View.GONE
 
         val density = resources.displayMetrics.density
-        val sizePercent = prefs.getInt("bubble_size", 100).coerceIn(40, 100)
-        val sizePx = (66 * density * sizePercent / 100f).toInt()
+        val sizePercent = prefs.getInt("bubble_size", 20).coerceIn(0, 100)
+        // 0% = 50dp, 100% = 150dp (lineal)
+        val sizePx = ((50 + sizePercent) * density).toInt()
 
         params =
                 WindowManager.LayoutParams(
@@ -550,13 +551,10 @@ class BubbleService : Service() {
         // Modos Auto y Personalizado: ignorar taps mientras ya está activo
         if (isFreezing) return
 
-        val duration =
-                when (mode) {
-                    1 -> (prefs.getFloat("custom_time_float", 3f) * 1000).toLong()
-                    else -> 3000L
-                }
+        val customSeconds = prefs.getFloat("custom_time_float", 1.0f).coerceAtLeast(0.5f).coerceAtMost(3.0f)
+        val duration = (customSeconds * 1000).toLong()
         isFreezing = true
-        startFreeze(useRoot)
+        startFreeze(useRoot, duration)
         startArcAnimation(duration)
         handler.postDelayed({ if (isFreezing) stopFreeze(useRoot) }, duration)
     }
@@ -572,7 +570,7 @@ class BubbleService : Service() {
             stopFreeze(useRoot)
         } else {
             isFreezing = true
-            startFreeze(useRoot)
+            startFreeze(useRoot, 60000L)
             if (::cyberBubble.isInitialized) {
                 cyberBubble.setActiveState(true)
                 cyberBubble.setProgress(1f)
@@ -608,8 +606,8 @@ class BubbleService : Service() {
         }
     }
 
-    private fun startFreeze(useRoot: Boolean) {
-        playSoundFromRes(R.raw.coin_on)
+    private fun startFreeze(useRoot: Boolean, durationMs: Long = 3000L) {
+        playSelectedTone()
         Logger.log(
                 this,
                 NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_ACTIVE) +
@@ -620,7 +618,10 @@ class BubbleService : Service() {
             LagController.toggleFakeLag(true, true)
         } else {
             try {
-                // Iniciar la VPN dinámicamente
+                // Forzar límite máximo de desincronización de 800ms en C++ para que Free Fire registre el daño y el ping no suba a 999ms
+                NativeBridge.setNativeMaxDesyncMs(800L)
+
+                // Iniciar la VPN dinámicamente si no estuviera corriendo
                 val vpnIntent =
                         Intent(this, AntigravityFirewall::class.java).apply {
                             putExtra("TARGET_PACKAGE", targetPackage ?: "com.dts.freefiremax")
@@ -635,7 +636,7 @@ class BubbleService : Service() {
     }
 
     private fun stopFreeze(useRoot: Boolean) {
-        playSoundFromRes(R.raw.coin_off)
+        playSelectedTone()
         Logger.log(this, NativeBridge.getNativeString(NativeBridge.STRING_FAKE_LAG_DEACTIVATED))
         isFreezing = false
 
@@ -650,7 +651,7 @@ class BubbleService : Service() {
             try {
                 LagController.toggleFakeLag(false, false)
 
-                // Detener la VPN de inmediato
+                // Detener la VPN de inmediato para volver al ruteo directo y restaurar el ping normal
                 val vpnIntent =
                         Intent(this, AntigravityFirewall::class.java).apply { action = "STOP_VPN" }
                 startService(vpnIntent)
@@ -661,14 +662,10 @@ class BubbleService : Service() {
         actualizarUI()
     }
 
-    private fun playSoundFromRes(resId: Int) {
-        try {
-            val mediaPlayer = android.media.MediaPlayer.create(this, resId)
-            mediaPlayer?.setOnCompletionListener { mp -> mp.release() }
-            mediaPlayer?.start()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+    // Reproduce el tono de activación/desactivación elegido por el usuario en Extras
+    private fun playSelectedTone() {
+        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        ToneManager.play(this, prefs.getInt("tone_type", 0))
     }
 
     private fun startArcAnimation(duration: Long) {
@@ -710,35 +707,46 @@ class BubbleService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         // Limpieza de iptables si estaban activos en LagController
-        if (LagController.fakeLagActivo) {
+        try {
             LagController.desactivarFakeLagRoot()
             LagController.fakeLagActivo = false
-        }
+        } catch (e: Exception) {}
 
-        if (isFreezing)
+        if (isFreezing) {
+            try {
                 stopFreeze(
-                        getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
-                                .getBoolean("use_root", false)
+                    getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+                        .getBoolean("use_root", false)
                 )
+            } catch (e: Exception) {}
+        }
         fillAnimator?.cancel()
 
         // Detener No-Recoil y Monitoreo de Entrada
         try {
             val recoilIntent =
-                    Intent(this, com.freezy.network.RecoilService::class.java).apply {
-                        action = "STOP_RECOIL"
-                    }
+                Intent(this, com.freezy.network.RecoilService::class.java).apply {
+                    action = "STOP_RECOIL"
+                }
             startService(recoilIntent)
+            stopService(Intent(this, com.freezy.network.RecoilService::class.java))
             inputMonitor?.stopMonitoring()
         } catch (e: Exception) {}
 
         // Limpieza de Overlays para evitar que queden pegados en pantalla
         if (::bubbleView.isInitialized && bubbleView.parent != null) {
-            windowManager.removeView(bubbleView)
+            try { windowManager.removeView(bubbleView) } catch (e: Exception) {}
         }
         if (::fovOverlay.isInitialized && fovOverlay.parent != null) {
-            windowManager.removeView(fovOverlay)
+            try { windowManager.removeView(fovOverlay) } catch (e: Exception) {}
         }
+
+        // Detener la VPN si estaba en uso al destruir el servicio
+        try {
+            val vpnIntent = Intent(this, AntigravityFirewall::class.java).apply { action = "STOP_VPN" }
+            startService(vpnIntent)
+            stopService(Intent(this, AntigravityFirewall::class.java))
+        } catch (e: Exception) {}
 
         // Cerrar el shell root correctamente
         try {
@@ -749,9 +757,9 @@ class BubbleService : Service() {
         } catch (e: Exception) {}
 
         getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
-                .edit()
-                .putBoolean("is_bubble_running", false)
-                .apply()
+            .edit()
+            .putBoolean("is_bubble_running", false)
+            .apply()
     }
 
     private fun isAppOrGameInForeground(): Boolean {

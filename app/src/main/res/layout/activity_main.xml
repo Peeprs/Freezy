@@ -27,6 +27,7 @@
 
                 <!-- Card elevado 3D -->
                 <LinearLayout
+                    android:id="@+id/card_header"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:background="@drawable/shape_card_dark"
@@ -139,11 +140,8 @@
                                 android:id="@+id/btn_mode_auto"
                                 android:layout_width="0dp"
                                 android:layout_height="match_parent"
-                                android:layout_weight="1"
-                                android:gravity="center"
-                                android:textColor="#FFFFFF"
-                                android:textSize="12sp"
-                                android:textStyle="bold" />
+                                android:layout_weight="0"
+                                android:visibility="gone" />
 
                             <TextView
                                 android:id="@+id/btn_mode_custom"
@@ -151,7 +149,7 @@
                                 android:layout_height="match_parent"
                                 android:layout_weight="1"
                                 android:gravity="center"
-                                android:textColor="#888888"
+                                android:textColor="#FFFFFF"
                                 android:textSize="12sp"
                                 android:textStyle="bold" />
 
@@ -200,18 +198,30 @@
                             android:id="@+id/seekbar_time"
                             android:layout_width="match_parent"
                             android:layout_height="32dp"
-                            android:max="50"
+                            android:max="30"
                             android:progress="30"
                             android:progressDrawable="@drawable/custom_seekbar_track"
                             android:thumb="@drawable/custom_seekbar_thumb"
                             android:splitTrack="false"
                             android:layout_marginTop="16dp"/>
+
+                        <TextView
+                            android:id="@+id/tv_damage_warning"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="⚠️ Entre mayor sean los segundos, el daño puede no verse reflejado."
+                            android:textColor="#FFB74D"
+                            android:textSize="12sp"
+                            android:gravity="center"
+                            android:visibility="gone"
+                            android:layout_marginTop="10dp" />
                     </LinearLayout>
 
                 </LinearLayout>
 
                 <!-- Card de Selección de Juego -->
                 <LinearLayout
+                    android:id="@+id/card_game_selector"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:background="@drawable/shape_card_dark"
@@ -359,8 +369,282 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
+                <!-- Card de Tamaño de Burbuja -->
+                <LinearLayout
+                    android:id="@+id/card_bubble_size"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/shape_card_dark"
+                    android:elevation="4dp"
+                    android:orientation="vertical"
+                    android:padding="16dp"
+                    android:layout_marginBottom="12dp">
+
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="12dp">
+
+                        <TextView
+                            android:id="@+id/tv_label_bubble_size"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/colorTextMuted"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:textAllCaps="true"
+                            android:layout_alignParentStart="true"
+                            android:layout_centerVertical="true" />
+
+                        <TextView
+                            android:id="@+id/tv_bubble_size_value"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/colorAccentPrimary"
+                            android:textSize="15sp"
+                            android:textStyle="bold"
+                            android:fontFamily="monospace"
+                            android:layout_alignParentEnd="true"
+                            android:layout_centerVertical="true"
+                            android:text="100%" />
+                    </RelativeLayout>
+
+                    <!-- Previsualización en tiempo real del tamaño de la burbuja -->
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="110dp"
+                        android:background="@drawable/shape_inner_card_dark"
+                        android:layout_marginBottom="14dp">
+
+                        <com.freezy.ui.CyberBubbleView
+                            android:id="@+id/cyber_bubble_preview"
+                            android:layout_width="66dp"
+                            android:layout_height="66dp"
+                            android:layout_gravity="center" />
+                    </FrameLayout>
+
+                    <SeekBar
+                        android:id="@+id/seekbar_bubble_size"
+                        android:layout_width="match_parent"
+                        android:layout_height="32dp"
+                        android:min="0"
+                        android:max="100"
+                        android:progress="0"
+                        android:progressDrawable="@drawable/custom_seekbar_track"
+                        android:thumb="@drawable/custom_seekbar_thumb"
+                        android:splitTrack="false" />
+                </LinearLayout>
+
+                <!-- Card de Tonos de Activación -->
+                <LinearLayout
+                    android:id="@+id/card_tones"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/shape_card_dark"
+                    android:elevation="4dp"
+                    android:orientation="vertical"
+                    android:padding="16dp"
+                    android:layout_marginBottom="12dp">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="TONOS DE ACTIVACION"
+                        android:textColor="@color/colorTextMuted"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.08"
+                        android:layout_marginBottom="4dp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Se reproduce al activar y desactivar. Toca una opción para escucharla y guardarla."
+                        android:textColor="@color/colorTextMuted"
+                        android:textSize="12sp"
+                        android:layout_marginBottom="12dp" />
+
+                    <HorizontalScrollView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:scrollbars="none">
+
+                        <LinearLayout
+                            android:id="@+id/container_tones"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical" />
+                    </HorizontalScrollView>
+                </LinearLayout>
+
+                <!-- Card de Estado del Dispositivo -->
+                <LinearLayout
+                    android:id="@+id/card_device_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/shape_card_dark"
+                    android:elevation="4dp"
+                    android:orientation="vertical"
+                    android:padding="16dp"
+                    android:layout_marginBottom="12dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="14dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="ESTADO DEL DISPOSITIVO"
+                            android:textColor="#FFFFFF"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:letterSpacing="0.08" />
+
+                        <View
+                            android:id="@+id/view_led_extras"
+                            android:layout_width="8dp"
+                            android:layout_height="8dp"
+                            android:background="@drawable/shape_circle_led"
+                            android:backgroundTint="@color/colorAccentPrimary" />
+                    </LinearLayout>
+
+                    <!-- Estado Root en tarjeta interna -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/shape_inner_card_dark"
+                        android:padding="12dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="10dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="MODO DE ACCESO"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tv_root_status"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="--"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="4dp"
+                            android:background="@drawable/shape_pill_dark" />
+
+                        <TextView
+                            android:id="@+id/btn_refresh_root"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:background="@drawable/shape_pill_blue"
+                            android:text="Recargar"
+                            android:textColor="#FFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="4dp"
+                            android:clickable="true"
+                            android:focusable="true" />
+                    </LinearLayout>
+
+                    <!-- HWID en tarjeta interna estilo terminal -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/shape_inner_card_dark"
+                        android:padding="12dp"
+                        android:orientation="vertical"
+                        android:layout_marginBottom="10dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="IDENTIFICADOR UNICO (HWID)"
+                            android:textColor="#FFFFFF"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:letterSpacing="0.05" />
+
+                        <TextView
+                            android:id="@+id/tv_hwid"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="--"
+                            android:textColor="@color/colorAccentPrimary"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            android:fontFamily="monospace"
+                            android:textIsSelectable="true"
+                            android:layout_marginTop="6dp" />
+                    </LinearLayout>
+
+                    <!-- Marca del Teléfono en tarjeta interna -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/shape_inner_card_dark"
+                        android:padding="12dp"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="DISPOSITIVO Y MODELO"
+                            android:textColor="#FFFFFF"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:letterSpacing="0.05" />
+
+                        <TextView
+                            android:id="@+id/tv_device_brand"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="--"
+                            android:textColor="#FFFFFF"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            android:fontFamily="sans-serif-medium"
+                            android:layout_marginTop="4dp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- SECCIÓN CONFIGURACIÓN -->
+        <ScrollView
+            android:id="@+id/section_config"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="top"
+android:orientation="vertical"
+                    android:padding="16dp">
+
                 <!-- Card de Información de Licencia -->
                 <LinearLayout
+                    android:id="@+id/card_license"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:background="@drawable/shape_card_dark"
@@ -466,216 +750,9 @@
                     </LinearLayout>
                 </LinearLayout>
 
-                <!-- Card de Tamaño de Burbuja -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/shape_card_dark"
-                    android:elevation="4dp"
-                    android:orientation="vertical"
-                    android:padding="16dp"
-                    android:layout_marginBottom="12dp">
-
-                    <RelativeLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginBottom="12dp">
-
-                        <TextView
-                            android:id="@+id/tv_label_bubble_size"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textColor="@color/colorTextMuted"
-                            android:textSize="11sp"
-                            android:textStyle="bold"
-                            android:textAllCaps="true"
-                            android:layout_alignParentStart="true"
-                            android:layout_centerVertical="true" />
-
-                        <TextView
-                            android:id="@+id/tv_bubble_size_value"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textColor="@color/colorAccentPrimary"
-                            android:textSize="15sp"
-                            android:textStyle="bold"
-                            android:fontFamily="monospace"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:text="100%" />
-                    </RelativeLayout>
-
-                    <!-- Previsualización en tiempo real del tamaño de la burbuja -->
-                    <FrameLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="110dp"
-                        android:background="@drawable/shape_inner_card_dark"
-                        android:layout_marginBottom="14dp">
-
-                        <com.freezy.ui.CyberBubbleView
-                            android:id="@+id/cyber_bubble_preview"
-                            android:layout_width="66dp"
-                            android:layout_height="66dp"
-                            android:layout_gravity="center" />
-                    </FrameLayout>
-
-                    <SeekBar
-                        android:id="@+id/seekbar_bubble_size"
-                        android:layout_width="match_parent"
-                        android:layout_height="32dp"
-                        android:min="40"
-                        android:max="100"
-                        android:progress="100"
-                        android:progressDrawable="@drawable/custom_seekbar_track"
-                        android:thumb="@drawable/custom_seekbar_thumb"
-                        android:splitTrack="false" />
-                </LinearLayout>
-
-                <!-- Card de Estado del Dispositivo -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/shape_card_dark"
-                    android:elevation="4dp"
-                    android:orientation="vertical"
-                    android:padding="16dp"
-                    android:layout_marginBottom="12dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:layout_marginBottom="14dp">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="ESTADO DEL DISPOSITIVO"
-                            android:textColor="@color/colorTextMuted"
-                            android:textSize="11sp"
-                            android:textStyle="bold"
-                            android:letterSpacing="0.08" />
-
-                        <View
-                            android:layout_width="6dp"
-                            android:layout_height="6dp"
-                            android:background="@drawable/shape_circle_led"
-                            android:backgroundTint="@color/colorAccentPrimary" />
-                    </LinearLayout>
-
-                    <!-- Estado Root en tarjeta interna -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/shape_inner_card_dark"
-                        android:padding="12dp"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:layout_marginBottom="10dp">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="MODO DE ACCESO"
-                            android:textColor="#AAAAAA"
-                            android:textSize="12sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/tv_root_status"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="--"
-                            android:textSize="12sp"
-                            android:textStyle="bold"
-                            android:paddingStart="12dp"
-                            android:paddingEnd="12dp"
-                            android:paddingTop="4dp"
-                            android:paddingBottom="4dp"
-                            android:background="@drawable/shape_pill_dark" />
-                    </LinearLayout>
-
-                    <!-- HWID en tarjeta interna estilo terminal -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/shape_inner_card_dark"
-                        android:padding="12dp"
-                        android:orientation="vertical"
-                        android:layout_marginBottom="10dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="IDENTIFICADOR UNICO (HWID)"
-                            android:textColor="#AAAAAA"
-                            android:textSize="11sp"
-                            android:textStyle="bold"
-                            android:letterSpacing="0.05" />
-
-                        <TextView
-                            android:id="@+id/tv_hwid"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="--"
-                            android:textColor="@color/colorAccentPrimary"
-                            android:textSize="12sp"
-                            android:fontFamily="monospace"
-                            android:textIsSelectable="true"
-                            android:layout_marginTop="6dp" />
-                    </LinearLayout>
-
-                    <!-- Marca del Teléfono en tarjeta interna -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/shape_inner_card_dark"
-                        android:padding="12dp"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="DISPOSITIVO Y MODELO"
-                            android:textColor="#AAAAAA"
-                            android:textSize="11sp"
-                            android:textStyle="bold"
-                            android:letterSpacing="0.05" />
-
-                        <TextView
-                            android:id="@+id/tv_device_brand"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="--"
-                            android:textColor="#F5F6F8"
-                            android:textSize="13sp"
-                            android:fontFamily="sans-serif-medium"
-                            android:layout_marginTop="4dp" />
-                    </LinearLayout>
-                </LinearLayout>
-
-            </LinearLayout>
-        </ScrollView>
-
-        <!-- SECCIÓN CONFIGURACIÓN -->
-        <ScrollView
-            android:id="@+id/section_config"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="top"
-                android:orientation="vertical"
-                android:padding="16dp">
-
                 <!-- Card de Ajustes (acciones) -->
                 <LinearLayout
+                    android:id="@+id/card_app_config"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:background="@drawable/shape_card_dark"
@@ -726,6 +803,7 @@
 
                 <!-- Card Acerca de -->
                 <LinearLayout
+                    android:id="@+id/card_about"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:background="@drawable/shape_card_dark"

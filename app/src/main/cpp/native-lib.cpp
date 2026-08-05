@@ -425,7 +425,7 @@ static int g_outbound_queue_count = 0;
 static pthread_mutex_t g_outbound_queue_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static std::atomic<uint32_t> g_outbound_jitter_ms{0};
-static std::atomic<int> g_drop_probability{10};
+static std::atomic<int> g_drop_probability{0};
 
 static void outbound_queue_push(int sock, const uint8_t* payload, int plen, const sockaddr* dst, socklen_t dst_len) {
     if (plen > 65536) return;
@@ -1916,7 +1916,7 @@ Java_com_freezy_MainActivity_getSecureEndpoint(JNIEnv* env, jobject thiz) {
 }
 
 // Secreto HMAC ofuscado con XOR — NO aparece como string legible en el binario
-// Valor original: "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+// Valor original: "L9RJPV6lBI0IGILcTQO2N2/uGcSnrKgF9vg1BquRyd4="
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_freezy_NativeBridge_getHmacSecret(JNIEnv* env, jclass) {
     // XOR key diferente al usado para strings UI para mayor seguridad
@@ -1924,11 +1924,9 @@ Java_com_freezy_NativeBridge_getHmacSecret(JNIEnv* env, jclass) {
     // NOTA: los bytes ya están cifrados UNA vez con 0xA3 (no usar ^0xA3 inline aquí,
     // porque el bucle de abajo aplica el segundo XOR y eso restaura el valor original)
     unsigned char s[] = {
-        0x97, 0x94, 0xE7, 0xE6, 0xF2, 0xD3, 0xC9, 0x9B, 0xEB, 0xE1,
-        0xF0, 0xC2, 0x88, 0x8C, 0xF7, 0xEA, 0xCE, 0xF4, 0x88, 0x96,
-        0xE9, 0xE0, 0xC6, 0xD6, 0xF2, 0xC6, 0xF1, 0xC8, 0xCE, 0x96,
-        0xED, 0xEE, 0xD3, 0xE9, 0xF4, 0xF9, 0xE4, 0x90, 0xCB, 0xF0,
-        0xD6, 0xE5, 0xF6, 0x9E
+        0xEF, 0x9A, 0xF1, 0xE9, 0xF3, 0xF5, 0x95, 0xCF, 0xE1, 0xEA, 0x93, 0xEA, 0xE4, 0xEA, 0xEF, 0xC0,
+        0xF7, 0xF2, 0xEC, 0x91, 0xED, 0x91, 0x8C, 0xD6, 0xE4, 0xC0, 0xF0, 0xCD, 0xD1, 0xE8, 0xC4, 0xE5,
+        0x9A, 0xD5, 0xC4, 0x92, 0xE1, 0xD2, 0xD6, 0xF1, 0xDA, 0xC7, 0x97, 0x9E
     };
     size_t len = sizeof(s);
     for (size_t i = 0; i < len; i++) {

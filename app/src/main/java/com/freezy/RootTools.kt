@@ -34,21 +34,42 @@ object RootTools {
         "com.koushikdutta.superuser",
         "com.noshufou.android.su",
         "com.yellowes.su",
-        "io.github.vvb2060.magisk" // forks oficiales ocultadores
+        "io.github.vvb2060.magisk", // forks oficiales ocultadores
+        "io.github.huskydg.magisk" // Kitsune (Magisk Delta)
     )
 
-    /** Root con confirmación real (ejecuta `su`, puede disparar prompt). */
+    /** Root con confirmación real (ejecuta `su` interactivo para que el gestor dispare el prompt de permiso). */
     fun hasRootAccess(): Boolean {
         return try {
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
-            val finished = process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+            val process = Runtime.getRuntime().exec("su")
+            val os = java.io.DataOutputStream(process.outputStream)
+            os.writeBytes("id\n")
+            os.writeBytes("exit\n")
+            os.flush()
+            val finished = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)
             if (!finished) {
                 process.destroy()
-                return isRootDeviceHintActive(null)
+                return false
             }
             process.exitValue() == 0
         } catch (e: Exception) {
-            isRootDeviceHintActive(null)
+            false
+        }
+    }
+
+    /** Hay un gestor de superusuario instalado (Magisk/KernelSU/SuperSU...). */
+    fun hasRootManager(context: Context?): Boolean = hasRootPackages(context)
+
+    /** Es Kitsune (Magisk Delta/fork). */
+    fun hasKitsune(context: Context?): Boolean = hasPackage(context, "io.github.huskydg.magisk")
+
+    private fun hasPackage(context: Context?, pkg: String): Boolean {
+        if (context == null) return false
+        return try {
+            context.packageManager.getPackageInfo(pkg, 0)
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 
