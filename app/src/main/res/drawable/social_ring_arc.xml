@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Arco de anillo con gradiente sweep: la zona brillante rota y genera el outline animado -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="ring"
+    android:useLevel="false"
+    android:innerRadius="27dp"
+    android:thickness="3dp">
+    <gradient
+        android:type="sweep"
+        android:centerX="0.5"
+        android:centerY="0.5"
+        android:startColor="#00E5FF"
+        android:centerColor="#FF00E5FF"
+        android:endColor="#0000E5FF" />
+</shape>

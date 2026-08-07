@@ -20,7 +20,7 @@ class AntigravityFirewall : VpnService() {
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
 
     companion object {
-        init { System.loadLibrary("freezy_net") }
+        init { System.loadLibrary("ncx") }
 
         /** Llamado desde BubbleService para activar/desactivar el drop asimétrico */
         @JvmStatic external fun setLagActive(active: Boolean)
@@ -39,8 +39,7 @@ class AntigravityFirewall : VpnService() {
     fun protectSocket(fd: Int): Boolean = protect(fd)
 
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "STOP_VPN") {
-            Log.i("AntigravityFirewall", "STOP_VPN recibido")
+        if (intent?.action == NativeBridge.getNativeString(NativeBridge.S91)) {
             shutdown()
             stopSelf()
             return START_NOT_STICKY
@@ -53,15 +52,15 @@ class AntigravityFirewall : VpnService() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "VPN Engine",
+                NativeBridge.getNativeString(NativeBridge.S93),
                 NotificationManager.IMPORTANCE_LOW
             )
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
         }
         val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Freezy VPN Activo")
-            .setContentText("Procesando paquetes UDP para reducir el lag")
+            .setContentTitle(NativeBridge.getNativeString(NativeBridge.S93))
+            .setContentText(NativeBridge.getNativeString(NativeBridge.S106))
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build()
 
@@ -71,7 +70,7 @@ class AntigravityFirewall : VpnService() {
             startForeground(2, notification)
         }
 
-        val targetPackage = intent?.getStringExtra("TARGET_PACKAGE")
+        val targetPackage = intent?.getStringExtra(NativeBridge.getNativeString(NativeBridge.S92))
         if (targetPackage.isNullOrEmpty()) {
             Log.e("AntigravityFirewall", "Target package nulo. Abortando.")
             stopSelf()
@@ -85,9 +84,9 @@ class AntigravityFirewall : VpnService() {
     private fun openTunnel(targetPackage: String) {
         try {
             val builder = Builder()
-            builder.setSession("FreezyProxy")
-                .addAddress("10.0.0.2", 32)
-                .addRoute("0.0.0.0", 0)   // Capturar todo el tráfico IPv4
+            builder.setSession(NativeBridge.getNativeString(NativeBridge.S93))
+                .addAddress(NativeBridge.getNativeString(NativeBridge.S94), 32)
+                .addRoute(NativeBridge.getNativeString(NativeBridge.S95), 0)   // Capturar todo el tráfico IPv4
             
             builder.setMtu(65535)             // Evitar fragmentación IP entregando paquetes reensamblados al motor nativo
 

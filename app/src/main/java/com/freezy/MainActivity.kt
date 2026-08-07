@@ -51,6 +51,8 @@ class MainActivity : AppCompatActivity() {
         // Migración puntual: credenciales y URLs pasan de texto plano a AES-GCM
         SecurePrefs.migrateLegacy(this)
         startAntiDebugChecks()
+        // Rechazar APKs re-firmadas (crack por apktool/MT Manager)
+        SignatureGuard.verify(this)
         
         // Modal de verificación persistente de permisos al entrar al inicio
         checkPermissionsModal()
@@ -69,7 +71,7 @@ class MainActivity : AppCompatActivity() {
         val tvTimeLabel = findViewById<TextView>(R.id.tv_time_label)
         val seekbarTime = findViewById<SeekBar>(R.id.seekbar_time)
         val tvDamageWarning = findViewById<TextView>(R.id.tv_damage_warning)
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
 
         val progressLicenseDays = findViewById<ProgressBar>(R.id.progress_license_days)
         val viewLedStatus = findViewById<View>(R.id.view_led_status)
@@ -338,10 +340,10 @@ class MainActivity : AppCompatActivity() {
                         // deny list (ocultar root a la app) o permiso denegado.
                         val msg = when {
                             RootTools.hasKitsune(this) -> {
-                                "No se pudo obtener root. En Kitsune: Superusuario -> Ajustes -> elige \"Preguntar\" para apps nuevas (asi cada vez que instales Freezy saldra el prompt y solo tocas ACEPTAR). Tambien asegurate de no ocultar la app."
+                                NativeBridge.getNativeString(NativeBridge.S109)
                             }
                             RootTools.hasRootManager(this) -> {
-                                "No se pudo obtener root. Verifica en tu gestor de superusuario que: 1) Freezy tenga permiso CONCEDIDO y 2) Freezy NO este en la lista de ocultamiento (Deny List). Luego vuelve a pulsar ROOT."
+                                NativeBridge.getNativeString(NativeBridge.S110)
                             }
                             else -> {
                                 NativeBridge.getNativeString(NativeBridge.STRING_ROOT_REQ)
@@ -466,6 +468,8 @@ class MainActivity : AppCompatActivity() {
 
         setupConfigSection(prefs)
 
+        // Revalidación automática de la licencia contra el servidor al arrancar
+        autoRevalidateOnLaunch()
     }
 
     private var activeNavBtn: View? = null
@@ -495,7 +499,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBottomNavigationColors() {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
         val accentHex = if (useRoot) "#B026FF" else "#00E5FF"
 
@@ -609,7 +613,7 @@ class MainActivity : AppCompatActivity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun setupToneSection() {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val container = findViewById<LinearLayout>(R.id.container_tones) ?: return
         var selected = prefs.getInt("tone_type", 0)
         val useRoot = prefs.getBoolean("use_root", false)
@@ -650,7 +654,7 @@ class MainActivity : AppCompatActivity() {
 
     // Control de tamaño de la burbuja flotante (0% = 50px, 100% = 150px)
     private fun setupBubbleSizeControl() {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val seekbar = findViewById<SeekBar>(R.id.seekbar_bubble_size) ?: return
         val tvValue = findViewById<TextView>(R.id.tv_bubble_size_value)
         val tvLabel = findViewById<TextView>(R.id.tv_label_bubble_size)
@@ -731,6 +735,7 @@ class MainActivity : AppCompatActivity() {
                     .remove("expiration_date")
                     .remove("secure_endpoint")
                     .apply()
+                stopService(Intent(this@MainActivity, BubbleService::class.java))
                 val intent = Intent(this@MainActivity, LoginActivity::class.java)
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 startActivity(intent)
@@ -748,7 +753,7 @@ class MainActivity : AppCompatActivity() {
         
         startLicenseCountdown()
         // Recargar el valor de tiempo guardado para asegurar consistencia al volver a entrar
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val customTimeFloat = prefs.getFloat("custom_time_float", 3.0f).coerceAtLeast(0.5f).coerceAtMost(3.0f)
         val seekbarTime = findViewById<SeekBar>(R.id.seekbar_time)
         val tvTimeLabel = findViewById<TextView>(R.id.tv_time_label)
@@ -801,8 +806,76 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    private sealed class ValidationOutcome {
+        data class Valid(val json: org.json.JSONObject, val hmacHex: String) : ValidationOutcome()
+        data class Rejected(val message: String) : ValidationOutcome()
+        data class NetworkError(val message: String) : ValidationOutcome()
+    }
+
     private fun checkLicenseAndLaunch() {
-        val prefs = getSharedPreferences("FreezyPrefs", android.content.Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), android.content.Context.MODE_PRIVATE)
+        val key = SecurePrefs.getSecureString(this, "saved_key")
+        val username = SecurePrefs.getSecureString(this, "saved_username")
+
+        if (key.isEmpty() || username.isEmpty()) {
+            android.widget.Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_INCOMPLETE_DATA), android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        android.widget.Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_VALIDATING), android.widget.Toast.LENGTH_SHORT).show()
+
+        val btnFreezy = findViewById<Button>(R.id.btn_freezy)
+        btnFreezy.isEnabled = false
+        btnFreezy.alpha = 0.5f
+
+        Thread {
+            when (val outcome = validateWithServer()) {
+                is ValidationOutcome.Valid -> {
+                    applyServerSession(outcome.json, outcome.hmacHex)
+                    runOnUiThread {
+                        btnFreezy.isEnabled = true
+                        btnFreezy.alpha = 1.0f
+                        Logger.log(this@MainActivity, "Licencia Validada al iniciar")
+
+                        val warning = outcome.json.optString("update_warning", "")
+                        if (warning.isNotEmpty()) {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle(NativeBridge.getNativeString(NativeBridge.STRING_UPDATE_TITLE))
+                                .setMessage(warning)
+                                .setPositiveButton(NativeBridge.getNativeString(NativeBridge.STRING_UNDERSTOOD)) { _, _ ->
+                                    proceedWithLaunch()
+                                }
+                                .setCancelable(false)
+                                .show()
+                        } else {
+                            proceedWithLaunch()
+                        }
+                    }
+                }
+                is ValidationOutcome.Rejected -> {
+                    runOnUiThread {
+                        btnFreezy.isEnabled = true
+                        btnFreezy.alpha = 1.0f
+                        handleFatalValidation(this@MainActivity, outcome.message)
+                    }
+                }
+                is ValidationOutcome.NetworkError -> {
+                    runOnUiThread {
+                        btnFreezy.isEnabled = true
+                        btnFreezy.alpha = 1.0f
+                        android.widget.Toast.makeText(this@MainActivity, NativeBridge.getNativeString(NativeBridge.STRING_PLEASE_WAIT), android.widget.Toast.LENGTH_LONG).show()
+                        Logger.log(this@MainActivity, "Error de conexión al iniciar: ${outcome.message}")
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /**
+     * Validación real contra el servidor: challenge (nonce) → HMAC-SHA256(nonce, secret) → verify.
+     * Devuelve el resultado sin tocar la UI; la lógica de UI vive en quien la invoca.
+     */
+    private fun validateWithServer(): ValidationOutcome {
         val endpointUrl = SecurePrefs.getSecureString(this, "secure_endpoint").ifEmpty {
             NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT)
         }
@@ -812,108 +885,133 @@ class MainActivity : AppCompatActivity() {
         val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
 
         if (key.isEmpty() || username.isEmpty()) {
-            android.widget.Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_INCOMPLETE_DATA), android.widget.Toast.LENGTH_SHORT).show()
-            return
+            return ValidationOutcome.Rejected(NativeBridge.getNativeString(NativeBridge.STRING_INCOMPLETE_DATA))
         }
 
-        android.widget.Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.STRING_VALIDATING), android.widget.Toast.LENGTH_SHORT).show()
-        
-        val btnFreezy = findViewById<Button>(R.id.btn_freezy)
-        btnFreezy.isEnabled = false
-        btnFreezy.alpha = 0.5f
+        return try {
+            val challengeEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl.replace("/verify", "/challenge") else "$endpointUrl/challenge"
+            val verifyEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl else "$endpointUrl/verify"
+
+            val challengeConn = WebSecurity.open(challengeEndpoint)
+            challengeConn.requestMethod = "POST"
+            challengeConn.setRequestProperty("Content-Type", "application/json")
+            challengeConn.connectTimeout = 30000
+            challengeConn.readTimeout = 30000
+            challengeConn.doOutput = true
+
+            val currentAppVersion = com.system.network.ui.BuildConfig.VERSION_NAME
+            val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
+            challengeConn.outputStream.write(challengeJson.toByteArray(Charsets.UTF_8))
+
+            if (challengeConn.responseCode != 200) {
+                return ValidationOutcome.NetworkError(NativeBridge.getNativeString(NativeBridge.STRING_VALIDATION_ERROR_INIT))
+            }
+
+            val nonce = org.json.JSONObject(challengeConn.inputStream.bufferedReader().readText()).getString("nonce")
+
+            val algorithm = "HmacSHA256"
+            val mac = javax.crypto.Mac.getInstance(algorithm)
+            mac.init(javax.crypto.spec.SecretKeySpec(NativeBridge.getHmacSecret().toByteArray(Charsets.UTF_8), algorithm))
+            val hmacHex = mac.doFinal(nonce.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+            val verifyConn = WebSecurity.open(verifyEndpoint)
+            verifyConn.requestMethod = "POST"
+            verifyConn.setRequestProperty("Content-Type", "application/json")
+            verifyConn.connectTimeout = 30000
+            verifyConn.readTimeout = 30000
+            verifyConn.doOutput = true
+
+            val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\", \"app_version\": \"$currentAppVersion\"}"
+            verifyConn.outputStream.write(verifyJson.toByteArray(Charsets.UTF_8))
+
+            val responseCode = verifyConn.responseCode
+            if (responseCode == 200) {
+                val responseBody = verifyConn.inputStream.bufferedReader().readText()
+                val jsonResponse = org.json.JSONObject(responseBody)
+                if (jsonResponse.optBoolean("valid", false)) {
+                    ValidationOutcome.Valid(jsonResponse, hmacHex)
+                } else {
+                    ValidationOutcome.Rejected(jsonResponse.optString("message", "Licencia inválida"))
+                }
+            } else {
+                val errorBody = verifyConn.errorStream?.bufferedReader()?.readText() ?: ""
+                val serverMessage = try {
+                    org.json.JSONObject(errorBody).optString("message", "Error: $responseCode")
+                } catch (e: Exception) {
+                    "Error: $responseCode"
+                }
+                ValidationOutcome.Rejected(serverMessage)
+            }
+        } catch (e: Exception) {
+            ValidationOutcome.NetworkError(e.message ?: "Network error")
+        }
+    }
+
+    /**
+     * Persiste lo que el servidor confirma tras una validación válida:
+     * session_token cifrado, fechas, y el payload cifrado (AES-GCM con clave = HMAC)
+     * descifrado y guardado en memoria nativa (el motor de recoil lo exige).
+     */
+    private fun applyServerSession(json: org.json.JSONObject, hmacHex: String) {
+        val sessionToken = json.optString("session_token", "")
+        if (sessionToken.isNotEmpty()) {
+            SecurePrefs.putSecureString(this, "session_token", sessionToken)
+        }
+
+        val createdAt = json.optString("created_at", "")
+        val expiresAt = json.optString("expires_at", "")
+        if (createdAt.isNotEmpty() && expiresAt.isNotEmpty()) {
+            SecurePrefs.putSecureString(this, "activation_date", createdAt)
+            SecurePrefs.putSecureString(this, "expiration_date", expiresAt)
+        }
+
+        val encryptedPayloadHex = json.optString("encrypted_payload", "")
+        val ivHex = json.optString("iv", "")
+        if (encryptedPayloadHex.isNotEmpty() && ivHex.isNotEmpty()) {
+            try {
+                val aesKeyBytes = SecureCrypto.hexToBytes(hmacHex)
+                val ivBytes = SecureCrypto.hexToBytes(ivHex)
+                val encryptedBytes = SecureCrypto.hexToBytes(encryptedPayloadHex)
+                val decrypted = SecureCrypto.decryptGcm(aesKeyBytes, ivBytes, encryptedBytes)
+                NativeBridge.setSecurePayload(decrypted)
+            } catch (e: javax.crypto.AEADBadTagException) {
+                if (com.system.network.ui.BuildConfig.DEBUG) android.util.Log.e("MainActivity", "GCM auth tag mismatch — payload tampered")
+            } catch (e: Exception) {
+                if (com.system.network.ui.BuildConfig.DEBUG) android.util.Log.e("MainActivity", "Payload error: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Revalidación automática al arrancar (sin interacción del usuario).
+     * Cierra sesión si el servidor rechaza la licencia (ban/expiración).
+     * Sin conexión: grace period, se mantiene la sesión local.
+     */
+    private fun autoRevalidateOnLaunch() {
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), android.content.Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("is_logged_in", false)) return
+        if (SecurePrefs.getSecureString(this, "saved_key").isEmpty() ||
+            SecurePrefs.getSecureString(this, "saved_username").isEmpty()) return
 
         Thread {
-            try {
-                val challengeEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl.replace("/verify", "/challenge") else "$endpointUrl/challenge"
-                val verifyEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl else "$endpointUrl/verify"
-
-                val challengeConn = WebSecurity.open(challengeEndpoint)
-                challengeConn.requestMethod = "POST"
-                challengeConn.setRequestProperty("Content-Type", "application/json")
-                challengeConn.connectTimeout = 30000
-                challengeConn.readTimeout = 30000
-                challengeConn.doOutput = true
-
-                val currentAppVersion = com.system.network.ui.BuildConfig.VERSION_NAME
-                val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
-                challengeConn.outputStream.write(challengeJson.toByteArray(Charsets.UTF_8))
-
-                if (challengeConn.responseCode != 200) {
+            when (val outcome = validateWithServer()) {
+                is ValidationOutcome.Valid -> {
+                    applyServerSession(outcome.json, outcome.hmacHex)
                     runOnUiThread {
-                        btnFreezy.isEnabled = true
-                        btnFreezy.alpha = 1.0f
-                        android.widget.Toast.makeText(this@MainActivity, NativeBridge.getNativeString(NativeBridge.STRING_VALIDATION_ERROR_INIT), android.widget.Toast.LENGTH_LONG).show()
-                    }
-                    return@Thread
-                }
-
-                val nonce = org.json.JSONObject(challengeConn.inputStream.bufferedReader().readText()).getString("nonce")
-
-                val HWID_PRIVADO = NativeBridge.getHmacSecret()
-                val algorithm = "HmacSHA256"
-                val mac = javax.crypto.Mac.getInstance(algorithm)
-                mac.init(javax.crypto.spec.SecretKeySpec(HWID_PRIVADO.toByteArray(Charsets.UTF_8), algorithm))
-                val hmacHex = mac.doFinal(nonce.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-
-                val verifyConn = WebSecurity.open(verifyEndpoint)
-                verifyConn.requestMethod = "POST"
-                verifyConn.setRequestProperty("Content-Type", "application/json")
-                verifyConn.connectTimeout = 30000
-                verifyConn.readTimeout = 30000
-                verifyConn.doOutput = true
-
-                val verifyJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\", \"app_version\": \"$currentAppVersion\"}"
-                verifyConn.outputStream.write(verifyJson.toByteArray(Charsets.UTF_8))
-
-                val responseCode = verifyConn.responseCode
-                if (responseCode == 200) {
-                    val responseBody = verifyConn.inputStream.bufferedReader().readText()
-                    val jsonResponse = org.json.JSONObject(responseBody)
-                    val isValid = jsonResponse.optBoolean("valid", false)
-
-                    runOnUiThread {
-                        btnFreezy.isEnabled = true
-                        btnFreezy.alpha = 1.0f
-                        if (isValid) {
-                            Logger.log(this@MainActivity, "Licencia Validada al iniciar")
-                            
-                            val warning = jsonResponse.optString("update_warning", "")
-                            if (warning.isNotEmpty()) {
-                                AlertDialog.Builder(this@MainActivity)
-                                    .setTitle(NativeBridge.getNativeString(NativeBridge.STRING_UPDATE_TITLE))
-                                    .setMessage(warning)
-                                    .setPositiveButton(NativeBridge.getNativeString(NativeBridge.STRING_UNDERSTOOD)) { _, _ ->
-                                        proceedWithLaunch()
-                                    }
-                                    .setCancelable(false)
-                                    .show()
-                            } else {
-                                proceedWithLaunch()
-                            }
-                        } else {
-                            val message = jsonResponse.optString("message", "Licencia inválida")
-                            handleFatalValidation(this@MainActivity, message)
-                        }
-                    }
-                } else {
-                    val errorBody = verifyConn.errorStream?.bufferedReader()?.readText() ?: ""
-                    val serverMessage = try {
-                        org.json.JSONObject(errorBody).optString("message", "Error: $responseCode")
-                    } catch (e: Exception) {
-                        "Error: $responseCode"
-                    }
-                     runOnUiThread {
-                        btnFreezy.isEnabled = true
-                        btnFreezy.alpha = 1.0f
-                        handleFatalValidation(this@MainActivity, serverMessage)
+                        Logger.log(this@MainActivity, "Revalidación automática en arranque: OK")
+                        startLicenseCountdown()
                     }
                 }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    btnFreezy.isEnabled = true
-                    btnFreezy.alpha = 1.0f
-                    android.widget.Toast.makeText(this@MainActivity, NativeBridge.getNativeString(NativeBridge.STRING_PLEASE_WAIT), android.widget.Toast.LENGTH_LONG).show()
-                    Logger.log(this@MainActivity, "Error de conexión al iniciar: ${e.message}")
+                is ValidationOutcome.Rejected -> {
+                    runOnUiThread {
+                        Logger.log(this@MainActivity, "Revalidación automática rechazada: ${outcome.message}")
+                        handleFatalValidation(this@MainActivity, outcome.message)
+                    }
+                }
+                is ValidationOutcome.NetworkError -> {
+                    runOnUiThread {
+                        Logger.log(this@MainActivity, "Revalidación automática sin red (grace period): ${outcome.message}")
+                    }
                 }
             }
         }.start()
@@ -934,9 +1032,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun proceedWithLaunch() {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useMax = prefs.getBoolean("use_ff_max", false)
-        val preferredPkg = if (useMax) "com.dts.freefiremax" else "com.dts.freefireth"
+        val preferredPkg = if (useMax) NativeBridge.getNativeString(NativeBridge.S98) else NativeBridge.getNativeString(NativeBridge.S99)
         val detectedPkg = detectFreeFire()
 
         targetPackageToLaunch = detectedPkg ?: preferredPkg
@@ -991,7 +1089,7 @@ class MainActivity : AppCompatActivity() {
             indicator.translationX = targetX
         }
 
-        val useRoot = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE).getBoolean("use_root", false)
+        val useRoot = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE).getBoolean("use_root", false)
         if (useRoot) {
             indicator.background = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.shape_pill_purple)
             findViewById<TextView>(R.id.tv_time_label)?.setTextColor(Color.parseColor("#B026FF"))
@@ -1010,9 +1108,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchGameAndBubble() {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useMax = prefs.getBoolean("use_ff_max", false)
-        val pkg = targetPackageToLaunch ?: (if (useMax) "com.dts.freefiremax" else "com.dts.freefireth")
+        val pkg = targetPackageToLaunch ?: (if (useMax) NativeBridge.getNativeString(NativeBridge.S98) else NativeBridge.getNativeString(NativeBridge.S99))
         
         // 1. Lanzamos el juego si está disponible
         val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
@@ -1026,7 +1124,7 @@ class MainActivity : AppCompatActivity() {
 
         // 2. Lanzamos nuestra Burbuja Flotante (BubbleService)
         val serviceIntent = Intent(this, BubbleService::class.java).apply {
-            putExtra("TARGET_PACKAGE", pkg)
+            putExtra(NativeBridge.getNativeString(NativeBridge.S92), pkg)
         }
         
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -1037,11 +1135,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun detectFreeFire(): String? {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useMax = prefs.getBoolean("use_ff_max", false)
         
-        val primaryPkg = if (useMax) "com.dts.freefiremax" else "com.dts.freefireth"
-        val secondaryPkg = if (useMax) "com.dts.freefireth" else "com.dts.freefiremax"
+        val primaryPkg = if (useMax) NativeBridge.getNativeString(NativeBridge.S98) else NativeBridge.getNativeString(NativeBridge.S99)
+        val secondaryPkg = if (useMax) NativeBridge.getNativeString(NativeBridge.S99) else NativeBridge.getNativeString(NativeBridge.S98)
         
         val pm = packageManager
         
@@ -1236,7 +1334,7 @@ class MainActivity : AppCompatActivity() {
 
         val progressLicenseDays = findViewById<ProgressBar>(R.id.progress_license_days)
         val tvLicensePercent = findViewById<TextView>(R.id.tv_license_percent)
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
         tvLicensePercent?.setTextColor(if (useRoot) Color.parseColor("#B026FF") else Color.parseColor("#00E5FF"))
 
@@ -1323,7 +1421,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isPremiumLicense(): Boolean {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         var isPremiumLicense = false
         val actDate = SecurePrefs.getSecureString(this, "activation_date")
         val expDate = SecurePrefs.getSecureString(this, "expiration_date")
@@ -1348,7 +1446,7 @@ class MainActivity : AppCompatActivity() {
     // Carga librería nativa para obtener el endpoint ofuscado
     companion object {
         init {
-            System.loadLibrary("freezy_net")
+            System.loadLibrary("ncx")
         }
     }
     private external fun getSecureEndpoint(): String

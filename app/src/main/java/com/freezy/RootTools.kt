@@ -6,45 +6,34 @@ import android.os.Build
 import java.io.File
 
 /**
- * RootTools — Detección de root robustecida.
+ * Detección de root robustecida.
  *
  * Además de probar `su` (que requiere que el usuario acepte el prompt del
  * gestor de superusuario), detecta binarios comunes, gestores típicos
  * (Magisk, SuperSU, KernelSU...) y builds test-keys.
+ *
+ * Todas las rutas y paquetes sensibles vienen ofuscados desde la capa
+ * nativa (XOR) para que no sean legibles en el DEX.
  */
 object RootTools {
 
-    private val SU_PATHS = arrayOf(
-        "/system/bin/su",
-        "/system/xbin/su",
-        "/sbin/su",
-        "/system/su",
-        "/su/bin/su",
-        "/data/local/xbin/su",
-        "/data/local/bin/su",
-        "/system/sd/xbin/su",
-        "/data/local/su"
-    )
+    private fun suPaths(): List<String> =
+        NativeBridge.getNativeString(NativeBridge.S96)
+            .split(",")
+            .filter { it.isNotEmpty() }
 
-    private val ROOT_PACKAGES = arrayOf(
-        "com.topjohnwu.magisk",
-        "eu.chainfire.supersu",
-        "me.weishu.kernelsu",
-        "com.kingroot.kinguser",
-        "com.koushikdutta.superuser",
-        "com.noshufou.android.su",
-        "com.yellowes.su",
-        "io.github.vvb2060.magisk", // forks oficiales ocultadores
-        "io.github.huskydg.magisk" // Kitsune (Magisk Delta)
-    )
+    private fun rootPackages(): List<String> =
+        NativeBridge.getNativeString(NativeBridge.S97)
+            .split(",")
+            .filter { it.isNotEmpty() }
 
     /** Root con confirmación real (ejecuta `su` interactivo para que el gestor dispare el prompt de permiso). */
     fun hasRootAccess(): Boolean {
         return try {
-            val process = Runtime.getRuntime().exec("su")
+            val process = Runtime.getRuntime().exec(NativeBridge.getNativeString(NativeBridge.STRING_SU))
             val os = java.io.DataOutputStream(process.outputStream)
-            os.writeBytes("id\n")
-            os.writeBytes("exit\n")
+            os.writeBytes(NativeBridge.getNativeString(NativeBridge.STRING_SU_CMD_ID))
+            os.writeBytes(NativeBridge.getNativeString(NativeBridge.STRING_SU_CMD_EXIT))
             os.flush()
             val finished = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)
             if (!finished) {
@@ -61,10 +50,11 @@ object RootTools {
     fun hasRootManager(context: Context?): Boolean = hasRootPackages(context)
 
     /** Es Kitsune (Magisk Delta/fork). */
-    fun hasKitsune(context: Context?): Boolean = hasPackage(context, "io.github.huskydg.magisk")
+    fun hasKitsune(context: Context?): Boolean =
+        hasPackage(context, rootPackages().firstOrNull { it.contains("huskydg") } ?: "")
 
     private fun hasPackage(context: Context?, pkg: String): Boolean {
-        if (context == null) return false
+        if (context == null || pkg.isEmpty()) return false
         return try {
             context.packageManager.getPackageInfo(pkg, 0)
             true
@@ -82,7 +72,7 @@ object RootTools {
     }
 
     private fun hasSuBinary(): Boolean {
-        return SU_PATHS.any { path ->
+        return suPaths().any { path ->
             try {
                 File(path).exists()
             } catch (e: Exception) {
@@ -99,7 +89,7 @@ object RootTools {
     private fun hasRootPackages(context: Context?): Boolean {
         if (context == null) return false
         val pm = context.packageManager
-        return ROOT_PACKAGES.any { pkg ->
+        return rootPackages().any { pkg ->
             try {
                 pm.getPackageInfo(pkg, 0)
                 true

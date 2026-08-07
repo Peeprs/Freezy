@@ -10,10 +10,10 @@ class InputMonitor(private val context: Context) {
         
         init {
             try {
-                System.loadLibrary("freezy_net")
-                Log.i(TAG, "Librería freezy_net cargada en InputMonitor.")
+                System.loadLibrary("ncx")
+                Log.i(TAG, "Librería nativa cargada en InputMonitor.")
             } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "Error al cargar la librería freezy_net: ${e.message}")
+                Log.e(TAG, "Error al cargar la librería nativa: ${e.message}")
             }
         }
     }

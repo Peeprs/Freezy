@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Logo Telegram (icono del avión de papel) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="32dp"
+    android:viewportWidth="448"
+    android:viewportHeight="512">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M446.7,98.6l-67.6,318.8c-5,23.5 -18.5,29.3 -37.5,18.3l-103.5,-76.2 -49.9,48.1c-5.5,5.5 -10.1,10.1 -20.7,10.1l7.4,-104.9 190.9,-172.5c8.3,-7.4 -1.8,-11.5 -12.9,-4.1L117.8,284 16.2,252.2c-22.1,-6.9 -22.5,-22.1 4.6,-32.7L418.2,66.4c18.4,-6.9 34.5,4.1 28.5,32.2z" />
+</vector>

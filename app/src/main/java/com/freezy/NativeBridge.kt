@@ -2,7 +2,7 @@ package com.freezy
 
 object NativeBridge {
     init {
-        System.loadLibrary("freezy_net")
+        System.loadLibrary("ncx")
     }
 
     @JvmStatic
@@ -47,6 +47,9 @@ object NativeBridge {
 
     @JvmStatic
     external fun setSecurePayload(payload: String)
+
+    @JvmStatic
+    external fun isPayloadReady(): Boolean
 
     @JvmStatic
     external fun getHmacSecret(): String
@@ -132,4 +135,35 @@ object NativeBridge {
     const val STRING_CERT_PIN = 79
     const val STRING_BATTERY_HINT = 80
     const val STRING_SEC_ALERT = 81
+    const val STRING_SU = 82
+    const val STRING_SU_CMD_ID = 83
+    const val STRING_SU_CMD_EXIT = 84
+    const val S85 = 85
+    const val S86 = 86
+    const val S87 = 87
+    const val S88 = 88
+    const val S89 = 89
+    const val S90 = 90
+    const val S91 = 91
+    const val S92 = 92
+    const val S93 = 93
+    const val S94 = 94
+    const val S95 = 95
+    const val S96 = 96
+    const val S97 = 97
+    const val S98 = 98
+    const val S99 = 99
+    const val S100 = 100
+    const val S101 = 101
+    const val S102 = 102
+    const val S103 = 103
+    const val STRING_PREFS_NAME = 104
+    const val STRING_NO_INTERNET = 105
+    const val S106 = 106
+    const val S107 = 107
+    const val S108 = 108
+    const val S109 = 109
+    const val S110 = 110
+    const val S111 = 111
+    const val S112 = 112
 }

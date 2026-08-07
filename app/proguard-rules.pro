@@ -1,6 +1,6 @@
 # ══════════════════════════════════════════════════════════════════════════
-# ProGuard / R8 Rules — Freezy
-# Ofuscación agresiva para que MobSF no pueda leer la lógica de negocio
+# ProGuard / R8 Rules
+# Ofuscación agresiva para proteger la lógica de negocio
 # ══════════════════════════════════════════════════════════════════════════
 
 # ── 1. OFUSCACIÓN MÁXIMA ────────────────────────────────────────────────
@@ -13,61 +13,59 @@
 -keepattributes Exceptions,InnerClasses,Signature,Deprecated,EnclosingMethod
 
 # ── 2. PRESERVAR JNI (CRÍTICO) ──────────────────────────────────────────
-# C++ busca funciones por nombre exacto: Java_com_freezy_NativeBridge_*
-# Si R8 renombra estas clases, el JNI falla con UnsatisfiedLinkError
+# C++ busca clases y métodos por nombre exacto. Si R8 los renombra, el JNI
+# falla con UnsatisfiedLinkError. Solo se mantienen las clases con enlace JNI.
 
-# NativeBridge — Todos los métodos nativos y constantes
--keep class com.freezy.NativeBridge {
-    *;
+# NativeBridge — Solo los métodos enlazados por JNI; los campos constantes STRING_*
+# deben renombrarse para no filtrar pistas léxicas en el DEX
+-keepclassmembers class com.freezy.NativeBridge {
+    native <methods>;
 }
 
-# LoginActivity — Tiene getSecureEndpoint() como método nativo
+# LoginActivity — Tiene getSecureEndpoint() como método nativo + está en el Manifest
 -keep class com.freezy.LoginActivity {
     private native <methods>;
 }
 
-# AntigravityFirewall — Tiene startNativeEngine/stopNativeEngine/setLagActive
+# MainActivity — Tiene getSecureEndpoint() como método nativo + está en el Manifest
+-keep class com.freezy.MainActivity {
+    private native <methods>;
+}
+
+# AntigravityFirewall — startNativeEngine/stopNativeEngine/setLagActive + VpnService del Manifest
 -keep class com.freezy.AntigravityFirewall {
     private native <methods>;
     public native <methods>;
     public boolean protectSocket(int);
 }
 
-# BubbleService — Callback de JNI para onFiringStateChanged
+# BubbleService — Callback de JNI para onFiringStateChanged + está en el Manifest
 -keep class com.freezy.BubbleService {
     public void onFiringStateChanged(boolean);
 }
 
+# RecoilService (com.freezy.network) — Métodos nativos + está en el Manifest
+-keep class com.freezy.network.RecoilService {
+    private native <methods>;
+}
+
+# InputMonitor (com.freezy.network) — Métodos nativos enlazados por nombre en C++
+-keep class com.freezy.network.InputMonitor {
+    private native <methods>;
+    native <methods>;
+}
+
 # ── 3. PRESERVAR REFLEXIÓN Y JSON ──────────────────────────────────────
-# JSONObject usa reflexión para parsear — mantener modelos de datos
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
 }
 
-# ── 4. PRESERVAR SERVICIOS DE ANDROID ──────────────────────────────────
-# Servicios y Activities declarados en el Manifest deben mantener su nombre
--keep public class * extends android.app.Service
+# ── 4. PRESERVAR COMPONENTES DEL MANIFEST ──────────────────────────────
+# Activities y Services declarados en el Manifest deben mantener su nombre
 -keep public class * extends android.app.Activity
--keep public class * extends android.content.BroadcastReceiver
--keep public class * extends android.content.ContentProvider
+-keep public class * extends android.app.Service
 
-# ── 5. CRYPTO / SECURITY ──────────────────────────────────────────────
-# Preservar clases de cifrado para evitar que R8 las elimine como "no usadas"
--keep class com.freezy.SecureCrypto { *; }
--keep class com.freezy.SecurePrefs { *; }
--keep class com.freezy.WebSecurity { *; }
--keep class com.freezy.SecureLogger { *; }
--keep class com.freezy.RootTools { *; }
--keep class javax.crypto.** { *; }
--keep class java.security.** { *; }
-
-# MainActivity — Tiene getSecureEndpoint() como método nativo privado
--keep class com.freezy.MainActivity {
-    private native <methods>;
-}
-
-# ── 6. ELIMINAR LOGS EN RELEASE ────────────────────────────────────────
-# R8 puede eliminar completamente las llamadas a Log.* en release
+# ── 5. ELIMINAR LOGS EN RELEASE ────────────────────────────────────────
 -assumenosideeffects class android.util.Log {
     public static int v(...);
     public static int d(...);
@@ -77,20 +75,17 @@
     public static int wtf(...);
 }
 
-# Eliminar también System.out/err (por si se escapó algún println)
 -assumenosideeffects class java.io.PrintStream {
     public void println(...);
     public void print(...);
 }
 
-# ── 7. PRESERVAR ATRIBUTOS NECESARIOS ──────────────────────────────────
-# Mantener anotaciones de AndroidX
+# ── 6. PRESERVAR ATRIBUTOS NECESARIOS ──────────────────────────────────
 -keepattributes *Annotation*
 -keep class androidx.** { *; }
 -keep interface androidx.** { *; }
 
-# ── 8. REGLAS ANTI-DECOMPILACIÓN ───────────────────────────────────────
-# Optimizaciones agresivas que hacen más difícil la ingeniería inversa
+# ── 7. REGLAS ANTI-DECOMPILACIÓN ───────────────────────────────────────
 -optimizationpasses 5
 -optimizations !code/simplification/arithmetic,!code/simplification/cast,!field/*,!class/merging/*
 -verbose

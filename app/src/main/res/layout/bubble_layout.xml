@@ -8,7 +8,7 @@
 
     <!-- Burbuja Fake Lag Cyber-Tech con Cristal Congelado y Picos de Nieve -->
     <FrameLayout
-        android:id="@+id/cara_fake_lag"
+        android:id="@+id/bubble_face_overlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:clipChildren="false"
@@ -21,7 +21,7 @@
 
         <!-- Dummy hidden views for backward compatibility -->
         <ImageView
-            android:id="@+id/btn_fake_lag"
+            android:id="@+id/bubble_main_icon"
             android:layout_width="0dp"
             android:layout_height="0dp"
             android:visibility="gone" />

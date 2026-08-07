@@ -35,10 +35,10 @@ class BubbleService : Service() {
     private lateinit var bubbleView: View
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var bubbleIcon: ImageView
-    private lateinit var btnFakeLag: ImageView
+    private lateinit var bubbleMainIcon: ImageView
     private lateinit var cyberBubble: com.freezy.ui.CyberBubbleView
     private lateinit var arcOverlay: ArcProgressView
-    private lateinit var caraFakeLag: View
+    private lateinit var bubbleFaceOverlay: View
 
     private lateinit var fovOverlay: FovOverlay
     private var fovParams = WindowManager.LayoutParams()
@@ -111,7 +111,7 @@ class BubbleService : Service() {
 
     private fun updateBubbleSize() {
         if (::windowManager.isInitialized && ::bubbleView.isInitialized && bubbleView.parent != null) {
-            val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+            val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
             val density = resources.displayMetrics.density
             val sizePercent = prefs.getInt("bubble_size", 20).coerceIn(0, 100)
             // 0% = 50dp, 100% = 150dp (lineal)
@@ -141,7 +141,7 @@ class BubbleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
-            targetPackage = intent.getStringExtra("TARGET_PACKAGE")
+            targetPackage = intent.getStringExtra(NativeBridge.getNativeString(NativeBridge.S92))
             if (intent.action == "UPDATE_BUBBLE_MODE") {
                 recreateBubbles()
                 return START_STICKY
@@ -154,7 +154,7 @@ class BubbleService : Service() {
 
         // Actualizar el color y modo de la burbuja
         val isRootMode =
-                getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+                getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
                         .getBoolean("use_root", false)
         if (this::cyberBubble.isInitialized) {
             cyberBubble.setMode(isRootMode)
@@ -189,16 +189,16 @@ class BubbleService : Service() {
         // Registrar siempre el callback para recibir notificaciones JNI del disparo
         NativeBridge.registerUiCallback(this)
 
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
 
         // Otorgar permisos SU para lectura de /dev/input/event* SOLO si el usuario activó el modo
         // root
         if (useRoot) {
             Thread {
-                        executeRootCommand("chmod 666 /dev/input/event*")
-                        executeRootCommand("chcon u:object_r:input_device:s0 /dev/input/event*")
-                        executeRootCommand("setenforce 0")
+                        executeRootCommand(NativeBridge.getNativeString(NativeBridge.S101))
+                        executeRootCommand(NativeBridge.getNativeString(NativeBridge.S102))
+                        executeRootCommand(NativeBridge.getNativeString(NativeBridge.S103))
                     }
                     .start()
         }
@@ -207,7 +207,7 @@ class BubbleService : Service() {
 
         startLicenseCheck()
 
-        getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
                 .edit()
                 .putBoolean("is_bubble_running", true)
                 .apply()
@@ -377,7 +377,7 @@ class BubbleService : Service() {
     }
 
     private fun startForegroundNotification() {
-        val channelId = "freezy_service_channel"
+        val channelId = NativeBridge.getNativeString(NativeBridge.S108)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             val ch =
                     NotificationChannel(
@@ -422,20 +422,20 @@ class BubbleService : Service() {
 
     private fun setupBubble() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
 
         bubbleView = LayoutInflater.from(this).inflate(R.layout.bubble_layout, null)
-        btnFakeLag = bubbleView.findViewById(R.id.btn_fake_lag)
-        bubbleIcon = btnFakeLag
+        bubbleMainIcon = bubbleView.findViewById(R.id.bubble_main_icon)
+        bubbleIcon = bubbleMainIcon
         cyberBubble = bubbleView.findViewById(R.id.cyber_bubble_view)
-        caraFakeLag = bubbleView.findViewById(R.id.cara_fake_lag)
+        bubbleFaceOverlay = bubbleView.findViewById(R.id.bubble_face_overlay)
 
         cyberBubble.setMode(useRoot)
         cyberBubble.setActiveState(isFreezing)
 
-        btnFakeLag.isClickable = false
-        btnFakeLag.isFocusable = false
+        bubbleMainIcon.isClickable = false
+        bubbleMainIcon.isFocusable = false
 
         arcOverlay = ArcProgressView(this, useRoot)
         arcOverlay.visibility = View.GONE
@@ -467,7 +467,7 @@ class BubbleService : Service() {
 
     private fun actualizarUI() {
         val useRoot =
-                getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+                getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
                         .getBoolean("use_root", false)
         val isActive = if (useRoot) LagController.fakeLagActivo else isFreezing
 
@@ -476,13 +476,13 @@ class BubbleService : Service() {
             cyberBubble.setActiveState(isActive)
         }
 
-        if (::btnFakeLag.isInitialized && ::caraFakeLag.isInitialized) {
+        if (::bubbleMainIcon.isInitialized && ::bubbleFaceOverlay.isInitialized) {
             val colorStr = if (useRoot) "#B026FF" else "#00E5FF"
-            btnFakeLag.setColorFilter(
+            bubbleMainIcon.setColorFilter(
                     Color.parseColor(colorStr),
                     android.graphics.PorterDuff.Mode.SRC_IN
             )
-            btnFakeLag.alpha = if (isActive) 1.0f else (if (useRoot) 0.6f else 1.0f)
+            bubbleMainIcon.alpha = if (isActive) 1.0f else (if (useRoot) 0.6f else 1.0f)
         }
 
         if (::arcOverlay.isInitialized) {
@@ -491,8 +491,8 @@ class BubbleService : Service() {
     }
 
     private fun setupTouchListener() {
-        if (::caraFakeLag.isInitialized) {
-            caraFakeLag.setOnTouchListener { _, event ->
+        if (::bubbleFaceOverlay.isInitialized) {
+            bubbleFaceOverlay.setOnTouchListener { _, event ->
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         isDragging = false
@@ -517,12 +517,12 @@ class BubbleService : Service() {
                     }
                     MotionEvent.ACTION_UP -> {
                         if (!isDragging) {
-                            caraFakeLag.performHapticFeedback(
+                            bubbleFaceOverlay.performHapticFeedback(
                                     android.view.HapticFeedbackConstants.KEYBOARD_TAP
                             )
                             onBubbleTapped()
                         } else {
-                            getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+                            getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
                                     .edit()
                                     .putInt("bubble_x", params.x)
                                     .putInt("bubble_y", params.y)
@@ -537,7 +537,7 @@ class BubbleService : Service() {
     }
 
     private fun onBubbleTapped() {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
 
         val mode = prefs.getInt("mode", 0)
@@ -581,7 +581,7 @@ class BubbleService : Service() {
     private fun executeRootCommand(command: String) {
         if (suProcess == null) {
             try {
-                suProcess = Runtime.getRuntime().exec("su")
+                suProcess = Runtime.getRuntime().exec(NativeBridge.getNativeString(NativeBridge.STRING_SU))
                 suOutputStream = java.io.DataOutputStream(suProcess!!.outputStream)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -624,7 +624,7 @@ class BubbleService : Service() {
                 // Iniciar la VPN dinámicamente si no estuviera corriendo
                 val vpnIntent =
                         Intent(this, AntigravityFirewall::class.java).apply {
-                            putExtra("TARGET_PACKAGE", targetPackage ?: "com.dts.freefiremax")
+                            putExtra(NativeBridge.getNativeString(NativeBridge.S92), targetPackage ?: NativeBridge.getNativeString(NativeBridge.S98))
                         }
                 startService(vpnIntent)
                 LagController.toggleFakeLag(true, false)
@@ -653,7 +653,7 @@ class BubbleService : Service() {
 
                 // Detener la VPN de inmediato para volver al ruteo directo y restaurar el ping normal
                 val vpnIntent =
-                        Intent(this, AntigravityFirewall::class.java).apply { action = "STOP_VPN" }
+                        Intent(this, AntigravityFirewall::class.java).apply { action = NativeBridge.getNativeString(NativeBridge.S91) }
                 startService(vpnIntent)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -664,7 +664,7 @@ class BubbleService : Service() {
 
     // Reproduce el tono de activación/desactivación elegido por el usuario en Extras
     private fun playSelectedTone() {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         ToneManager.play(this, prefs.getInt("tone_type", 0))
     }
 
@@ -715,7 +715,7 @@ class BubbleService : Service() {
         if (isFreezing) {
             try {
                 stopFreeze(
-                    getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+                    getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
                         .getBoolean("use_root", false)
                 )
             } catch (e: Exception) {}
@@ -743,29 +743,29 @@ class BubbleService : Service() {
 
         // Detener la VPN si estaba en uso al destruir el servicio
         try {
-            val vpnIntent = Intent(this, AntigravityFirewall::class.java).apply { action = "STOP_VPN" }
+            val vpnIntent = Intent(this, AntigravityFirewall::class.java).apply { action = NativeBridge.getNativeString(NativeBridge.S91) }
             startService(vpnIntent)
             stopService(Intent(this, AntigravityFirewall::class.java))
         } catch (e: Exception) {}
 
         // Cerrar el shell root correctamente
         try {
-            suOutputStream?.writeBytes("exit\n")
+            suOutputStream?.writeBytes(NativeBridge.getNativeString(NativeBridge.STRING_SU_CMD_EXIT))
             suOutputStream?.flush()
             suOutputStream?.close()
             suProcess?.destroy()
         } catch (e: Exception) {}
 
-        getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
             .edit()
             .putBoolean("is_bubble_running", false)
             .apply()
     }
 
     private fun isAppOrGameInForeground(): Boolean {
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val targetPkg =
-                prefs.getString("TARGET_PACKAGE", "com.dts.freefiremax") ?: "com.dts.freefiremax"
+                prefs.getString(NativeBridge.getNativeString(NativeBridge.S92), NativeBridge.getNativeString(NativeBridge.S98)) ?: NativeBridge.getNativeString(NativeBridge.S98)
 
         // 1. Usar UsageStatsManager (si está permitido)
         try {
@@ -794,8 +794,8 @@ class BubbleService : Service() {
                         val pkgName = recentActiveUsage.packageName
                         if (pkgName == packageName ||
                                         pkgName == targetPkg ||
-                                        pkgName == "com.dts.freefiremax" ||
-                                        pkgName == "com.dts.freefireth"
+                                        pkgName == NativeBridge.getNativeString(NativeBridge.S98) ||
+                                        pkgName == NativeBridge.getNativeString(NativeBridge.S99)
                         ) {
                             return true
                         }

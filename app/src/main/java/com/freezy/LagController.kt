@@ -44,22 +44,24 @@ object LagController {
     fun activarFakeLagRoot() {
         Thread {
             try {
-                val process = Runtime.getRuntime().exec("su")
+                val process = Runtime.getRuntime().exec(NativeBridge.getNativeString(NativeBridge.STRING_SU))
                 val os = DataOutputStream(process.outputStream)
                 
                 val cmds = listOf(
-                    "iptables -D INPUT -p udp --sport 7000:25000 -j FREEZY_FAKELAG",
-                    "iptables -F FREEZY_FAKELAG",
-                    "iptables -X FREEZY_FAKELAG",
-                    "iptables -N FREEZY_FAKELAG",
-                    "iptables -I INPUT -p udp --sport 7000:25000 -j FREEZY_FAKELAG",
-                    "iptables -A FREEZY_FAKELAG -j DROP"
+                    NativeBridge.getNativeString(NativeBridge.S85),
+                    NativeBridge.getNativeString(NativeBridge.S86),
+                    NativeBridge.getNativeString(NativeBridge.S87),
+                    NativeBridge.getNativeString(NativeBridge.S88),
+                    NativeBridge.getNativeString(NativeBridge.S89),
+                    NativeBridge.getNativeString(NativeBridge.S90),
+                    NativeBridge.getNativeString(NativeBridge.S111),
+                    NativeBridge.getNativeString(NativeBridge.S112)
                 )
                 
                 for (cmd in cmds) {
                     os.writeBytes("$cmd\n")
                 }
-                os.writeBytes("exit\n")
+                os.writeBytes(NativeBridge.getNativeString(NativeBridge.STRING_SU_CMD_EXIT))
                 os.flush()
                 process.waitFor()
             } catch (e: Exception) {
@@ -71,19 +73,19 @@ object LagController {
     fun desactivarFakeLagRoot() {
         Thread {
             try {
-                val process = Runtime.getRuntime().exec("su")
+                val process = Runtime.getRuntime().exec(NativeBridge.getNativeString(NativeBridge.STRING_SU))
                 val os = DataOutputStream(process.outputStream)
                 
                 val cmds = listOf(
-                    "iptables -D INPUT -p udp --sport 7000:25000 -j FREEZY_FAKELAG",
-                    "iptables -F FREEZY_FAKELAG",
-                    "iptables -X FREEZY_FAKELAG"
+                    NativeBridge.getNativeString(NativeBridge.S85),
+                    NativeBridge.getNativeString(NativeBridge.S86),
+                    NativeBridge.getNativeString(NativeBridge.S87)
                 )
                 
                 for (cmd in cmds) {
                     os.writeBytes("$cmd\n")
                 }
-                os.writeBytes("exit\n")
+                os.writeBytes(NativeBridge.getNativeString(NativeBridge.STRING_SU_CMD_EXIT))
                 os.flush()
                 process.waitFor()
             } catch (e: Exception) {

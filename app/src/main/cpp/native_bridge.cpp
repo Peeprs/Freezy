@@ -1,10 +1,16 @@
 #include <jni.h>
 #include <android/log.h>
+#include <string>
 #include "patterns.h"
 
 #define LOG_TAG "NativeBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, "FreezyDebug", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+// Payload de licencia guardado en memoria nativa por setSecurePayload.
+// El motor se bloquea si está vacío: sin licencia válida, no hay recoil.
+extern std::string g_secure_payload;
 
 // Variable global para guardar la referencia al servicio/clase que tiene el overlay
 JavaVM* g_jvm = nullptr;
@@ -64,6 +70,10 @@ Java_com_freezy_network_RecoilService_stopEngine(JNIEnv *env, jobject thiz, jint
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_freezy_network_RecoilService_startRecoil(JNIEnv *env, jobject thiz, jint fd) {
+    if (g_secure_payload.empty()) {
+        LOGE("Motor bloqueado: licencia no activada (payload nativo ausente)");
+        return;
+    }
     LOGI("Iniciando compensación de retroceso...");
     set_firing(true);
     apply_progressive_recoil(fd);
@@ -113,6 +123,10 @@ Java_com_freezy_network_RecoilService_setRecoilProfile(JNIEnv* env, jobject thiz
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_freezy_NativeBridge_setNoRecoilState(JNIEnv *env, jclass clazz, jboolean enabled) {
+    if (enabled && g_secure_payload.empty()) {
+        LOGE("Motor bloqueado: licencia no activada (payload nativo ausente)");
+        return;
+    }
     LOGI("Set NoRecoil State: %d", enabled);
     set_firing(enabled);
 }

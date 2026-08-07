@@ -6,6 +6,7 @@ import java.net.Socket
 import java.net.URL
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
@@ -69,7 +70,8 @@ object WebSecurity {
         }
 
         private fun verifyPins(chain: Array<out X509Certificate>?) {
-            if (pins.isEmpty() || chain == null) return
+            if (chain == null) return
+            if (pins.isEmpty()) throw CertificateException("No certificate pins configured")
 
             val digest = MessageDigest.getInstance("SHA-256")
             val matched = chain.any { cert ->
@@ -79,9 +81,7 @@ object WebSecurity {
                 )
                 encoded in pins
             }
-            if (!matched && com.system.network.ui.BuildConfig.DEBUG) {
-                android.util.Log.w("WebSecurity", "Certificate pin mismatch; validated by System CA")
-            }
+            if (!matched) throw CertificateException("Certificate pin mismatch — connection aborted")
         }
 
         override fun getAcceptedIssuers(): Array<X509Certificate> = delegate.acceptedIssuers

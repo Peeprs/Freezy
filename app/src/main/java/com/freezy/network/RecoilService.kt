@@ -12,6 +12,7 @@ import android.util.Log
 import com.system.network.ui.R
 import java.io.DataOutputStream
 import android.widget.Toast
+import com.freezy.NativeBridge
 
 class RecoilService : Service() {
 
@@ -23,10 +24,10 @@ class RecoilService : Service() {
         
         init {
             try {
-                System.loadLibrary("freezy_net")
-                Log.i(TAG, "Librería freezy_net cargada con éxito.")
+                System.loadLibrary("ncx")
+                Log.i(TAG, "Librería nativa cargada con éxito.")
             } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "Error al cargar la librería freezy_net: ${e.message}")
+                Log.e(TAG, "Error al cargar la librería nativa: ${e.message}")
             }
         }
     }
@@ -40,13 +41,13 @@ class RecoilService : Service() {
 
     private fun grantPermissions() {
         try {
-            val process = Runtime.getRuntime().exec("su")
+            val process = Runtime.getRuntime().exec(NativeBridge.getNativeString(NativeBridge.STRING_SU))
             val os = DataOutputStream(process.outputStream)
-            os.writeBytes("chmod 666 /dev/uinput\n")
-            os.writeBytes("chmod 666 /dev/input/event*\n")
-            os.writeBytes("chcon u:object_r:input_device:s0 /dev/input/event*\n")
-            os.writeBytes("setenforce 0\n")
-            os.writeBytes("exit\n")
+            os.writeBytes(NativeBridge.getNativeString(NativeBridge.S100))
+            os.writeBytes(NativeBridge.getNativeString(NativeBridge.S101))
+            os.writeBytes(NativeBridge.getNativeString(NativeBridge.S102))
+            os.writeBytes(NativeBridge.getNativeString(NativeBridge.S103))
+            os.writeBytes(NativeBridge.getNativeString(NativeBridge.STRING_SU_CMD_EXIT))
             os.flush()
             process.waitFor()
             Log.i(TAG, "Permisos otorgados con éxito via SU")

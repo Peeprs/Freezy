@@ -22,7 +22,7 @@ object SessionGuard {
         message.contains("expir", true) || message.contains("expired", true)
 
     fun clearSession(context: Context) {
-        context.getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
             .edit()
             .putBoolean("is_logged_in", false)
             .remove("saved_key")
@@ -31,6 +31,12 @@ object SessionGuard {
             .remove("activation_date")
             .remove("expiration_date")
             .apply()
+
+        // Cualquier cierre de sesión debe apagar la burbuja y su limpieza
+        // (iptables, VPN, recoil, overlays) que ocurre en onDestroy().
+        try {
+            context.stopService(Intent(context, BubbleService::class.java))
+        } catch (e: Exception) {}
 
         if (context is LoginActivity) {
             context.clearInputFields()

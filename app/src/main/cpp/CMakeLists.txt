@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.10.2)
-project("freezy_net")
+project("ncx")
 
-# El nombre de la librería debe ser freezy_net
+# Nombre de la librería nativa
 add_library(
-        freezy_net
+        ncx
         SHARED
         native-lib.cpp
         input_manager.cpp
@@ -16,6 +16,6 @@ find_library(
         log)
 
 target_link_libraries(
-        freezy_net
+        ncx
         ${log-lib}
         android)

@@ -24,14 +24,17 @@ class LoginActivity : AppCompatActivity() {
 
     // Ingeniera inversa de la inversa (Carga librería nativa y llama ofuscador)
     init {
-        System.loadLibrary("freezy_net")
+        System.loadLibrary("ncx")
     }
     private external fun getSecureEndpoint(): String
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val prefs = getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+        // Rechazar APKs re-firmadas (crack por apktool/MT Manager)
+        SignatureGuard.verify(this)
+
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
 
         // Migrar a cifrado cualquier valor sensible guardado por versiones viejas
         SecurePrefs.migrateLegacy(this)
@@ -130,6 +133,26 @@ class LoginActivity : AppCompatActivity() {
             Toast.makeText(this, "Genera una key viendo unos pasos cortos (GET KEY)", Toast.LENGTH_LONG).show()
             true
         }
+
+        // Botones sociales (esquinas inferiores): Telegram y TikTok con outline animado
+        val btnTelegram = findViewById<android.widget.ImageButton>(R.id.btn_social_telegram)
+        val btnTikTok = findViewById<android.widget.ImageButton>(R.id.btn_social_tiktok)
+
+        btnTelegram.setOnClickListener {
+            Toast.makeText(this, "Abriendo Telegram...", Toast.LENGTH_SHORT).show()
+            // tg://resolve abre directamente el chat del bot; fallback a la URL web
+            if (!openScheme("tg://resolve?domain=FreezyTBot", "org.telegram.messenger")) {
+                openScheme("https://t.me/FreezyTBot", "org.telegram.messenger")
+            }
+        }
+
+        btnTikTok.setOnClickListener {
+            Toast.makeText(this, "Abriendo TikTok...", Toast.LENGTH_SHORT).show()
+            openScheme("https://www.tiktok.com/@freezyt", "com.zhiliaoapp.musically")
+        }
+
+        // Outline animado de los botones sociales (rotación a nivel de vista, robusta)
+        startSocialRingRotation()
 
         btnGetKey.setOnClickListener {
             btnGetKey.isEnabled = false
@@ -266,13 +289,109 @@ class LoginActivity : AppCompatActivity() {
                 return
             }
 
-            // Simular validación de sesión o carga de datos (1.5 segundos)
+            // Validación REAL de sesión contra el servidor: sin internet, NO se entra al Main.
             Thread {
-                Thread.sleep(1500)
-                runOnUiThread {
-                    playAccessGrantedAnimation {
-                        startActivity(Intent(this@LoginActivity, MainActivity::class.java))
-                        finish()
+                try {
+                    val endpointUrl = try {
+                        getSecureEndpoint()
+                    } catch (e: Throwable) {
+                        NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT)
+                    }.ifEmpty { NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT) }
+
+                    val savedUser = SecurePrefs.getSecureString(this@LoginActivity, "saved_username")
+                    val savedKey = SecurePrefs.getSecureString(this@LoginActivity, "saved_key")
+                    if (savedUser.isEmpty() || savedKey.isEmpty()) {
+                        throw IllegalStateException("No session")
+                    }
+
+                    val challengeEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl.replace("/verify", "/challenge") else "$endpointUrl/challenge"
+                    val verifyEndpoint = if (endpointUrl.endsWith("/verify")) endpointUrl else "$endpointUrl/verify"
+
+                    val hwid = NativeBridge.getHWID(this@LoginActivity)
+                    val deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+
+                    val challengeConn = WebSecurity.open(challengeEndpoint)
+                    challengeConn.requestMethod = "POST"
+                    challengeConn.setRequestProperty("Content-Type", "application/json")
+                    challengeConn.connectTimeout = 30000
+                    challengeConn.readTimeout = 30000
+                    challengeConn.doOutput = true
+                    val currentAppVersion = com.system.network.ui.BuildConfig.VERSION_NAME
+                    val challengeJson = "{\"key\": \"$savedKey\", \"hwid\": \"$hwid\", \"username\": \"$savedUser\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
+                    challengeConn.outputStream.write(challengeJson.toByteArray(Charsets.UTF_8))
+
+                    if (challengeConn.responseCode != 200) {
+                        runOnUiThread {
+                            blockNoInternet(tvSplashStatus, layoutSplash, layoutLogin, btnLogin)
+                        }
+                        return@Thread
+                    }
+
+                    val nonce = JSONObject(challengeConn.inputStream.bufferedReader().readText()).getString("nonce")
+
+                    val algorithm = "HmacSHA256"
+                    val mac = Mac.getInstance(algorithm)
+                    mac.init(SecretKeySpec(NativeBridge.getHmacSecret().toByteArray(Charsets.UTF_8), algorithm))
+                    val hmacHex = mac.doFinal(nonce.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+                    val verifyConn = WebSecurity.open(verifyEndpoint)
+                    verifyConn.requestMethod = "POST"
+                    verifyConn.setRequestProperty("Content-Type", "application/json")
+                    verifyConn.connectTimeout = 30000
+                    verifyConn.readTimeout = 30000
+                    verifyConn.doOutput = true
+                    val verifyJson = "{\"key\": \"$savedKey\", \"hwid\": \"$hwid\", \"hmac\": \"$hmacHex\", \"app_version\": \"$currentAppVersion\"}"
+                    verifyConn.outputStream.write(verifyJson.toByteArray(Charsets.UTF_8))
+
+                    if (verifyConn.responseCode == 200) {
+                        val responseBody = verifyConn.inputStream.bufferedReader().readText()
+                        val jsonObject = JSONObject(responseBody)
+                        val isValid = jsonObject.optBoolean("valid", false)
+                        if (isValid) {
+                            val sessionToken = jsonObject.optString("session_token", "")
+                            if (sessionToken.isNotEmpty()) {
+                                SecurePrefs.putSecureString(this@LoginActivity, "session_token", sessionToken)
+                            }
+                            val createdAt = jsonObject.optString("created_at", "")
+                            val expiresAt = jsonObject.optString("expires_at", "")
+                            if (createdAt.isNotEmpty() && expiresAt.isNotEmpty()) {
+                                SecurePrefs.putSecureString(this@LoginActivity, "activation_date", createdAt)
+                                SecurePrefs.putSecureString(this@LoginActivity, "expiration_date", expiresAt)
+                            }
+                            val encryptedPayloadHex = jsonObject.optString("encrypted_payload", "")
+                            val ivHex = jsonObject.optString("iv", "")
+                            if (encryptedPayloadHex.isNotEmpty() && ivHex.isNotEmpty()) {
+                                try {
+                                    val aesKeyBytes = SecureCrypto.hexToBytes(hmacHex)
+                                    val ivBytes = SecureCrypto.hexToBytes(ivHex)
+                                    val encryptedBytes = SecureCrypto.hexToBytes(encryptedPayloadHex)
+                                    val decrypted = SecureCrypto.decryptGcm(aesKeyBytes, ivBytes, encryptedBytes)
+                                    NativeBridge.setSecurePayload(decrypted)
+                                } catch (e: Exception) {
+                                    if (com.system.network.ui.BuildConfig.DEBUG) e.printStackTrace()
+                                }
+                            }
+                            runOnUiThread {
+                                playAccessGrantedAnimation {
+                                    startActivity(Intent(this@LoginActivity, MainActivity::class.java))
+                                    finish()
+                                }
+                            }
+                        } else {
+                            val message = jsonObject.optString("message", NativeBridge.getNativeString(NativeBridge.STRING_INVALID_LICENSE))
+                            runOnUiThread {
+                                handleSplashRejected(this@LoginActivity, message, tvSplashStatus, layoutSplash, layoutLogin, btnLogin)
+                            }
+                        }
+                    } else {
+                        runOnUiThread {
+                            handleSplashRejected(this@LoginActivity, NativeBridge.getNativeString(NativeBridge.STRING_INVALID_LICENSE), tvSplashStatus, layoutSplash, layoutLogin, btnLogin)
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    runOnUiThread {
+                        blockNoInternet(tvSplashStatus, layoutSplash, layoutLogin, btnLogin)
                     }
                 }
             }.start()
@@ -422,6 +541,9 @@ class LoginActivity : AppCompatActivity() {
                                 SecurePrefs.putSecureString(this@LoginActivity, "saved_key", key)
                                 SecurePrefs.putSecureString(this@LoginActivity, "activation_date", activationDate)
                                 SecurePrefs.putSecureString(this@LoginActivity, "expiration_date", expirationDate)
+                                if (sessionToken.isNotEmpty()) {
+                                    SecurePrefs.putSecureString(this@LoginActivity, "session_token", sessionToken)
+                                }
                                 // NO se guarda el payload descifrado en SharedPreferences
                                 Toast.makeText(
                                                 this@LoginActivity,
@@ -581,6 +703,58 @@ class LoginActivity : AppCompatActivity() {
         logo.setTag(com.system.network.ui.R.id.iv_splash_logo, pulse)
     }
 
+    /**
+     * Bloquea el acceso sin internet: muestra el aviso, cancela la animación
+     * y devuelve al usuario al formulario de login (NO entra al Main).
+     */
+    private fun blockNoInternet(
+        tvSplashStatus: android.widget.TextView?,
+        layoutSplash: android.view.View,
+        layoutLogin: android.view.View,
+        btnLogin: android.widget.Button
+    ) {
+        stopPulseAnimation()
+        tvSplashStatus?.text = NativeBridge.getNativeString(NativeBridge.STRING_NO_INTERNET)
+        tvSplashStatus?.setTextColor(android.graphics.Color.parseColor("#FF3B30"))
+        btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+        btnLogin.isEnabled = true
+        layoutSplash.visibility = android.view.View.GONE
+        layoutLogin.visibility = android.view.View.VISIBLE
+    }
+
+    /**
+     * Maneja una licencia rechazada durante el splash de revalidación
+     * (ban/expiración/desconocida) sin permitir entrar al Main.
+     */
+    private fun handleSplashRejected(
+        activity: LoginActivity,
+        message: String,
+        tvSplashStatus: android.widget.TextView?,
+        layoutSplash: android.view.View,
+        layoutLogin: android.view.View,
+        btnLogin: android.widget.Button
+    ) {
+        if (SessionGuard.isBan(message)) {
+            stopPulseAnimation()
+            SessionGuard.showBlocked(activity, "CUENTA BANEADA", message)
+            btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+            btnLogin.isEnabled = true
+            layoutSplash.visibility = android.view.View.GONE
+            layoutLogin.visibility = android.view.View.VISIBLE
+        } else if (SessionGuard.isExpired(message)) {
+            stopPulseAnimation()
+            SessionGuard.clearSession(activity)
+            blockNoInternet(tvSplashStatus, layoutSplash, layoutLogin, btnLogin)
+        } else {
+            Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
+            btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+            btnLogin.isEnabled = true
+            layoutSplash.visibility = android.view.View.GONE
+            layoutLogin.visibility = android.view.View.VISIBLE
+            stopPulseAnimation()
+        }
+    }
+
     private fun stopPulseAnimation() {
         val logo = findViewById<android.widget.ImageView>(com.system.network.ui.R.id.iv_splash_logo)
         (logo.getTag(com.system.network.ui.R.id.iv_splash_logo) as? android.animation.ObjectAnimator)?.cancel()
@@ -611,6 +785,40 @@ class LoginActivity : AppCompatActivity() {
         runOnUiThread {
             findViewById<EditText>(R.id.et_user)?.setText("")
             findViewById<EditText>(R.id.et_key)?.setText("")
+        }
+    }
+
+    /** Abre el enlace en la app oficial si está instalada; si no, en el navegador. Devuelve true si tuvo éxito. */
+    private fun openScheme(url: String, appPackage: String): Boolean {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(appPackage))
+            return true
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                return true
+            } catch (e2: Exception) {
+                Toast.makeText(this, "No se pudo abrir el enlace", Toast.LENGTH_LONG).show()
+                return false
+            }
+        }
+    }
+
+    /** Rota los anillos de los botones sociales (outline animado, infinito). */
+    private fun startSocialRingRotation() {
+        val ringIds = listOf(R.id.iv_social_ring_tg, R.id.iv_social_ring_tt)
+        for (id in ringIds) {
+            findViewById<android.widget.ImageView>(id)?.let { ring ->
+                val anim = android.view.animation.RotateAnimation(
+                    0f, 360f,
+                    android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
+                    android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f
+                )
+                anim.duration = 5000
+                anim.repeatCount = android.view.animation.Animation.INFINITE
+                anim.interpolator = android.view.animation.LinearInterpolator()
+                ring.startAnimation(anim)
+            }
         }
     }
 

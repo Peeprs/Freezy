@@ -22,7 +22,7 @@ import javax.crypto.spec.GCMParameterSpec
  * migran a cifrado en la primera lectura.
  */
 object SecurePrefs {
-    private const val KEYSTORE_ALIAS = "freezy_prefs_key"
+    private val KEYSTORE_ALIAS by lazy { NativeBridge.getNativeString(NativeBridge.S107) }
     private const val GCM_IV_BYTES = 12
     private const val GCM_TAG_BITS = 128
     private const val PREFIX = "s1:"
@@ -36,7 +36,8 @@ object SecurePrefs {
         "secure_endpoint",
         "server_base_url",
         "activation_date",
-        "expiration_date"
+        "expiration_date",
+        "session_token"
     )
 
     private fun getSecretKey(): SecretKey {
@@ -79,7 +80,7 @@ object SecurePrefs {
     @JvmStatic
     fun putSecureString(context: Context, key: String, value: String) {
         try {
-            context.getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+            context.getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
                 .edit()
                 .putString(key, encrypt(value))
                 .apply()
@@ -95,7 +96,7 @@ object SecurePrefs {
     @JvmStatic
     fun getSecureString(context: Context, key: String, defaultValue: String = ""): String {
         return try {
-            val prefs = context.getSharedPreferences("FreezyPrefs", Context.MODE_PRIVATE)
+            val prefs = context.getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
             val raw = prefs.getString(key, null) ?: return defaultValue
             val valStr = if (raw.startsWith(PREFIX)) {
                 decrypt(raw)

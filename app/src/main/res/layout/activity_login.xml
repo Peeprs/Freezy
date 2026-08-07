@@ -34,18 +34,16 @@
     </LinearLayout>
 
     <!-- LOGIN FORM CONTAINER -->
-    <LinearLayout
+    <FrameLayout
         android:id="@+id/layout_login"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:padding="24dp"
         android:visibility="gone">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_gravity="center"
             android:orientation="vertical"
             android:background="@drawable/bg_glass_blue"
             android:padding="32dp">
@@ -124,7 +122,59 @@
                 android:elevation="4dp" />
 
         </LinearLayout>
-    </LinearLayout>
+
+        <!-- BOTÓN SOCIAL TELEGRAM (esquina inferior izquierda) -->
+        <FrameLayout
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="20dp"
+            android:layout_marginBottom="20dp">
+
+            <ImageView
+                android:id="@+id/iv_social_ring_tg"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:src="@drawable/social_ring_arc" />
+
+            <ImageButton
+                android:id="@+id/btn_social_telegram"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_gravity="center"
+                android:background="@drawable/social_circle_bg"
+                android:contentDescription="Telegram"
+                android:padding="10dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_telegram" />
+        </FrameLayout>
+
+        <!-- BOTÓN SOCIAL TIKTOK (esquina inferior derecha) -->
+        <FrameLayout
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="20dp">
+
+            <ImageView
+                android:id="@+id/iv_social_ring_tt"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:src="@drawable/social_ring_arc" />
+
+            <ImageButton
+                android:id="@+id/btn_social_tiktok"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_gravity="center"
+                android:background="@drawable/social_circle_bg"
+                android:contentDescription="TikTok"
+                android:padding="10dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_tiktok" />
+        </FrameLayout>
+    </FrameLayout>
 
 </FrameLayout>
 
