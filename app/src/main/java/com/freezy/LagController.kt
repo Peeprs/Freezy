@@ -53,9 +53,7 @@ object LagController {
                     NativeBridge.getNativeString(NativeBridge.S87),
                     NativeBridge.getNativeString(NativeBridge.S88),
                     NativeBridge.getNativeString(NativeBridge.S89),
-                    NativeBridge.getNativeString(NativeBridge.S90),
-                    NativeBridge.getNativeString(NativeBridge.S111),
-                    NativeBridge.getNativeString(NativeBridge.S112)
+                    NativeBridge.getNativeString(NativeBridge.S90)
                 )
                 
                 for (cmd in cmds) {

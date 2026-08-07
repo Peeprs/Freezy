@@ -164,6 +164,5 @@ object NativeBridge {
     const val S108 = 108
     const val S109 = 109
     const val S110 = 110
-    const val S111 = 111
     const val S112 = 112
 }
