@@ -6,10 +6,7 @@ add_library(
         ncx
         SHARED
         native-lib.cpp
-        input_manager.cpp
-        recoil_engine.cpp
-        native_bridge.cpp
-        input_listener.cpp)
+        native_bridge.cpp)
 
 find_library(
         log-lib

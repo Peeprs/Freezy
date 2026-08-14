@@ -23,7 +23,6 @@ import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
-import com.freezy.network.FovOverlay
 import com.system.network.ui.R
 import kotlin.math.abs
 import org.json.JSONObject
@@ -40,26 +39,19 @@ class BubbleService : Service() {
     private lateinit var arcOverlay: ArcProgressView
     private lateinit var bubbleFaceOverlay: View
 
-    private lateinit var fovOverlay: FovOverlay
-    private var fovParams = WindowManager.LayoutParams()
-
     private var suProcess: Process? = null
     private var suOutputStream: java.io.DataOutputStream? = null
 
     private val handler = Handler(Looper.getMainLooper())
 
+    private var isFreezing = false
+    private var isDragging = false
     private var initialX = 0
     private var initialY = 0
     private var initialTouchX = 0f
     private var initialTouchY = 0f
-    private var isDragging = false
-
-    private var isNoRecoilEnabled = false
-    private var recoilStrength = 50
-    private var inputMonitor: com.freezy.network.InputMonitor? = null
-
-    private var isFreezing = false
     private var fillAnimator: ValueAnimator? = null
+    private var targetPackage: String? = null
 
     // Vista personalizada que dibuja el arco circular de progreso
     // Vista personalizada que dibuja el arco circular de progreso
@@ -106,8 +98,6 @@ class BubbleService : Service() {
             canvas.drawArc(rect, -90f, 360f * progress, false, paint)
         }
     }
-
-    private var targetPackage: String? = null
 
     private fun updateBubbleSize() {
         if (::windowManager.isInitialized && ::bubbleView.isInitialized && bubbleView.parent != null) {
@@ -184,10 +174,6 @@ class BubbleService : Service() {
         LagController.initLicencia(this)
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         startForegroundNotification()
-        setupFov()
-
-        // Registrar siempre el callback para recibir notificaciones JNI del disparo
-        NativeBridge.registerUiCallback(this)
 
         val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
@@ -406,20 +392,6 @@ class BubbleService : Service() {
         }
     }
 
-    private fun setupFov() {
-        fovOverlay = FovOverlay(this)
-
-        fovParams =
-                WindowManager.LayoutParams(
-                        WindowManager.LayoutParams.MATCH_PARENT,
-                        WindowManager.LayoutParams.MATCH_PARENT,
-                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-                        PixelFormat.TRANSLUCENT
-                )
-    }
-
     private fun setupBubble() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
@@ -557,12 +529,6 @@ class BubbleService : Service() {
         startFreeze(useRoot, duration)
         startArcAnimation(duration)
         handler.postDelayed({ if (isFreezing) stopFreeze(useRoot) }, duration)
-    }
-
-    fun onFiringStateChanged(isFiring: Boolean) {
-        if (::fovOverlay.isInitialized) {
-            fovOverlay.setFiringState(isFiring)
-        }
     }
 
     private fun toggleManual(useRoot: Boolean) {
@@ -722,23 +688,9 @@ class BubbleService : Service() {
         }
         fillAnimator?.cancel()
 
-        // Detener No-Recoil y Monitoreo de Entrada
-        try {
-            val recoilIntent =
-                Intent(this, com.freezy.network.RecoilService::class.java).apply {
-                    action = "STOP_RECOIL"
-                }
-            startService(recoilIntent)
-            stopService(Intent(this, com.freezy.network.RecoilService::class.java))
-            inputMonitor?.stopMonitoring()
-        } catch (e: Exception) {}
-
         // Limpieza de Overlays para evitar que queden pegados en pantalla
         if (::bubbleView.isInitialized && bubbleView.parent != null) {
             try { windowManager.removeView(bubbleView) } catch (e: Exception) {}
-        }
-        if (::fovOverlay.isInitialized && fovOverlay.parent != null) {
-            try { windowManager.removeView(fovOverlay) } catch (e: Exception) {}
         }
 
         // Detener la VPN si estaba en uso al destruir el servicio

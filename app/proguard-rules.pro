@@ -39,21 +39,8 @@
     public boolean protectSocket(int);
 }
 
-# BubbleService — Callback de JNI para onFiringStateChanged + está en el Manifest
--keep class com.freezy.BubbleService {
-    public void onFiringStateChanged(boolean);
-}
-
-# RecoilService (com.freezy.network) — Métodos nativos + está en el Manifest
--keep class com.freezy.network.RecoilService {
-    private native <methods>;
-}
-
-# InputMonitor (com.freezy.network) — Métodos nativos enlazados por nombre en C++
--keep class com.freezy.network.InputMonitor {
-    private native <methods>;
-    native <methods>;
-}
+# BubbleService — está en el Manifest
+-keep class com.freezy.BubbleService
 
 # ── 3. PRESERVAR REFLEXIÓN Y JSON ──────────────────────────────────────
 -keepclassmembers class * {

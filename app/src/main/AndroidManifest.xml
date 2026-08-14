@@ -69,14 +69,5 @@
                 android:value="Gaming Overlay and Lag Control" />
         </service>
 
-        <service
-            android:name="com.freezy.network.RecoilService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Virtual Input and Recoil Control" />
-        </service>
-
     </application>
 </manifest>
