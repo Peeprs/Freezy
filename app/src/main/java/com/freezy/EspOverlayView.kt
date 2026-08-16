@@ -172,8 +172,18 @@ class EspOverlayView(context: Context) : View(context) {
 
     private fun poll() {
         if (pid <= 0) return
+        val flags = (if (drawBox) 1 else 0) or
+                (if (drawSkeleton) 2 else 0) or
+                (if (drawLines) 4 else 0) or
+                (if (drawHealth) 8 else 0) or
+                (if (drawName) 16 else 0) or
+                (if (drawDistance) 32 else 0) or
+                (if (drawWeapon) 64 else 0) or
+                (if (drawTeam) 128 else 0) or
+                (if (ignoreKnocked) 256 else 0)
+
         val count = try {
-            NativeBridge.getEspSnapshotDirect(pid, espBuffer)
+            NativeBridge.getEspSnapshotDirect(pid, espBuffer, flags)
         } catch (e: Exception) {
             0
         }

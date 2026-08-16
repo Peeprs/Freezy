@@ -103,8 +103,8 @@ object NativeBridge {
     /** Snapshot JSON con datos ESP (posición, salud, arma, nombre, team...) */
     @JvmStatic external fun getEspSnapshot(pid: Int): String
 
-    /** Snapshot directo a FloatArray sin overhead de JSON ni recolección de basura (ultra rápido) */
-    @JvmStatic external fun getEspSnapshotDirect(pid: Int, outData: FloatArray): Int
+    /** Snapshot directo a FloatArray sin overhead de JSON ni recolección de basura (ultra rápido con flags) */
+    @JvmStatic external fun getEspSnapshotDirect(pid: Int, outData: FloatArray, flags: Int): Int
 
     const val STRING_ENDPOINT = 1
     const val STRING_BTN_START = 2

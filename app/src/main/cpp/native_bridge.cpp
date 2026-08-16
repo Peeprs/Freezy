@@ -683,7 +683,7 @@ bool getBonePosition(int pid, long entity, long boneOffset, float* outPos) {
 
 static std::mutex g_hier_mutex;
 static std::atomic<int> g_hier_frame{0};
-static const int HIER_MAX = 512; // entradas de la jerarquía fotografiadas por jerarquía
+static const int HIER_MAX = 96; // 96 entradas cubren todos los huesos (0..64) en solo 4.6 KB
 
 struct HierSnap {
     int pid = -1;
@@ -718,26 +718,16 @@ static bool refreshHierSnapLocked(int pid, long matrix, int frame) {
     s.list = matrixList;
     s.indices = matrixIndices;
 
-    // matrixIndices: HIER_MAX * 4 bytes en fragmentos de 16384
+    // matrixIndices: HIER_MAX * 4 bytes
     s.indices_data.assign(HIER_MAX * 4, 0);
-    size_t off = 0;
-    while (off < HIER_MAX * 4) {
-        size_t chunk = std::min<size_t>(16384, HIER_MAX * 4 - off);
-        if (!readGameMemory(pid, matrixIndices + off, s.indices_data.data() + off, chunk)) break;
-        off += chunk;
-    }
-    s.indices_count = (int)(off / 4);
+    if (!readGameMemory(pid, matrixIndices, s.indices_data.data(), HIER_MAX * 4)) return false;
+    s.indices_count = HIER_MAX;
 
-    // matrixList: HIER_MAX * 0x30 bytes en fragmentos de 16384
+    // matrixList: HIER_MAX * 0x30 bytes
     s.list_data.assign(HIER_MAX * 0x30, 0);
-    off = 0;
-    while (off < HIER_MAX * 0x30) {
-        size_t chunk = std::min<size_t>(16384, HIER_MAX * 0x30 - off);
-        if (!readGameMemory(pid, matrixList + off, s.list_data.data() + off, chunk)) break;
-        off += chunk;
-    }
-    s.list_count = (int)(off / 0x30);
-    s.ready = (s.list_count > 0 && s.indices_count > 0);
+    if (!readGameMemory(pid, matrixList, s.list_data.data(), HIER_MAX * 0x30)) return false;
+    s.list_count = HIER_MAX;
+    s.ready = true;
 
     // Si el mapa tiene muchas entradas, eliminamos solo las jerarquías de frames anteriores
     if (g_hier_snaps.size() > 64) {
@@ -1895,16 +1885,73 @@ Java_com_freezy_NativeBridge_getEspSnapshot(JNIEnv* env, jclass clazz, jint pid)
 }
 
 int getPlayerHealth(int pid, long entity) {
+    // 1. Escanear PlayerAttributes (+0x4BC)
+    long attr = 0;
+    if (readPtr(pid, entity + 0x4BC, attr) && isPlausiblePtr(attr)) {
+        uint8_t buf[128];
+        if (readGameMemory(pid, attr + 0x8, buf, sizeof(buf))) {
+            // A) Pares enteros (CurHP, MaxHP) o (MaxHP, CurHP)
+            int32_t* ints = (int32_t*)buf;
+            int count = sizeof(buf) / sizeof(int32_t);
+            for (int i = 0; i < count - 1; i++) {
+                int a = ints[i];
+                int b = ints[i+1];
+                if (b >= 200 && b <= 300 && a >= 1 && a <= b) return a;
+                if (a >= 200 && a <= 300 && b >= 1 && b <= a) return b;
+            }
+            // B) Pares floats
+            float* floats = (float*)buf;
+            for (int i = 0; i < count - 1; i++) {
+                float a = floats[i];
+                float b = floats[i+1];
+                if (b >= 200.0f && b <= 300.0f && a >= 1.0f && a <= b) return (int)a;
+                if (a >= 200.0f && a <= 300.0f && b >= 1.0f && b <= a) return (int)b;
+            }
+        }
+    }
+
+    // 2. Escanear DataPool / m_PlayerData (+0x48)
     long dataPool = 0;
-    if (!readPtr(pid, entity + OFF_PLAYER_DATA, dataPool) || !isPlausiblePtr(dataPool)) return 200;
-    long poolObj = 0;
-    if (!readPtr(pid, dataPool + 0x8, poolObj) || !isPlausiblePtr(poolObj)) return 200;
-    long pool = 0;
-    if (!readPtr(pid, poolObj + 0x20, pool) || !isPlausiblePtr(pool)) return 200;
-    int hp = 200;
-    if (readI32(pid, pool + 0x18, hp) && hp > 0 && hp <= 1000) return hp;
-    if (readI32(pid, pool + 0x1C, hp) && hp > 0 && hp <= 1000) return hp;
-    if (readI32(pid, pool + 0x14, hp) && hp > 0 && hp <= 1000) return hp;
+    if (readPtr(pid, entity + OFF_PLAYER_DATA, dataPool) && isPlausiblePtr(dataPool)) {
+        long poolObj = 0;
+        if (readPtr(pid, dataPool + 0x8, poolObj) && isPlausiblePtr(poolObj)) {
+            long pool = 0;
+            if (readPtr(pid, poolObj + 0x20, pool) && isPlausiblePtr(pool)) {
+                uint8_t buf[128];
+                if (readGameMemory(pid, pool + 0x8, buf, sizeof(buf))) {
+                    int32_t* ints = (int32_t*)buf;
+                    int count = sizeof(buf) / sizeof(int32_t);
+                    for (int i = 0; i < count - 1; i++) {
+                        int a = ints[i];
+                        int b = ints[i+1];
+                        if (b >= 200 && b <= 300 && a >= 1 && a <= b) return a;
+                        if (a >= 200 && a <= 300 && b >= 1 && b <= a) return b;
+                    }
+                    float* floats = (float*)buf;
+                    for (int i = 0; i < count - 1; i++) {
+                        float a = floats[i];
+                        float b = floats[i+1];
+                        if (b >= 200.0f && b <= 300.0f && a >= 1.0f && a <= b) return (int)a;
+                        if (a >= 200.0f && a <= 300.0f && b >= 1.0f && b <= a) return (int)b;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Escanear directamente en Player (+0x100..+0x200)
+    uint8_t pbuf[128];
+    if (readGameMemory(pid, entity + 0x100, pbuf, sizeof(pbuf))) {
+        int32_t* ints = (int32_t*)pbuf;
+        int count = sizeof(pbuf) / sizeof(int32_t);
+        for (int i = 0; i < count - 1; i++) {
+            int a = ints[i];
+            int b = ints[i+1];
+            if (b >= 200 && b <= 300 && a >= 1 && a <= b) return a;
+            if (a >= 200 && a <= 300 && b >= 1 && b <= a) return b;
+        }
+    }
+
     return 200;
 }
 
@@ -1967,7 +2014,7 @@ void readPlayerNamePacked(int pid, long entity, float* outNameFloats, float& out
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jint pid, jfloatArray outData) {
+Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jint pid, jfloatArray outData, jint flags) {
     if (pid <= 0 || !outData) return 0;
 
     GamePointers gp;
@@ -1991,23 +2038,25 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
     int screenW = g_screen_w.load();
     int screenH = g_screen_h.load();
 
+    bool reqHealth = (flags & 8) != 0;
+    bool reqName = (flags & 16) != 0;
+    bool reqWeapon = (flags & 64) != 0;
+    bool reqTeam = (flags & 128) != 0;
+    bool reqIgnoreKnocked = (flags & 256) != 0;
+
     for (long e : ents) {
         if (shown >= MAX_ENTS) break;
         if (e == gp.localPlayer) continue;
 
-        // 1. FILTRO: Muerto
+        // 1. FILTRO ULTRA-RÁPIDO: Muerto
         uint8_t isDead = 0;
         if (!readU8(pid, e + OFF_PLAYER_IS_DEAD, isDead) || isDead) continue;
 
-        // 2. Equipo: 1 = Aliado, 2 = Enemigo (-1 desconocido)
-        int team = getTeamStatus(pid, e);
-        if (team <= 0) continue;
-
-        // 3. Punteros de huesos
-        long bones[14];
-        readBonePtrBlock(pid, e, bones);
+        // 2. PRE-FILTRO ULTRA-RÁPIDO DE DISTANCIA (solo 1 puntero de cabeza)
+        long headBone = 0;
+        if (!readPtr(pid, e + OFF_BONE_HEAD, headBone) || !isPlausiblePtr(headBone)) continue;
         float head[3] = {0, 0, 0};
-        if (!getBonePosFromPtr(pid, bones[0], head)) continue;
+        if (!getBonePosFromPtr(pid, headBone, head)) continue;
 
         float dist = sqrtf((head[0]-myPos[0])*(head[0]-myPos[0]) +
                            (head[1]-myPos[1])*(head[1]-myPos[1]) +
@@ -2015,7 +2064,20 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
 
         if (dist > ESP_MAX_DIST) continue;
 
-        // 4. ViewMatrix fresca por entidad
+        // 3. FILTRO: Knocked si está activo ignoreKnocked
+        bool knocked = isKnocked(pid, e);
+        if (reqIgnoreKnocked && knocked) continue;
+
+        // 4. FILTRO: Equipo
+        int team = getTeamStatus(pid, e);
+        if (team <= 0) continue;
+        if (!reqTeam && team == 1) continue; // Si no quiere ver aliados, saltar
+
+        // 5. Punteros de los 14 huesos (solo para enemigos cercanos confirmados)
+        long bones[14];
+        readBonePtrBlock(pid, e, bones);
+
+        // 6. ViewMatrix fresca por entidad
         float vm[16];
         if (!getViewMatrix(pid, gp.localPlayer, vm)) continue;
 
@@ -2025,12 +2087,13 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
         // Si la cabeza no proyecta en pantalla, omitir
         if (skel[0] <= 0 || skel[1] <= 0) continue;
 
-        bool knocked = isKnocked(pid, e);
-        int hp = getPlayerHealth(pid, e);
-        short wepId = getPlayerWeaponId(pid, e);
+        int hp = reqHealth ? getPlayerHealth(pid, e) : 200;
+        short wepId = reqWeapon ? getPlayerWeaponId(pid, e) : 0;
         float isBot = 0.0f;
-        float nameFloats[6];
-        readPlayerNamePacked(pid, e, nameFloats, isBot);
+        float nameFloats[6] = {0, 0, 0, 0, 0, 0};
+        if (reqName) {
+            readPlayerNamePacked(pid, e, nameFloats, isBot);
+        }
 
         int baseIdx = shown * 40;
         tempBuffer[baseIdx + 0] = knocked ? 1.0f : 0.0f;
