@@ -739,8 +739,16 @@ static bool refreshHierSnapLocked(int pid, long matrix, int frame) {
     s.list_count = (int)(off / 0x30);
     s.ready = (s.list_count > 0 && s.indices_count > 0);
 
-    // Mantener el mapa pequeño (pocas jerarquías simultáneas)
-    if (g_hier_snaps.size() > 8) g_hier_snaps.clear();
+    // Si el mapa tiene muchas entradas, eliminamos solo las jerarquías de frames anteriores
+    if (g_hier_snaps.size() > 64) {
+        for (auto it = g_hier_snaps.begin(); it != g_hier_snaps.end(); ) {
+            if (it->second.last_frame != frame) {
+                it = g_hier_snaps.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
     return s.ready;
 }
 
@@ -1884,4 +1892,164 @@ Java_com_freezy_NativeBridge_getEspSnapshot(JNIEnv* env, jclass clazz, jint pid)
     auto snapMs = std::chrono::duration_cast<std::chrono::microseconds>(snapEnd - snapStart).count() / 1000.0;
     LOGD("[FREEZY] ESP snapshot: %d entidades, %.1f ms", shown, snapMs);
     return env->NewStringUTF(ss.str().c_str());
+}
+
+int getPlayerHealth(int pid, long entity) {
+    long dataPool = 0;
+    if (!readPtr(pid, entity + OFF_PLAYER_DATA, dataPool) || !isPlausiblePtr(dataPool)) return 200;
+    long poolObj = 0;
+    if (!readPtr(pid, dataPool + 0x8, poolObj) || !isPlausiblePtr(poolObj)) return 200;
+    long pool = 0;
+    if (!readPtr(pid, poolObj + 0x20, pool) || !isPlausiblePtr(pool)) return 200;
+    int hp = 200;
+    if (readI32(pid, pool + 0x18, hp) && hp > 0 && hp <= 1000) return hp;
+    if (readI32(pid, pool + 0x1C, hp) && hp > 0 && hp <= 1000) return hp;
+    if (readI32(pid, pool + 0x14, hp) && hp > 0 && hp <= 1000) return hp;
+    return 200;
+}
+
+short getPlayerWeaponId(int pid, long entity) {
+    long dataPool = 0;
+    if (!readPtr(pid, entity + OFF_PLAYER_DATA, dataPool) || !isPlausiblePtr(dataPool)) return 0;
+    long poolObj = 0;
+    if (!readPtr(pid, dataPool + 0x8, poolObj) || !isPlausiblePtr(poolObj)) return 0;
+    long pool = 0;
+    if (!readPtr(pid, poolObj + 0x20, pool) || !isPlausiblePtr(pool)) return 0;
+    short weaponId = 0;
+    if (!readGameMemory(pid, pool + 0x10, &weaponId, 2)) return 0;
+    if (weaponId < 0) weaponId += 25000;
+    return weaponId;
+}
+
+void readPlayerNamePacked(int pid, long entity, float* outNameFloats, float& outIsBot) {
+    for (int i = 0; i < 6; i++) outNameFloats[i] = 0.0f;
+    outIsBot = 0.0f;
+
+    uint8_t isBot = 0;
+    if (readU8(pid, entity + OFF_IS_CLIENT_BOT, isBot) && isBot) {
+        outIsBot = 1.0f;
+        const char* botStr = "BOT";
+        uint16_t p0 = (uint16_t)(((uint8_t)botStr[0]) << 8 | (uint8_t)botStr[1]);
+        uint16_t p1 = (uint16_t)(((uint8_t)botStr[2]) << 8);
+        outNameFloats[0] = (float)p0;
+        outNameFloats[1] = (float)p1;
+        return;
+    }
+
+    long namePtr = 0;
+    if (!readPtr(pid, entity + OFF_PLAYER_NAME, namePtr) || !isPlausiblePtr(namePtr)) return;
+
+    int length = 0;
+    long lenOff = (g_ptr_width.load() == 4) ? 0x8 : 0x10;
+    long dataOff = (g_ptr_width.load() == 4) ? 0xC : 0x14;
+
+    if (!readI32(pid, namePtr + lenOff, length) || length <= 0) return;
+
+    uint16_t utf16[12];
+    int toRead = std::min<int>(length, 12);
+    if (!readGameMemory(pid, namePtr + dataOff, utf16, toRead * 2)) return;
+
+    for (int i = 0; i < 6; i++) {
+        uint8_t c1 = 0, c2 = 0;
+        int idx1 = i * 2;
+        int idx2 = i * 2 + 1;
+        if (idx1 < toRead) {
+            uint16_t ch = utf16[idx1];
+            c1 = (ch >= 32 && ch <= 126) ? (uint8_t)ch : '?';
+        }
+        if (idx2 < toRead) {
+            uint16_t ch = utf16[idx2];
+            c2 = (ch >= 32 && ch <= 126) ? (uint8_t)ch : '?';
+        }
+        uint16_t packed = (uint16_t)((c1 << 8) | c2);
+        outNameFloats[i] = (float)packed;
+    }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jint pid, jfloatArray outData) {
+    if (pid <= 0 || !outData) return 0;
+
+    GamePointers gp;
+    if (!resolveGamePointers(pid, gp)) return 0;
+
+    float myPos[3] = {0, 0, 0};
+    {
+        long mt = 0;
+        if (readPtr(pid, gp.localPlayer + OFF_MAIN_CAMERA_TRANSFORM, mt) && isPlausiblePtr(mt))
+            getTransformPosition(pid, mt, myPos);
+    }
+
+    g_hier_frame.fetch_add(1);
+
+    std::vector<long> ents = getEntities(pid, gp.currentGame);
+    const float ESP_MAX_DIST = 150.0f;
+    const int MAX_ENTS = 30;
+    float tempBuffer[MAX_ENTS * 40]; // 40 floats por entidad
+    int shown = 0;
+
+    int screenW = g_screen_w.load();
+    int screenH = g_screen_h.load();
+
+    for (long e : ents) {
+        if (shown >= MAX_ENTS) break;
+        if (e == gp.localPlayer) continue;
+
+        // 1. FILTRO: Muerto
+        uint8_t isDead = 0;
+        if (!readU8(pid, e + OFF_PLAYER_IS_DEAD, isDead) || isDead) continue;
+
+        // 2. Equipo: 1 = Aliado, 2 = Enemigo (-1 desconocido)
+        int team = getTeamStatus(pid, e);
+        if (team <= 0) continue;
+
+        // 3. Punteros de huesos
+        long bones[14];
+        readBonePtrBlock(pid, e, bones);
+        float head[3] = {0, 0, 0};
+        if (!getBonePosFromPtr(pid, bones[0], head)) continue;
+
+        float dist = sqrtf((head[0]-myPos[0])*(head[0]-myPos[0]) +
+                           (head[1]-myPos[1])*(head[1]-myPos[1]) +
+                           (head[2]-myPos[2])*(head[2]-myPos[2]));
+
+        if (dist > ESP_MAX_DIST) continue;
+
+        // 4. ViewMatrix fresca por entidad
+        float vm[16];
+        if (!getViewMatrix(pid, gp.localPlayer, vm)) continue;
+
+        float skel[28];
+        getSkeletonScreen(pid, gp.localPlayer, e, bones, vm, screenW, screenH, skel);
+
+        // Si la cabeza no proyecta en pantalla, omitir
+        if (skel[0] <= 0 || skel[1] <= 0) continue;
+
+        bool knocked = isKnocked(pid, e);
+        int hp = getPlayerHealth(pid, e);
+        short wepId = getPlayerWeaponId(pid, e);
+        float isBot = 0.0f;
+        float nameFloats[6];
+        readPlayerNamePacked(pid, e, nameFloats, isBot);
+
+        int baseIdx = shown * 40;
+        tempBuffer[baseIdx + 0] = knocked ? 1.0f : 0.0f;
+        tempBuffer[baseIdx + 1] = dist;
+        tempBuffer[baseIdx + 2] = (float)team;
+        tempBuffer[baseIdx + 3] = (float)hp;
+        tempBuffer[baseIdx + 4] = (float)wepId;
+        tempBuffer[baseIdx + 5] = isBot;
+        for (int i = 0; i < 6; i++) {
+            tempBuffer[baseIdx + 6 + i] = nameFloats[i];
+        }
+        for (int i = 0; i < 28; i++) {
+            tempBuffer[baseIdx + 12 + i] = skel[i];
+        }
+        shown++;
+    }
+
+    if (shown > 0) {
+        env->SetFloatArrayRegion(outData, 0, shown * 40, tempBuffer);
+    }
+    return shown;
 }

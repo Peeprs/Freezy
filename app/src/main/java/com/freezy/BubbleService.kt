@@ -709,6 +709,43 @@ private fun setupMenu() {
         setOnCheckedChangeListener { _, checked -> espOverlayView?.drawLines = checked }
     }
 
+    // ESP Health, ESP Team, Ignore Knocked
+    val espHealthSwitch = bubbleView.findViewById<Switch>(R.id.esp_health_switch)
+    espHealthSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawHealth = checked }
+    }
+
+    val espTeamSwitch = bubbleView.findViewById<Switch>(R.id.esp_team_switch)
+    espTeamSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawTeam = checked }
+    }
+
+    val espNameSwitch = bubbleView.findViewById<Switch>(R.id.esp_name_switch)
+    espNameSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawName = checked }
+    }
+
+    val espDistanceSwitch = bubbleView.findViewById<Switch>(R.id.esp_distance_switch)
+    espDistanceSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawDistance = checked }
+    }
+
+    val espWeaponSwitch = bubbleView.findViewById<Switch>(R.id.esp_weapon_switch)
+    espWeaponSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawWeapon = checked }
+    }
+
+    val espIgnoreKnockedSwitch = bubbleView.findViewById<Switch>(R.id.esp_ignore_knocked_switch)
+    espIgnoreKnockedSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked -> espOverlayView?.ignoreKnocked = checked }
+    }
+
     // ESP Count: muestra el contador de enemigos arriba al centro.
     val espCountSwitch = bubbleView.findViewById<Switch>(R.id.esp_count_switch)
     val savedCount = prefs.getBoolean("esp_count", false)
@@ -958,6 +995,12 @@ private fun startEspOverlay() {
     overlay.drawBox = bubbleView.findViewById<Switch>(R.id.esp_box_switch)?.isChecked ?: false
     overlay.drawSkeleton = bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)?.isChecked ?: false
     overlay.drawLines = bubbleView.findViewById<Switch>(R.id.esp_line_switch)?.isChecked ?: false
+    overlay.drawHealth = bubbleView.findViewById<Switch>(R.id.esp_health_switch)?.isChecked ?: false
+    overlay.drawTeam = bubbleView.findViewById<Switch>(R.id.esp_team_switch)?.isChecked ?: false
+    overlay.drawName = bubbleView.findViewById<Switch>(R.id.esp_name_switch)?.isChecked ?: false
+    overlay.drawDistance = bubbleView.findViewById<Switch>(R.id.esp_distance_switch)?.isChecked ?: false
+    overlay.drawWeapon = bubbleView.findViewById<Switch>(R.id.esp_weapon_switch)?.isChecked ?: false
+    overlay.ignoreKnocked = bubbleView.findViewById<Switch>(R.id.esp_ignore_knocked_switch)?.isChecked ?: false
     val overlayParams =
             WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,

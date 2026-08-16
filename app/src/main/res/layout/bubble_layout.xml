@@ -296,182 +296,312 @@
                         android:orientation="horizontal"
                         android:visibility="gone">
 
-                        <!-- Módulo 1: Toggles ESP Visuales -->
+                        <!-- COLUMNA 1: TRAZADOS Y FILTROS -->
                         <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:orientation="vertical"
-                            android:background="@drawable/bg_glass_card"
-                            android:padding="8dp"
                             android:layout_marginEnd="6dp">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="ESP VISUALES"
-                                android:textColor="#00E5FF"
-                                android:textSize="10sp"
-                                android:textStyle="bold"
-                                android:letterSpacing="0.05"
-                                android:layout_marginBottom="6dp" />
-
-                            <Switch
-                                android:id="@+id/esp_switch"
+                            <!-- Tarjeta 1: ESP TRAZADOS -->
+                            <LinearLayout
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:text="ESP Master"
-                                android:textColor="#FFFFFF"
-                                android:textSize="11sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp">
 
-                            <Switch
-                                android:id="@+id/esp_box_switch"
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="ESP TRAZADO"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
+
+                                <Switch
+                                    android:id="@+id/esp_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="ESP Master"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="11sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/esp_box_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="ESP Box"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/esp_skeleton_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="ESP Skeleton"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/esp_line_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="ESP Línea"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/esp_count_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="ESP Count"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+                            </LinearLayout>
+
+                            <!-- Tarjeta 2: FILTROS & EQUIPO -->
+                            <LinearLayout
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="5dp"
-                                android:text="ESP Box"
-                                android:textColor="#CFD8DC"
-                                android:textSize="10sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp"
+                                android:layout_marginTop="6dp">
 
-                            <Switch
-                                android:id="@+id/esp_skeleton_switch"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="5dp"
-                                android:text="ESP Skeleton"
-                                android:textColor="#CFD8DC"
-                                android:textSize="10sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="FILTROS &amp; EQUIPO"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
 
-                            <Switch
-                                android:id="@+id/esp_line_switch"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="5dp"
-                                android:text="ESP Línea"
-                                android:textColor="#CFD8DC"
-                                android:textSize="10sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
+                                <Switch
+                                    android:id="@+id/esp_ignore_knocked_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="Ignore Knocked"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
 
-                            <Switch
-                                android:id="@+id/esp_count_switch"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="5dp"
-                                android:text="ESP Count"
-                                android:textColor="#CFD8DC"
-                                android:textSize="10sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
+                                <Switch
+                                    android:id="@+id/esp_team_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="ESP Team"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+                            </LinearLayout>
 
                         </LinearLayout>
 
-                        <!-- Módulo 2: Personalización & Deslizadores -->
+                        <!-- COLUMNA 2: INFORMACIÓN & PERSONALIZACIÓN -->
                         <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:orientation="vertical"
-                            android:background="@drawable/bg_glass_card"
-                            android:padding="8dp">
+                            android:orientation="vertical">
 
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="CUSTOMIZATION"
-                                android:textColor="#00E5FF"
-                                android:textSize="10sp"
-                                android:textStyle="bold"
-                                android:letterSpacing="0.05"
-                                android:layout_marginBottom="4dp" />
-
-                            <Switch
-                                android:id="@+id/esp_rgb_switch"
+                            <!-- Tarjeta 3: INFORMACIÓN ENEMIGO -->
+                            <LinearLayout
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:text="Color RGB (Anim)"
-                                android:textColor="#FFFFFF"
-                                android:textSize="10sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp">
 
-                            <TextView
-                                android:id="@+id/esp_status"
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="ESP INFORMACIÓN"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
+
+                                <Switch
+                                    android:id="@+id/esp_health_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="ESP Health"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/esp_name_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="ESP Name"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/esp_distance_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="ESP Distance"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/esp_weapon_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="ESP Weapon"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+                            </LinearLayout>
+
+                            <!-- Tarjeta 4: CUSTOMIZATION -->
+                            <LinearLayout
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:text="Color: Verde"
-                                android:textColor="#8A9BA8"
-                                android:textSize="9sp" />
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp"
+                                android:layout_marginTop="6dp">
 
-                            <SeekBar
-                                android:id="@+id/esp_color_seekbar"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:max="7"
-                                android:progress="1"
-                                android:progressDrawable="@drawable/custom_seekbar_track"
-                                android:thumb="@drawable/custom_seekbar_thumb"
-                                android:splitTrack="false" />
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="CUSTOMIZATION"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
 
-                            <TextView
-                                android:id="@+id/esp_origin_status"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:text="Origen línea: Abajo"
-                                android:textColor="#8A9BA8"
-                                android:textSize="9sp" />
+                                <Switch
+                                    android:id="@+id/esp_rgb_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="Color RGB (Anim)"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
 
-                            <SeekBar
-                                android:id="@+id/esp_origin_seekbar"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:max="2"
-                                android:progress="0"
-                                android:progressDrawable="@drawable/custom_seekbar_track"
-                                android:thumb="@drawable/custom_seekbar_thumb"
-                                android:splitTrack="false" />
+                                <TextView
+                                    android:id="@+id/esp_status"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="Color: Verde"
+                                    android:textColor="#8A9BA8"
+                                    android:textSize="9sp" />
 
-                            <TextView
-                                android:id="@+id/esp_width_status"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:text="Grosor línea: 3px"
-                                android:textColor="#8A9BA8"
-                                android:textSize="9sp" />
+                                <SeekBar
+                                    android:id="@+id/esp_color_seekbar"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="1dp"
+                                    android:max="7"
+                                    android:progress="1"
+                                    android:progressDrawable="@drawable/custom_seekbar_track"
+                                    android:thumb="@drawable/custom_seekbar_thumb"
+                                    android:splitTrack="false" />
 
-                            <SeekBar
-                                android:id="@+id/esp_width_seekbar"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:max="9"
-                                android:progress="2"
-                                android:progressDrawable="@drawable/custom_seekbar_track"
-                                android:thumb="@drawable/custom_seekbar_thumb"
-                                android:splitTrack="false" />
+                                <TextView
+                                    android:id="@+id/esp_origin_status"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="Origen línea: Abajo"
+                                    android:textColor="#8A9BA8"
+                                    android:textSize="9sp" />
+
+                                <SeekBar
+                                    android:id="@+id/esp_origin_seekbar"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="1dp"
+                                    android:max="2"
+                                    android:progress="0"
+                                    android:progressDrawable="@drawable/custom_seekbar_track"
+                                    android:thumb="@drawable/custom_seekbar_thumb"
+                                    android:splitTrack="false" />
+
+                                <TextView
+                                    android:id="@+id/esp_width_status"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="Grosor línea: 3px"
+                                    android:textColor="#8A9BA8"
+                                    android:textSize="9sp" />
+
+                                <SeekBar
+                                    android:id="@+id/esp_width_seekbar"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="1dp"
+                                    android:max="9"
+                                    android:progress="2"
+                                    android:progressDrawable="@drawable/custom_seekbar_track"
+                                    android:thumb="@drawable/custom_seekbar_thumb"
+                                    android:splitTrack="false" />
+                            </LinearLayout>
 
                         </LinearLayout>
 
