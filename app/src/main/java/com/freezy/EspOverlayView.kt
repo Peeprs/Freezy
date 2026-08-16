@@ -111,6 +111,7 @@ class EspOverlayView(context: Context) : View(context) {
     private val drawBuffer = FloatArray(1600)
     private val localBuffer = FloatArray(1600)
     @Volatile private var entityCount = 0
+    @Volatile private var totalEnemiesCount = 0
     private val bufferLock = Any()
 
     private val nameBuilder = StringBuilder(16)
@@ -123,8 +124,8 @@ class EspOverlayView(context: Context) : View(context) {
             while (running) {
                 poll()
                 try {
-                    // Sondeo adaptativo: 8ms (~120Hz) con enemigos, 25ms (~40Hz) en reposo
-                    val sleepMs = if (entityCount > 0) 8L else 25L
+                    // Sondeo adaptativo: 11ms (~90Hz) con enemigos en rango, 75ms (~13Hz) en reposo profundo
+                    val sleepMs = if (totalEnemiesCount > 0 || entityCount > 0) 11L else 75L
                     Thread.sleep(sleepMs)
                 } catch (e: InterruptedException) {
                     return
@@ -171,6 +172,7 @@ class EspOverlayView(context: Context) : View(context) {
         handler.removeCallbacks(rgbRunnable)
         synchronized(bufferLock) {
             entityCount = 0
+            totalEnemiesCount = 0
         }
         postInvalidate()
     }
@@ -187,17 +189,21 @@ class EspOverlayView(context: Context) : View(context) {
                 (if (drawTeam) 128 else 0) or
                 (if (ignoreKnocked) 256 else 0)
 
-        val count = try {
+        val packed = try {
             NativeBridge.getEspSnapshotDirect(pid, espBuffer, flags)
         } catch (e: Exception) {
             0
         }
+
+        val count = packed and 0xFFFF
+        val totalInRange = (packed ushr 16) and 0xFFFF
 
         synchronized(bufferLock) {
             if (count > 0) {
                 System.arraycopy(espBuffer, 0, drawBuffer, 0, count * 40)
             }
             entityCount = count
+            totalEnemiesCount = if (totalInRange > 0) totalInRange else count
         }
         postInvalidate()
     }
@@ -257,8 +263,10 @@ class EspOverlayView(context: Context) : View(context) {
         if (!running) return
 
         val count: Int
+        val totalEnemies: Int
         synchronized(bufferLock) {
             count = entityCount
+            totalEnemies = totalEnemiesCount
             if (count > 0) {
                 System.arraycopy(drawBuffer, 0, localBuffer, 0, count * 40)
             }
@@ -494,9 +502,10 @@ class EspOverlayView(context: Context) : View(context) {
             }
         }
 
-        // ESP Count: enemigos vivos
+        // ESP Count: total de enemigos vivos en rango
         if (showCount) {
-            val countText = "${NativeBridge.getNativeString(NativeBridge.S123)}$visibleCount"
+            val displayCount = if (totalEnemies > 0) totalEnemies else visibleCount
+            val countText = "${NativeBridge.getNativeString(NativeBridge.S123)}$displayCount"
             textStrokePaint.color = Color.BLACK
             textPaint.color = baseColor
             canvas.drawText(countText, w / 2f, 30f + textPaint.textSize, textStrokePaint)

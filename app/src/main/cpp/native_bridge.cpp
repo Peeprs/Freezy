@@ -2049,6 +2049,14 @@ void readPlayerNamePacked(int pid, long entity, float* outNameFloats, float& out
     }
 }
 
+struct EspCandidate {
+    long entity;
+    float dist;
+    bool knocked;
+    int team;
+    long bones[14];
+};
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jint pid, jfloatArray outData, jint flags) {
     if (pid <= 0 || !outData) return 0;
@@ -2067,9 +2075,10 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
 
     std::vector<long> ents = getEntities(pid, gp.currentGame);
     const float ESP_MAX_DIST = 150.0f;
-    const int MAX_ENTS = 30;
+    const int MAX_ENTS = 15; // Maximo 15 enemigos mas cercanos proyectados simultaneamente
     float tempBuffer[MAX_ENTS * 40]; // 40 floats por entidad
     int shown = 0;
+    int totalEnemiesInRange = 0;
 
     int screenW = g_screen_w.load();
     int screenH = g_screen_h.load();
@@ -2080,19 +2089,33 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
     bool reqTeam = (flags & 128) != 0;
     bool reqIgnoreKnocked = (flags & 256) != 0;
 
+    std::vector<EspCandidate> candidates;
+    candidates.reserve(ents.size());
+
+    // 1. PRE-FILTRADO Y CONTEO TOTAL REAL
     for (long e : ents) {
-        if (shown >= MAX_ENTS) break;
         if (e == gp.localPlayer) continue;
 
-        // 1. FILTRO ULTRA-RÁPIDO: Muerto
+        // 1. ¿Muerto?
         uint8_t isDead = 0;
         if (!readU8(pid, e + OFF_PLAYER_IS_DEAD, isDead) || isDead) continue;
 
-        // 2. PRE-FILTRO ULTRA-RÁPIDO DE DISTANCIA (solo 1 puntero de cabeza)
-        long headBone = 0;
-        if (!readPtr(pid, e + OFF_BONE_HEAD, headBone) || !isPlausiblePtr(headBone)) continue;
+        // 2. Equipo
+        int team = getTeamStatus(pid, e);
+        if (team <= 0) continue;
+        if (!reqTeam && team == 1) continue;
+
+        // 3. Knocked
+        bool knocked = isKnocked(pid, e);
+        if (reqIgnoreKnocked && knocked) continue;
+
+        // 4. Punteros de huesos (1 sola lectura en bloque de 0x60 bytes)
+        long bones[14];
+        readBonePtrBlock(pid, e, bones);
+        if (bones[0] == 0 || !isPlausiblePtr(bones[0])) continue;
+
         float head[3] = {0, 0, 0};
-        if (!getBonePosFromPtr(pid, headBone, head)) continue;
+        if (!getBonePosFromPtr(pid, bones[0], head)) continue;
 
         float dist = sqrtf((head[0]-myPos[0])*(head[0]-myPos[0]) +
                            (head[1]-myPos[1])*(head[1]-myPos[1]) +
@@ -2100,27 +2123,37 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
 
         if (dist > ESP_MAX_DIST) continue;
 
-        // 3. FILTRO: Knocked si está activo ignoreKnocked
-        bool knocked = isKnocked(pid, e);
-        if (reqIgnoreKnocked && knocked) continue;
+        // Es un enemigo/objetivo valido en rango
+        totalEnemiesInRange++;
 
-        // 4. FILTRO: Equipo
-        int team = getTeamStatus(pid, e);
-        if (team <= 0) continue;
-        if (!reqTeam && team == 1) continue; // Si no quiere ver aliados, saltar
+        EspCandidate cand;
+        cand.entity = e;
+        cand.dist = dist;
+        cand.knocked = knocked;
+        cand.team = team;
+        memcpy(cand.bones, bones, sizeof(bones));
+        candidates.push_back(cand);
+    }
 
-        // 5. Punteros de los 14 huesos (solo para enemigos cercanos confirmados)
-        long bones[14];
-        readBonePtrBlock(pid, e, bones);
+    // 2. ORDENAR POR PROXIMIDAD (los 15 mas cercanos tienen maxima prioridad)
+    if (candidates.size() > (size_t)MAX_ENTS) {
+        std::sort(candidates.begin(), candidates.end(), [](const EspCandidate& a, const EspCandidate& b) {
+            return a.dist < b.dist;
+        });
+    }
 
-        // 6. ViewMatrix fresca por entidad
+    // 3. PROCESAMIENTO COMPLETO DE MATRIZ Y PANTALLA SOLO PARA EL TOP 15
+    for (const auto& cand : candidates) {
+        if (shown >= MAX_ENTS) break;
+        long e = cand.entity;
+
         float vm[16];
         if (!getViewMatrix(pid, gp.localPlayer, vm)) continue;
 
         float skel[28];
-        getSkeletonScreen(pid, gp.localPlayer, e, bones, vm, screenW, screenH, skel);
+        getSkeletonScreen(pid, gp.localPlayer, e, cand.bones, vm, screenW, screenH, skel);
 
-        // Si la cabeza no proyecta en pantalla, omitir
+        // Si la cabeza no proyecta en pantalla, omitir render
         if (skel[0] <= 0 || skel[1] <= 0) continue;
 
         int hp = reqHealth ? getPlayerHealth(pid, e) : 200;
@@ -2132,9 +2165,9 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
         }
 
         int baseIdx = shown * 40;
-        tempBuffer[baseIdx + 0] = knocked ? 1.0f : 0.0f;
-        tempBuffer[baseIdx + 1] = dist;
-        tempBuffer[baseIdx + 2] = (float)team;
+        tempBuffer[baseIdx + 0] = cand.knocked ? 1.0f : 0.0f;
+        tempBuffer[baseIdx + 1] = cand.dist;
+        tempBuffer[baseIdx + 2] = (float)cand.team;
         tempBuffer[baseIdx + 3] = (float)hp;
         tempBuffer[baseIdx + 4] = (float)wepId;
         tempBuffer[baseIdx + 5] = isBot;
@@ -2150,5 +2183,8 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
     if (shown > 0) {
         env->SetFloatArrayRegion(outData, 0, shown * 40, tempBuffer);
     }
-    return shown;
+
+    // Empaquetar conteo total de enemigos en los 16 bits altos, y entidades dibujadas en los 16 bits bajos
+    int result = ((totalEnemiesInRange & 0xFFFF) << 16) | (shown & 0xFFFF);
+    return result;
 }
