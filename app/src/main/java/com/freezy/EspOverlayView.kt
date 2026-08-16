@@ -73,7 +73,7 @@ class EspOverlayView(context: Context) : View(context) {
             while (running) {
                 poll()
                 try {
-                    Thread.sleep(16)
+                    Thread.sleep(8)
                 } catch (e: InterruptedException) {
                     return
                 }
@@ -100,14 +100,22 @@ class EspOverlayView(context: Context) : View(context) {
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (w > 0 && h > 0) NativeBridge.setScreenSize(w, h)
+        if (w > 0 && h > 0) {
+            val screenW = maxOf(w, h)
+            val screenH = minOf(w, h)
+            NativeBridge.setScreenSize(screenW, screenH)
+        }
     }
 
     fun start(targetPid: Int) {
         if (running) return
         running = true
         pid = targetPid
-        if (width > 0 && height > 0) NativeBridge.setScreenSize(width, height)
+        if (width > 0 && height > 0) {
+            val screenW = maxOf(width, height)
+            val screenH = minOf(width, height)
+            NativeBridge.setScreenSize(screenW, screenH)
+        }
         pollThread.start()
         handler.post(paintRunnable)
         if (rgbMode) {
@@ -131,28 +139,25 @@ class EspOverlayView(context: Context) : View(context) {
             val root = JSONObject(jsonStr)
             if (!root.optBoolean("ok", false)) return
             val ents = root.getJSONArray("entities")
-            val newSkeletons = mutableListOf<Skeleton>()
-            synchronized(skeletonsLock) {
-                for (i in 0 until ents.length()) {
-                    val ent = ents.getJSONObject(i)
-                    // Solo enemigos: nada de aliados ni desconocidos
-                    if (ent.optInt("team", 0) != 2) continue
-                    if (ent.optBoolean("dead", false)) continue
-                    val skel = ent.optJSONArray("skel") ?: continue
-                    if (skel.length() < 28) continue
-                    val bones = mutableListOf<Bone>()
-                    for (b in 0 until 14) {
-                        bones.add(Bone(
-                            skel.getDouble(b * 2).toFloat(),
-                            skel.getDouble(b * 2 + 1).toFloat()
-                        ))
-                    }
-                    // Derribado -> rojo; vivo -> color normal
-                    newSkeletons.add(Skeleton(bones, ent.optBoolean("knocked", false)))
+            val count = ents.length()
+            val newSkeletons = ArrayList<Skeleton>(count)
+            for (i in 0 until count) {
+                val ent = ents.getJSONObject(i)
+                val skel = ent.optJSONArray("skel") ?: continue
+                if (skel.length() < 28) continue
+                val bones = ArrayList<Bone>(14)
+                for (b in 0 until 14) {
+                    bones.add(Bone(
+                        skel.getDouble(b * 2).toFloat(),
+                        skel.getDouble(b * 2 + 1).toFloat()
+                    ))
                 }
+                newSkeletons.add(Skeleton(bones, ent.optBoolean("knocked", false)))
+            }
+            synchronized(skeletonsLock) {
                 skeletons = newSkeletons
             }
-            handler.post(paintRunnable)
+            postInvalidate()
         } catch (e: Exception) {
             // JSON inválido: ignorar y reintentar en el siguiente ciclo
         }

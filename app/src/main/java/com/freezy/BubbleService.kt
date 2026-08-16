@@ -474,18 +474,30 @@ class BubbleService : Service() {
     private fun setupMemoryHelper() {
         try {
             val dest = File(filesDir, "ffmem")
-            if (!dest.exists()) {
-                assets.open("ffmem").use { input ->
-                    dest.outputStream().use { output -> input.copyTo(output) }
-                }
+            assets.open("ffmem").use { input ->
+                dest.outputStream().use { output -> input.copyTo(output) }
             }
-            dest.setExecutable(true)
-            NativeBridge.setMemoryHelperPath(dest.absolutePath)
+            dest.setExecutable(true, false)
+            dest.setReadable(true, false)
+
+            var chosenPath = dest.absolutePath
+            val tmpDest = File("/data/local/tmp/ffmem")
+            try {
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "cp '${dest.absolutePath}' '${tmpDest.absolutePath}' && chmod 777 '${tmpDest.absolutePath}'"))
+                p.waitFor()
+                if (tmpDest.exists()) {
+                    chosenPath = tmpDest.absolutePath
+                }
+            } catch (e: Exception) {}
+
+            NativeBridge.setMemoryHelperPath(chosenPath)
             val dm = resources.displayMetrics
             val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
-            NativeBridge.setPointerWidth(prefs.getInt("ptr_width", 8))
-            NativeBridge.setScreenSize(dm.widthPixels, dm.heightPixels)
-            Log.d("FreezyMenu", "ffmem listo en ${dest.absolutePath}")
+            NativeBridge.setPointerWidth(prefs.getInt("ptr_width", 4))
+            val screenW = maxOf(dm.widthPixels, dm.heightPixels)
+            val screenH = minOf(dm.widthPixels, dm.heightPixels)
+            NativeBridge.setScreenSize(screenW, screenH)
+            Log.d("FreezyMenu", "ffmem listo en $chosenPath (32-bit: 4 bytes)")
         } catch (e: Exception) {
             Log.e("FreezyMenu", "No se pudo preparar ffmem: ${e.message}")
         }

@@ -57,10 +57,8 @@ static const float AIM_DEADZONE_PX = 6.0f;   // no re-apuntar si ya está dentro
 static std::atomic<int> g_base_pid{-1};
 static std::atomic<long> g_game_base{0};
 
-// Free Fire se puede ejecutar como proceso de 32 bits (emulador / arm) o 64 bits (arm64).
-// El ancho de los punteros cambia la lectura (4 u 8 bytes). Se ajusta por JNI o se autodetecta.
-static std::atomic<int> g_ptr_width{8};
-
+// Free Fire se ejecuta como proceso de 32 bits (armeabi-v7a).
+static std::atomic<int> g_ptr_width{4};
 // ==============================================================================================
 // [ROOT MEM IO - HELPER PERSISTENTE]
 // ==============================================================================================
@@ -77,18 +75,21 @@ bool rootMemIOSpawn(int pid) {
     std::lock_guard<std::mutex> lock(g_io_mutex);
     if (g_io_in && g_io_out && g_io_pid == pid) return true;
 
-    if (g_io_in) fclose(g_io_in);
-    if (g_io_out) fclose(g_io_out);
-    g_io_in = nullptr;
-    g_io_out = nullptr;
+    if (g_io_in) { fclose(g_io_in); g_io_in = nullptr; }
+    if (g_io_out) { fclose(g_io_out); g_io_out = nullptr; }
+    g_io_pid = -1;
 
-    if (g_helper_path.empty()) return false;
+    if (g_helper_path.empty() || pid <= 0) return false;
 
     int in_pipe[2], out_pipe[2];
     if (pipe(in_pipe) != 0 || pipe(out_pipe) != 0) return false;
 
     pid_t child = fork();
-    if (child < 0) { close(in_pipe[0]); close(in_pipe[1]); close(out_pipe[0]); close(out_pipe[1]); return false; }
+    if (child < 0) {
+        close(in_pipe[0]); close(in_pipe[1]);
+        close(out_pipe[0]); close(out_pipe[1]);
+        return false;
+    }
     if (child == 0) {
         dup2(in_pipe[0], 0);
         dup2(out_pipe[1], 1);
@@ -102,7 +103,11 @@ bool rootMemIOSpawn(int pid) {
     close(out_pipe[1]);
     g_io_out = fdopen(in_pipe[1], "w");
     g_io_in = fdopen(out_pipe[0], "r");
-    if (!g_io_in || !g_io_out) return false;
+    if (!g_io_in || !g_io_out) {
+        if (g_io_in) { fclose(g_io_in); g_io_in = nullptr; }
+        if (g_io_out) { fclose(g_io_out); g_io_out = nullptr; }
+        return false;
+    }
     g_io_pid = pid;
     LOGI("[FREEZY] Helper ffmem lanzado (PID %d)", pid);
     return true;
@@ -110,13 +115,29 @@ bool rootMemIOSpawn(int pid) {
 
 // Lee directamente del helper (rápido). Devuelve false si no hay helper activo.
 bool rootMemIOReadDirect(int pid, long address, void* buffer, size_t size) {
-    if (pid != g_io_pid || !g_io_in || !g_io_out || size > 16384) return false;
+    if (pid != g_io_pid || !g_io_in || !g_io_out || size == 0 || size > 16384) return false;
     std::lock_guard<std::mutex> lock(g_io_mutex);
-    if (fprintf(g_io_out, "R %llx %zx\n", (unsigned long long)address, size) < 0) return false;
+    if (!g_io_out || !g_io_in || pid != g_io_pid) return false;
+
+    if (fprintf(g_io_out, "R %llx %zx\n", (unsigned long long)address, size) < 0) {
+        if (g_io_in) fclose(g_io_in);
+        if (g_io_out) fclose(g_io_out);
+        g_io_in = nullptr;
+        g_io_out = nullptr;
+        g_io_pid = -1;
+        return false;
+    }
     fflush(g_io_out);
 
     std::string hex(1 + size * 2 + 8, '\0');
-    if (fgets(hex.data(), (int)hex.size(), g_io_in) == nullptr) return false;
+    if (fgets(hex.data(), (int)hex.size(), g_io_in) == nullptr) {
+        if (g_io_in) fclose(g_io_in);
+        if (g_io_out) fclose(g_io_out);
+        g_io_in = nullptr;
+        g_io_out = nullptr;
+        g_io_pid = -1;
+        return false;
+    }
     if (hex.compare(0, 3, "ERR") == 0) return false;
     uint8_t* buf = static_cast<uint8_t*>(buffer);
     for (size_t i = 0; i < size; i++) {
@@ -129,8 +150,10 @@ bool rootMemIOReadDirect(int pid, long address, void* buffer, size_t size) {
 
 // Escribe a través del helper. Devuelve false si no hay helper activo.
 bool rootMemIOWriteDirect(int pid, long address, const void* buffer, size_t size) {
-    if (pid != g_io_pid || !g_io_in || !g_io_out || size > 16384) return false;
+    if (pid != g_io_pid || !g_io_in || !g_io_out || size == 0 || size > 16384) return false;
     std::lock_guard<std::mutex> lock(g_io_mutex);
+    if (!g_io_out || !g_io_in || pid != g_io_pid) return false;
+
     std::string cmd = "W ";
     char tmp[32];
     snprintf(tmp, sizeof(tmp), "%llx %zx ", (unsigned long long)address, size);
@@ -141,11 +164,25 @@ bool rootMemIOWriteDirect(int pid, long address, const void* buffer, size_t size
         cmd += tmp;
     }
     cmd += '\n';
-    if (fputs(cmd.c_str(), g_io_out) < 0) return false;
+    if (fputs(cmd.c_str(), g_io_out) < 0) {
+        if (g_io_in) fclose(g_io_in);
+        if (g_io_out) fclose(g_io_out);
+        g_io_in = nullptr;
+        g_io_out = nullptr;
+        g_io_pid = -1;
+        return false;
+    }
     fflush(g_io_out);
 
     char resp[16] = {0};
-    if (fgets(resp, sizeof(resp), g_io_in) == nullptr) return false;
+    if (fgets(resp, sizeof(resp), g_io_in) == nullptr) {
+        if (g_io_in) fclose(g_io_in);
+        if (g_io_out) fclose(g_io_out);
+        g_io_in = nullptr;
+        g_io_out = nullptr;
+        g_io_pid = -1;
+        return false;
+    }
     return resp[0] == 'O' && resp[1] == 'K';
 }
 
@@ -646,7 +683,7 @@ bool getBonePosition(int pid, long entity, long boneOffset, float* outPos) {
 
 static std::mutex g_hier_mutex;
 static std::atomic<int> g_hier_frame{0};
-static const int HIER_MAX = 2048; // entradas de la jerarquía fotografiadas por jerarquía
+static const int HIER_MAX = 512; // entradas de la jerarquía fotografiadas por jerarquía
 
 struct HierSnap {
     int pid = -1;
@@ -768,15 +805,20 @@ bool ensureHierarchy(int pid, long matrix) {
 // Lee los 14 punteros de hueso de una entidad en UNA llamada (bloque contiguo 0x458..0x4A4).
 // Fallback a lecturas individuales si el bloque falla.
 bool readBonePtrBlock(int pid, long entity, long out[14]) {
-    uint8_t raw[0x4C];
+    uint8_t raw[0x60];
     memset(raw, 0, sizeof(raw));
-    bool ok = readGameMemory(pid, entity + 0x458, raw, 0x4C);
+    bool ok = readGameMemory(pid, entity + 0x458, raw, sizeof(raw));
     for (int i = 0; i < 14; i++) {
         long bone = 0;
         if (ok) {
             size_t off = (size_t)(SKELETON_BONES[i] - 0x458);
-            if (off < sizeof(raw)) memcpy(&bone, raw + off, 4);
-        } else {
+            if (off + 4 <= sizeof(raw)) {
+                uint32_t b32 = 0;
+                memcpy(&b32, raw + off, 4);
+                bone = (long)b32;
+            }
+        }
+        if (bone == 0 || !isPlausiblePtr(bone)) {
             if (!readPtr(pid, entity + SKELETON_BONES[i], bone)) bone = 0;
         }
         out[i] = bone;
@@ -793,12 +835,22 @@ bool getBonePosFromPtr(int pid, long bone, float* outPos) {
     if (!readPtr(pid, bone + 0x8, transform) || !isPlausiblePtr(transform)) return false;
     long transformObj = 0;
     if (!readPtr(pid, transform + 0x8, transformObj) || !isPlausiblePtr(transformObj)) return false;
-    uint8_t mi[8];
-    if (!readGameMemory(pid, transformObj + 0x20, mi, 8)) return false;
+
     uint32_t index = 0;
     long matrix = 0;
-    memcpy(&index, mi + 4, 4);
-    memcpy(&matrix, mi, 4);
+    if (g_ptr_width == 4) {
+        uint32_t m32 = 0;
+        uint8_t mi[8];
+        if (readGameMemory(pid, transformObj + 0x20, mi, 8)) {
+            memcpy(&m32, mi, 4);
+            memcpy(&index, mi + 4, 4);
+            matrix = (long)m32;
+        }
+    } else {
+        readPtr(pid, transformObj + 0x20, matrix);
+        readU32(pid, transformObj + 0x28, index);
+    }
+
     if (isPlausiblePtr(matrix) && ensureHierarchy(pid, matrix) &&
         resolvePosFromHier(pid, matrix, index, outPos)) return true;
     return getTransformPosition(pid, transform, outPos);
@@ -815,7 +867,7 @@ bool getBonePosFast(int pid, long entity, int boneIdx, float* outPos) {
 }
 
 // Diccionario de entidades (port de Data.GetEntities del dump de referencia).
-// Lectura por entrada (2 reads por entry) — método probado que devuelve entidades estables.
+// Lectura por entrada (2 reads por entry) — método probado y seguro documentado en PROGRESS.md.
 std::vector<long> getEntities(int pid, long currentGame) {
     std::vector<long> out;
     long dict = 0;
@@ -837,7 +889,7 @@ std::vector<long> getEntities(int pid, long currentGame) {
         if (hash < 0) continue;
         long entity = 0;
         if (!readPtr(pid, entry + OFF_ENTRY_ENTITY, entity)) continue;
-        if (entity == 0) continue;
+        if (entity == 0 || !isPlausiblePtr(entity)) continue;
         out.push_back(entity);
     }
     return out;
@@ -1680,8 +1732,11 @@ Java_com_freezy_NativeBridge_setSniperIgnoreBots(JNIEnv* env, jclass clazz, jboo
 extern "C" JNIEXPORT void JNICALL
 Java_com_freezy_NativeBridge_setScreenSize(JNIEnv* env, jclass clazz, jint w, jint h) {
     if (w > 0 && h > 0) {
-        g_screen_w = w;
-        g_screen_h = h;
+        int screenW = std::max(w, h);
+        int screenH = std::min(w, h);
+        g_screen_w = screenW;
+        g_screen_h = screenH;
+        LOGI("[FREEZY] Screen size configurado: %d x %d", screenW, screenH);
     }
 }
 
@@ -1754,6 +1809,10 @@ Java_com_freezy_NativeBridge_getEspSnapshot(JNIEnv* env, jclass clazz, jint pid)
             getTransformPosition(pid, mt, myPos);
     }
 
+    // ViewMatrix leída una sola vez para todo el frame actual
+    float vm[16];
+    bool vmOk = getViewMatrix(pid, gp.localPlayer, vm);
+
     g_hier_frame.fetch_add(1); // refresca el snapshot de jerarquía una vez por snapshot
 
     ss << "{\"ok\":true,\"local\":{\"ptr\":\"0x" << std::hex << gp.localPlayer << "\","
@@ -1764,77 +1823,58 @@ Java_com_freezy_NativeBridge_getEspSnapshot(JNIEnv* env, jclass clazz, jint pid)
     ss << "\"entities\":[";
     int shown = 0;
 
-    // Campo de visión: solo se procesan (cuentan y dibujan) enemigos dentro de este radio.
-    // En BR hay ~100 jugadores; sin este filtro el snapshot crece muchísimo y Freezy revienta.
     const float ESP_MAX_DIST = 150.0f;
 
     for (long e : ents) {
-        if (shown >= 60) break;
+        if (shown >= 50) break;
         if (e == gp.localPlayer) continue;
-        uint8_t isDead = 0;
-        readU8(pid, e + OFF_PLAYER_IS_DEAD, isDead);
-        int team = getTeamStatus(pid, e);
-        uint8_t isBot = 0;
-        readU8(pid, e + OFF_IS_CLIENT_BOT, isBot);
 
-        float head[3] = {0, 0, 0};
+        // 1. FILTRO ULTRA RÁPIDO: ¿Muerto?
+        uint8_t isDead = 0;
+        if (!readU8(pid, e + OFF_PLAYER_IS_DEAD, isDead) || isDead) continue;
+
+        // 2. FILTRO ULTRA RÁPIDO: ¿Es enemigo? (team == 2)
+        int team = getTeamStatus(pid, e);
+        if (team != 2) continue;
+
+        // 3. Punteros de huesos y cabeza
         long bones[14];
         readBonePtrBlock(pid, e, bones);
+        float head[3] = {0, 0, 0};
         bool headOk = getBonePosFromPtr(pid, bones[0], head);
+        if (!headOk) continue;
+
         float dist = sqrtf((head[0]-myPos[0])*(head[0]-myPos[0]) +
                            (head[1]-myPos[1])*(head[1]-myPos[1]) +
                            (head[2]-myPos[2])*(head[2]-myPos[2]));
 
-        // Filtro de radio: fuera de 150m no se cuenta ni se dibuja.
-        if (!headOk || dist > ESP_MAX_DIST) continue;
+        // Filtro de distancia máxima
+        if (dist > ESP_MAX_DIST) continue;
 
-        // nombre
-        std::string name = "";
-        {
-            long nameAddr = 0;
-            if (readPtr(pid, e + OFF_PLAYER_NAME, nameAddr) && isPlausiblePtr(nameAddr)) {
-                int nameLen = 0;
-                if (readI32(pid, nameAddr + 0x8, nameLen) && nameLen > 0 && nameLen < 128)
-                    name = readUtf16String(pid, nameAddr + 0xC, std::min(nameLen * 2, 64));
-            }
+        // 4. Proyección a pantalla usando la matriz de vista más reciente (garantiza sincronización con giro de cámara)
+        float skel[28];
+        float vm[16];
+        if (getViewMatrix(pid, gp.localPlayer, vm)) {
+            getSkeletonScreen(pid, gp.localPlayer, e, bones, vm, g_screen_w.load(), g_screen_h.load(), skel);
+        } else {
+            for (int i = 0; i < 28; i++) skel[i] = -1.0f;
         }
 
-        // salud
-        short health = 0;
-        {
-            long dataPool = 0, poolObj = 0, pool = 0;
-            if (readPtr(pid, e + OFF_PLAYER_DATA, dataPool) && isPlausiblePtr(dataPool) &&
-                readPtr(pid, dataPool + 0x8, poolObj) && isPlausiblePtr(poolObj) &&
-                readPtr(pid, poolObj + 0x10, pool) && isPlausiblePtr(pool))
-                readGameMemory(pid, pool + 0x10, &health, 2);
-        }
+        // Si la cabeza no proyecta en pantalla, omitir
+        if (skel[0] <= 0 || skel[1] <= 0) continue;
+
+        bool knocked = isKnocked(pid, e);
 
         if (shown > 0) ss << ",";
-        ss << "{\"ptr\":\"0x" << std::hex << e << "\",\"name\":\"";
-        // escapar comillas
-        for (char ch : name) { if (ch == '"' || ch == '\\') ss << '\\'; ss << ch; }
-        ss << "\",\"dead\":" << (isDead ? "true" : "false")
-           << ",\"team\":" << team
-           << ",\"bot\":" << (isBot ? "true" : "false")
-           << ",\"knocked\":" << (isKnocked(pid, e) ? "true" : "false")
-           << ",\"health\":" << std::dec << health
-           << ",\"headOk\":" << (headOk ? "true" : "false");
-        if (headOk) ss << ",\"hx\":" << head[0] << ",\"hy\":" << head[1] << ",\"hz\":" << head[2];
-        ss << ",\"dist\":" << (headOk ? dist : -1.0f) << ",\"skel\":[";
-        {
-            float skel[28];
-            // La view matrix se lee POR ENTIDAD justo antes de proyectar: así el esqueleto usa
-            // la cámara más reciente y no queda fijo en pantalla al girar la cámara.
-            float vm[16];
-            if (getViewMatrix(pid, gp.localPlayer, vm)) {
-                getSkeletonScreen(pid, gp.localPlayer, e, bones, vm, g_screen_w.load(), g_screen_h.load(), skel);
-            } else {
-                for (int i = 0; i < 28; i++) skel[i] = -1.0f;
-            }
-            for (int i = 0; i < 28; i++) {
-                if (i > 0) ss << ",";
-                ss << skel[i];
-            }
+        ss << "{\"ptr\":\"0x" << std::hex << e << "\""
+           << ",\"dead\":false"
+           << ",\"team\":2"
+           << ",\"knocked\":" << (knocked ? "true" : "false")
+           << ",\"dist\":" << dist
+           << ",\"skel\":[";
+        for (int i = 0; i < 28; i++) {
+            if (i > 0) ss << ",";
+            ss << skel[i];
         }
         ss << "]}";
         shown++;
@@ -1842,6 +1882,6 @@ Java_com_freezy_NativeBridge_getEspSnapshot(JNIEnv* env, jclass clazz, jint pid)
     ss << "]}";
     auto snapEnd = std::chrono::steady_clock::now();
     auto snapMs = std::chrono::duration_cast<std::chrono::microseconds>(snapEnd - snapStart).count() / 1000.0;
-    LOGI("[FREEZY] ESP snapshot: %d entidades, %.1f ms", shown, snapMs);
+    LOGD("[FREEZY] ESP snapshot: %d entidades, %.1f ms", shown, snapMs);
     return env->NewStringUTF(ss.str().c_str());
 }
