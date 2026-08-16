@@ -524,6 +524,7 @@ private fun setupMenu() {
     }
     tabCombat?.setOnClickListener { selectTab(true) }
     tabEsp?.setOnClickListener { selectTab(false) }
+    selectTab(false) // Por defecto abrir en pestaña ESP (segura)
 
     // ================================================================
     // [FREEZY MENU - AIMBOT]

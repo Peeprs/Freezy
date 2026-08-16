@@ -323,28 +323,8 @@ bool readGameMemory(int pid, long address, void* buffer, size_t size) {
 }
 
 bool writeGameMemory(int pid, long address, const void* buffer, size_t size) {
-    if (pid <= 0 || address <= 0 || size == 0) return false;
-
-    // 0) Lanzar el helper persistente una vez por PID (una única petición root).
-    ensureHelperSpawned(pid);
-
-    // 1) Helper persistente (rápido, root)
-    if (rootMemIOWriteDirect(pid, address, buffer, size)) return true;
-    
-    // 2) Fallback con root: dd con bs=1, seek byte exacto
-    std::string hexData;
-    for (size_t i = 0; i < size; i++) {
-        char hex[3];
-        sprintf(hex, "%02x", reinterpret_cast<const uint8_t*>(buffer)[i]);
-        hexData += hex;
-    }
-    
-    std::string cmd = "su -c 'echo -n \"" + hexData + "\" | xxd -r -p | dd of=/proc/" + 
-                      std::to_string(pid) + "/mem bs=1 seek=" + std::to_string(address) + 
-                      " count=" + std::to_string(size) + " conv=notrunc 2>/dev/null'";
-    
-    int result = system(cmd.c_str());
-    return result == 0;
+    // Modo 100% Solo Lectura: Escritura deshabilitada para seguridad anti-ban.
+    return false;
 }
 
 // ==============================================================================================
@@ -1630,28 +1610,8 @@ Java_com_freezy_NativeBridge_getGameMemoryDiagnostics(JNIEnv* env, jclass clazz,
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_freezy_NativeBridge_startAimbot(JNIEnv* env, jclass clazz) {
-    LOGI("[FREEZY] startAimbot() llamado");
-    
-    if (g_game_pid <= 0) {
-        LOGI("[FREEZY] Buscando PID...");
-        int pid = findGamePidNative();
-        if (pid > 0) {
-            g_game_pid = pid;
-        } else {
-            LOGE("[FREEZY] No se encontró el juego, aimbot no iniciado");
-            return;
-        }
-    }
-    
-    if (!g_aimbot_running) {
-        g_aimbot_running = true;
-        g_aimbot_active = true;
-        g_aimbot_thread = std::thread(aimbotThreadFunction);
-        g_aimbot_thread.detach();
-        LOGI("[FREEZY] Aimbot iniciado correctamente");
-    } else {
-        LOGI("[FREEZY] Aimbot ya estaba corriendo");
-    }
+    // Deshabilitado por seguridad anti-ban
+    LOGI("[FREEZY] startAimbot() deshabilitado (solo lectura activo)");
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -1659,7 +1619,6 @@ Java_com_freezy_NativeBridge_stopAimbot(JNIEnv* env, jclass clazz) {
     LOGI("[FREEZY] stopAimbot() llamado");
     g_aimbot_running = false;
     g_aimbot_active = false;
-    LOGI("[FREEZY] Aimbot detenido");
 }
 
 extern "C" JNIEXPORT jstring JNICALL

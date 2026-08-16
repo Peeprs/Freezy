@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
     int pid = atoi(argv[1]);
     char mempath[64];
     snprintf(mempath, sizeof(mempath), "/proc/%d/mem", pid);
-    int fd = open(mempath, O_RDWR);
+    int fd = open(mempath, O_RDONLY);
     if (fd < 0) {
         fprintf(stderr, "ffmem: open %s fallo: %s\n", mempath, strerror(errno));
         return 1;
@@ -46,28 +46,8 @@ int main(int argc, char** argv) {
             }
             for (unsigned long long i = 0; i < size; i++) printf("%02x", buf[i]);
             fputc('\n', stdout); fflush(stdout);
-        } else if (line[0] == 'W') {
-            unsigned long long addr = 0, size = 0;
-            char* p = line + 1;
-            char* endp = NULL;
-            addr = strtoull(p, &endp, 16);
-            if (endp == p) { fputs("ERR\n", stdout); fflush(stdout); continue; }
-            p = endp;
-            size = strtoull(p, &endp, 16);
-            if (endp == p || size == 0 || size > MAX_PAYLOAD) { fputs("ERR\n", stdout); fflush(stdout); continue; }
-            p = endp;
-            static unsigned char buf[MAX_PAYLOAD];
-            size_t n = 0;
-            while (n < size && *p && *p != '\n') {
-                unsigned int byte;
-                if (sscanf(p, "%2x", &byte) != 1) break;
-                buf[n++] = (unsigned char)byte;
-                p += 2;
-            }
-            if (n != size) { fputs("ERR\n", stdout); fflush(stdout); continue; }
-            ssize_t w = pwrite(fd, buf, (size_t)size, (off_t)addr);
-            fputs(w == (ssize_t)size ? "OK\n" : "ERR\n", stdout);
-            fflush(stdout);
+        } else {
+            fputs("ERR\n", stdout); fflush(stdout);
         }
     }
     close(fd);
