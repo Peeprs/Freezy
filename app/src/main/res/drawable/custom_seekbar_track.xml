@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Background Track (Inactivated Segment) -->
+    <!-- Background Track (Inactive) -->
     <item android:id="@android:id/background">
         <shape android:shape="rectangle">
-            <corners android:radius="3dp" />
-            <solid android:color="#0F1115" />
-            <stroke android:color="#242936" android:width="1dp"/>
-            <size android:height="6dp" />
+            <corners android:radius="4dp" />
+            <solid android:color="#2610141C" />
+            <stroke android:color="#354050" android:width="1dp"/>
+            <size android:height="5dp" />
         </shape>
     </item>
-    <!-- Progress Filled Track (Active Segment with Cyber Gradient) -->
+    <!-- Progress Filled Track (Active Gradient with Cyan Glow) -->
     <item android:id="@android:id/progress">
         <clip>
             <shape android:shape="rectangle">
-                <corners android:radius="3dp" />
+                <corners android:radius="4dp" />
                 <gradient
-                    android:startColor="#003D5B"
-                    android:endColor="@color/colorAccentPrimary"
+                    android:startColor="#007799"
+                    android:endColor="#00E5FF"
                     android:type="linear" />
             </shape>
         </clip>

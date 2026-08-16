@@ -40,7 +40,8 @@ class EspOverlayView(context: Context) : View(context) {
 
     @Volatile var drawSkeleton: Boolean = false
     @Volatile var drawLines: Boolean = false
-    @Volatile var showCount: Boolean = true
+    @Volatile var drawBox: Boolean = false
+    @Volatile var showCount: Boolean = false
     @Volatile var rgbMode: Boolean = false
         set(value) {
             field = value
@@ -210,6 +211,69 @@ class EspOverlayView(context: Context) : View(context) {
                 val head = b[0]
                 if (head.x > 0 && head.y > 0) {
                     canvas.drawLine(w / 2f, originY, head.x, head.y, paint)
+                }
+            }
+
+            if (drawBox) {
+                val head = b[0]
+                if (head.x > 0 && head.y > 0) {
+                    // Alto: Referencia hueso de Head (b[0]) con margen superior
+                    val neck = b[1]
+                    val headOffset = if (neck.y > head.y) (neck.y - head.y) * 0.9f else 18f
+                    val top = head.y - headOffset
+
+                    // Base: Pies (b[12] pie izq, b[13] pie der)
+                    val footYList = mutableListOf<Float>()
+                    if (b[12].y > 0) footYList.add(b[12].y)
+                    if (b[13].y > 0) footYList.add(b[13].y)
+
+                    val bottom = if (footYList.isNotEmpty()) {
+                        footYList.maxOrNull()!! + 6f
+                    } else if (b[3].y > 0) { // Ingle
+                        b[3].y + (b[3].y - head.y)
+                    } else if (b[2].y > 0) { // Cadera
+                        b[2].y + (b[2].y - head.y) * 1.2f
+                    } else {
+                        head.y + 100f
+                    }
+
+                    // Ancho: Brazos (hombros b[4], b[5] y muñecas b[8], b[9])
+                    val armXList = mutableListOf<Float>()
+                    if (b[4].x > 0) armXList.add(b[4].x)
+                    if (b[5].x > 0) armXList.add(b[5].x)
+                    if (b[8].x > 0) armXList.add(b[8].x)
+                    if (b[9].x > 0) armXList.add(b[9].x)
+
+                    var left: Float
+                    var right: Float
+
+                    if (armXList.isNotEmpty()) {
+                        val minArmX = armXList.minOrNull()!!
+                        val maxArmX = armXList.maxOrNull()!!
+                        val armWidth = maxArmX - minArmX
+                        val armPadding = if (armWidth > 10f) armWidth * 0.15f else 8f
+                        left = minArmX - armPadding
+                        right = maxArmX + armPadding
+
+                        // Asegurar proporción mínima si el enemigo está de perfil
+                        val boxHeight = bottom - top
+                        if (boxHeight > 0 && (right - left) < boxHeight * 0.35f) {
+                            val centerX = (minArmX + maxArmX) / 2f
+                            val halfW = (boxHeight * 0.40f) / 2f
+                            left = centerX - halfW
+                            right = centerX + halfW
+                        }
+                    } else {
+                        // Fallback si no hay huesos de brazos detectados
+                        val boxHeight = bottom - top
+                        val halfW = if (boxHeight > 0) (boxHeight * 0.40f) / 2f else 30f
+                        left = head.x - halfW
+                        right = head.x + halfW
+                    }
+
+                    if (bottom > top && right > left) {
+                        canvas.drawRect(left, top, right, bottom, paint)
+                    }
                 }
             }
 

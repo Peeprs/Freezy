@@ -505,8 +505,10 @@ private fun setupMenu() {
     fun selectTab(combat: Boolean) {
         combatSection?.visibility = if (combat) View.VISIBLE else View.GONE
         espSection?.visibility = if (combat) View.GONE else View.VISIBLE
-        tabCombat?.background = if (combat) getDrawable(R.drawable.shape_pill_blue) else getDrawable(R.drawable.shape_pill_dark)
-        tabEsp?.background = if (combat) getDrawable(R.drawable.shape_pill_dark) else getDrawable(R.drawable.shape_pill_blue)
+        tabCombat?.background = if (combat) getDrawable(R.drawable.shape_tab_active) else getDrawable(R.drawable.shape_tab_inactive)
+        tabCombat?.setColorFilter(if (combat) Color.parseColor("#00E5FF") else Color.parseColor("#7E8B9B"))
+        tabEsp?.background = if (combat) getDrawable(R.drawable.shape_tab_inactive) else getDrawable(R.drawable.shape_tab_active)
+        tabEsp?.setColorFilter(if (combat) Color.parseColor("#7E8B9B") else Color.parseColor("#00E5FF"))
     }
     tabCombat?.setOnClickListener { selectTab(true) }
     tabEsp?.setOnClickListener { selectTab(false) }
@@ -585,8 +587,9 @@ private fun setupMenu() {
         }
     }
 
-    // 6. ESP (master: busca PID) + ESP Skeleton / ESP Línea (modos excluyentes)
+    // 6. ESP (master: busca PID) + ESP Box / ESP Skeleton / ESP Línea
     val espSwitch = bubbleView.findViewById<Switch>(R.id.esp_switch)
+    val espBoxSwitch = bubbleView.findViewById<Switch>(R.id.esp_box_switch)
     val espSkeletonSwitch = bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)
     val espLineSwitch = bubbleView.findViewById<Switch>(R.id.esp_line_switch)
     val espStatus = bubbleView.findViewById<TextView>(R.id.esp_status)
@@ -602,6 +605,7 @@ private fun setupMenu() {
     val savedColor = prefs.getInt("esp_color", 1).coerceIn(0, 7)
     espColorSeekbar?.progress = savedColor
     espStatus?.text = "Color: ${espColorNames[savedColor]}"
+    espStatus?.setTextColor(espColorValues[savedColor])
 
     val savedRgb = prefs.getBoolean("esp_rgb", false)
     espRgbSwitch?.isChecked = savedRgb
@@ -624,8 +628,9 @@ private fun setupMenu() {
             val idx = progress.coerceIn(0, 7)
             if (fromUser) {
                 prefs.edit().putInt("esp_color", idx).apply()
-                espStatus?.text = "Color: ${espColorNames[idx]}"
             }
+            espStatus?.text = "Color: ${espColorNames[idx]}"
+            espStatus?.setTextColor(espColorValues[idx])
             espOverlayView?.lineColor = espColorValues[idx]
         }
 
@@ -678,19 +683,23 @@ private fun setupMenu() {
         }
     }
 
-    // ESP Skeleton y ESP Línea son independientes: cada uno activa solo su dibujo.
+    // ESP Box, ESP Skeleton y ESP Línea son independientes: cada uno activa su dibujo.
+    espBoxSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawBox = checked }
+    }
     espSkeletonSwitch?.apply {
         isChecked = false
-        setOnCheckedChangeListener { _, checked -> setEspMode(checked, espOverlayView?.drawLines ?: false) }
+        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawSkeleton = checked }
     }
     espLineSwitch?.apply {
         isChecked = false
-        setOnCheckedChangeListener { _, checked -> setEspMode(espOverlayView?.drawSkeleton ?: false, checked) }
+        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawLines = checked }
     }
 
     // ESP Count: muestra el contador de enemigos arriba al centro.
     val espCountSwitch = bubbleView.findViewById<Switch>(R.id.esp_count_switch)
-    val savedCount = prefs.getBoolean("esp_count", true)
+    val savedCount = prefs.getBoolean("esp_count", false)
     espCountSwitch?.isChecked = savedCount
     espCountSwitch?.setOnCheckedChangeListener { _, checked ->
         prefs.edit().putBoolean("esp_count", checked).apply()
@@ -933,7 +942,8 @@ private fun startEspOverlay() {
     overlay.rgbMode = prefs.getBoolean("esp_rgb", false)
     overlay.lineOrigin = prefs.getInt("esp_origin", 0).coerceIn(0, 2)
     overlay.lineWidth = prefs.getInt("esp_width", 3).coerceIn(1, 10).toFloat()
-    overlay.showCount = prefs.getBoolean("esp_count", true)
+    overlay.showCount = prefs.getBoolean("esp_count", false)
+    overlay.drawBox = bubbleView.findViewById<Switch>(R.id.esp_box_switch)?.isChecked ?: false
     overlay.drawSkeleton = bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)?.isChecked ?: false
     overlay.drawLines = bubbleView.findViewById<Switch>(R.id.esp_line_switch)?.isChecked ?: false
     val overlayParams =
