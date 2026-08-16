@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/bubble_container"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
     android:clipChildren="false"
     android:clipToPadding="false">
 
-    <!-- Burbuja Fake Lag Cyber-Tech con Cristal Congelado y Picos de Nieve -->
+    <!-- CARA 1: Burbuja Fake Lag (diseño actual) -->
     <FrameLayout
         android:id="@+id/bubble_face_overlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
         android:clipChildren="false"
         android:clipToPadding="false">
-        
+
         <com.freezy.ui.CyberBubbleView
             android:id="@+id/cyber_bubble_view"
             android:layout_width="match_parent"
@@ -33,5 +33,327 @@
             android:visibility="gone" />
 
     </FrameLayout>
+
+    <!-- CARA 2: Freezy Menu (Glassmorphism - Oculto) -->
+    <LinearLayout
+        android:id="@+id/recoil_menu"
+        android:layout_width="270dp"
+        android:layout_height="wrap_content"
+        android:maxHeight="620dp"
+        android:visibility="gone"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:background="@drawable/bg_glass_menu">
+
+        <!-- Columna izquierda: tabs verticales -->
+        <LinearLayout
+            android:layout_width="52dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:layout_marginEnd="10dp">
+
+            <ImageButton
+                android:id="@+id/tab_combat"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/shape_pill_blue"
+                android:src="@drawable/ic_skull"
+                android:tint="#FFFFFF"
+                android:contentDescription="Combate"
+                android:padding="9dp" />
+
+            <ImageButton
+                android:id="@+id/tab_esp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/shape_pill_dark"
+                android:src="@drawable/ic_enemy"
+                android:tint="#FFFFFF"
+                android:contentDescription="Enemigos"
+                android:padding="9dp" />
+        </LinearLayout>
+
+        <!-- Columna derecha: header compacto + contenido -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/menu_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="6dp">
+
+            <ImageButton
+                android:id="@+id/btn_back_to_lag"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_arrow_back"
+                android:tint="#FFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="FREEZY"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="14sp"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:maxHeight="640dp"
+            android:fillViewport="true"
+            android:scrollbars="vertical"
+            android:overScrollMode="never">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+        <!-- SECCIÓN COMBATE (Aimbot, Sniper Scope, Sniper Switch) -->
+        <LinearLayout
+            android:id="@+id/combat_section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+        <!-- Tile Aimbot / NoRecoil -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_glass_tile_frost"
+            android:padding="8dp">
+
+            <Switch
+                android:id="@+id/recoil_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Aimbot"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <TextView
+                android:id="@+id/status_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Estado: Esperando juego..."
+                android:textColor="#B0BEC5"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <!-- Tile Sniper Scope (aim-assist) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical"
+            android:background="@drawable/bg_glass_tile_frost"
+            android:padding="8dp">
+
+            <Switch
+                android:id="@+id/sniper_scope_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Sniper Scope"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <Switch
+                android:id="@+id/sniper_body_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="Apuntar al Cuerpo"
+                android:textColor="#B0BEC5"
+                android:textSize="9sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <TextView
+                android:id="@+id/sniper_scope_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Sniper: OFF | Cabeza"
+                android:textColor="#B0BEC5"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <!-- Tile Sniper Switch (patch de la mira) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical"
+            android:background="@drawable/bg_glass_tile_frost"
+            android:padding="8dp">
+
+            <Switch
+                android:id="@+id/sniper_switch_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Sniper Switch (Patch)"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <TextView
+                android:id="@+id/sniper_switch_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Patch: No aplicado"
+                android:textColor="#B0BEC5"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- SECCIÓN ENEMIGOS (ESP) -->
+        <LinearLayout
+            android:id="@+id/esp_section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+        <!-- Tile ESP -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical"
+            android:background="@drawable/bg_glass_tile_frost"
+            android:padding="8dp">
+
+            <Switch
+                android:id="@+id/esp_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="ESP"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <Switch
+                android:id="@+id/esp_skeleton_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="ESP Skeleton"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <Switch
+                android:id="@+id/esp_line_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="ESP Línea"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <Switch
+                android:id="@+id/esp_count_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="ESP Count"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <TextView
+                android:id="@+id/esp_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Color: Verde"
+                android:textColor="#B0BEC5"
+                android:textSize="9sp" />
+
+            <SeekBar
+                android:id="@+id/esp_color_seekbar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:max="7"
+                android:progress="1"
+                android:progressDrawable="@drawable/custom_seekbar_track"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <Switch
+                android:id="@+id/esp_rgb_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Color RGB (animado)"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <TextView
+                android:id="@+id/esp_origin_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Origen línea: Abajo"
+                android:textColor="#B0BEC5"
+                android:textSize="9sp" />
+
+            <SeekBar
+                android:id="@+id/esp_origin_seekbar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:max="2"
+                android:progress="0"
+                android:progressDrawable="@drawable/custom_seekbar_track"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+
+            <TextView
+                android:id="@+id/esp_width_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Grosor línea: 3px"
+                android:textColor="#B0BEC5"
+                android:textSize="9sp" />
+
+            <SeekBar
+                android:id="@+id/esp_width_seekbar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:max="9"
+                android:progress="2"
+                android:progressDrawable="@drawable/custom_seekbar_track"
+                android:thumb="@drawable/custom_seekbar_thumb" />
+        </LinearLayout>
+
+        </LinearLayout>
+
+        </LinearLayout>
+        </ScrollView>
+
+        </LinearLayout>
+    </LinearLayout>
 
 </FrameLayout>

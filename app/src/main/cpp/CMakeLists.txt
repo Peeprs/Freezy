@@ -8,6 +8,8 @@ add_library(
         native-lib.cpp
         native_bridge.cpp)
 
+add_executable(ffmem ffmem.c)
+
 find_library(
         log-lib
         log)

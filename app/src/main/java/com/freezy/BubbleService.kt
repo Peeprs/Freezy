@@ -20,12 +20,20 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.util.Log
+import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.SeekBar
+import android.widget.Switch
+import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.system.network.ui.R
 import kotlin.math.abs
 import org.json.JSONObject
+import java.io.File
 
 class BubbleService : Service() {
 
@@ -52,6 +60,17 @@ class BubbleService : Service() {
     private var initialTouchY = 0f
     private var fillAnimator: ValueAnimator? = null
     private var targetPackage: String? = null
+    private lateinit var recoilMenu: LinearLayout
+    private var isMenuExpanded = false
+    private var isLongClickTriggered = false
+    private var aimbotSwitchBusy = false
+    private var sniperScopeSwitchBusy = false
+    private var sniperSwitchBusy = false
+    private var espOverlayView: EspOverlayView? = null
+    private val longClickRunnable = Runnable {
+        isLongClickTriggered = true
+        expandBubbleMenu()
+    }
 
     // Vista personalizada que dibuja el arco circular de progreso
     // Vista personalizada que dibuja el arco circular de progreso
@@ -106,6 +125,12 @@ class BubbleService : Service() {
             val sizePercent = prefs.getInt("bubble_size", 20).coerceIn(0, 100)
             // 0% = 50dp, 100% = 150dp (lineal)
             val sizePx = ((50 + sizePercent) * density).toInt()
+            if (isMenuExpanded) {
+                returnToFakeLag()
+            }
+            if (::bubbleFaceOverlay.isInitialized) {
+                bubbleFaceOverlay.layoutParams = FrameLayout.LayoutParams(sizePx, sizePx)
+            }
             params.width = sizePx
             params.height = sizePx
             try {
@@ -119,6 +144,8 @@ class BubbleService : Service() {
     }
 
     private fun recreateBubbles() {
+        isMenuExpanded = false
+        handler.removeCallbacks(longClickRunnable)
         if (::windowManager.isInitialized) {
             try {
                 if (::bubbleView.isInitialized && bubbleView.parent != null) {
@@ -402,6 +429,7 @@ class BubbleService : Service() {
         bubbleIcon = bubbleMainIcon
         cyberBubble = bubbleView.findViewById(R.id.cyber_bubble_view)
         bubbleFaceOverlay = bubbleView.findViewById(R.id.bubble_face_overlay)
+        recoilMenu = bubbleView.findViewById(R.id.recoil_menu)
 
         cyberBubble.setMode(useRoot)
         cyberBubble.setActiveState(isFreezing)
@@ -416,6 +444,10 @@ class BubbleService : Service() {
         val sizePercent = prefs.getInt("bubble_size", 20).coerceIn(0, 100)
         // 0% = 50dp, 100% = 150dp (lineal)
         val sizePx = ((50 + sizePercent) * density).toInt()
+
+        // La burbuja tiene tamaño dinámico, se fija explícitamente sobre el overlay
+        // para que el contenedor wrap_content mida correctamente la cara de la burbuja
+        bubbleFaceOverlay.layoutParams = FrameLayout.LayoutParams(sizePx, sizePx)
 
         params =
                 WindowManager.LayoutParams(
@@ -433,8 +465,563 @@ class BubbleService : Service() {
                         }
         windowManager.addView(bubbleView, params)
 
+        setupMemoryHelper()
+        setupMenu()
         setupTouchListener()
         actualizarUI()
+    }
+
+    private fun setupMemoryHelper() {
+        try {
+            val dest = File(filesDir, "ffmem")
+            if (!dest.exists()) {
+                assets.open("ffmem").use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            dest.setExecutable(true)
+            NativeBridge.setMemoryHelperPath(dest.absolutePath)
+            val dm = resources.displayMetrics
+            val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
+            NativeBridge.setPointerWidth(prefs.getInt("ptr_width", 8))
+            NativeBridge.setScreenSize(dm.widthPixels, dm.heightPixels)
+            Log.d("FreezyMenu", "ffmem listo en ${dest.absolutePath}")
+        } catch (e: Exception) {
+            Log.e("FreezyMenu", "No se pudo preparar ffmem: ${e.message}")
+        }
+    }
+
+private fun setupMenu() {
+    if (!::recoilMenu.isInitialized) return
+
+    val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
+    btnBackToLag.setOnClickListener { returnToFakeLag() }
+
+    // Tabs del menú: Combate (cráneo) / Enemigos (ESP)
+    val combatSection = bubbleView.findViewById<View>(R.id.combat_section)
+    val espSection = bubbleView.findViewById<View>(R.id.esp_section)
+    val tabCombat = bubbleView.findViewById<ImageButton>(R.id.tab_combat)
+    val tabEsp = bubbleView.findViewById<ImageButton>(R.id.tab_esp)
+    fun selectTab(combat: Boolean) {
+        combatSection?.visibility = if (combat) View.VISIBLE else View.GONE
+        espSection?.visibility = if (combat) View.GONE else View.VISIBLE
+        tabCombat?.background = if (combat) getDrawable(R.drawable.shape_pill_blue) else getDrawable(R.drawable.shape_pill_dark)
+        tabEsp?.background = if (combat) getDrawable(R.drawable.shape_pill_dark) else getDrawable(R.drawable.shape_pill_blue)
+    }
+    tabCombat?.setOnClickListener { selectTab(true) }
+    tabEsp?.setOnClickListener { selectTab(false) }
+
+    // ================================================================
+    // [FREEZY MENU - AIMBOT]
+    // ================================================================
+
+    // 1. El aimbot arranca en OFF. Se activa solo cuando el usuario
+    //    enciende el switch y se confirma que la memoria del juego existe.
+    val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
+    statusText?.text = "Aimbot: OFF | Esperando activación"
+
+    // 2. Conectar el Switch de Aimbot (recoil_switch)
+    val aimbotSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
+
+    aimbotSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked ->
+            if (aimbotSwitchBusy) return@setOnCheckedChangeListener
+            if (checked) {
+                toggleAimbot()
+            } else {
+                NativeBridge.stopAimbot()
+                Log.d("FreezyMenu", "Aimbot desactivado")
+                Toast.makeText(this@BubbleService, "⛔ Aimbot desactivado", Toast.LENGTH_SHORT).show()
+                statusText?.text = "Aimbot: OFF | Esperando activación"
+            }
+        }
+    }
+
+    // 4. Switch Sniper Scope (aim-assist)
+    val sniperScopeSwitch = bubbleView.findViewById<Switch>(R.id.sniper_scope_switch)
+    val sniperBodySwitch = bubbleView.findViewById<Switch>(R.id.sniper_body_switch)
+    val sniperScopeStatus = bubbleView.findViewById<TextView>(R.id.sniper_scope_status)
+
+    sniperScopeSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked ->
+            if (sniperScopeSwitchBusy) return@setOnCheckedChangeListener
+            if (checked) {
+                toggleSniperScope()
+            } else {
+                NativeBridge.setSniperScope(false)
+                Log.d("FreezyMenu", "Sniper Scope desactivado")
+                Toast.makeText(this@BubbleService, "⛔ Sniper Scope desactivado", Toast.LENGTH_SHORT).show()
+                sniperScopeStatus?.text = "Sniper: OFF | Cabeza"
+            }
+        }
+    }
+
+    sniperBodySwitch?.setOnCheckedChangeListener { _, checked ->
+        NativeBridge.setSniperMode(if (checked) 1 else 0)
+        sniperScopeStatus?.text =
+            if (sniperScopeSwitch?.isChecked == true) {
+                if (checked) "Sniper: ON ✅ | Cuerpo" else "Sniper: ON ✅ | Cabeza"
+            } else {
+                if (checked) "Sniper: OFF | Cuerpo" else "Sniper: OFF | Cabeza"
+            }
+    }
+
+    // 5. Switch Sniper Switch (patch de la mira)
+    val sniperSwitch = bubbleView.findViewById<Switch>(R.id.sniper_switch_switch)
+    val sniperSwitchStatus = bubbleView.findViewById<TextView>(R.id.sniper_switch_status)
+
+    sniperSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked ->
+            if (sniperSwitchBusy) return@setOnCheckedChangeListener
+            if (checked) {
+                toggleSniperSwitch()
+            } else {
+                Thread {
+                    if (NativeBridge.sniperSwitchRemove()) {
+                        runOnUiThread {
+                            sniperSwitchStatus?.text = "Patch: Quitado"
+                            Toast.makeText(this@BubbleService, "⛔ Patch quitado", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        runOnUiThread {
+                            sniperSwitchStatus?.text = "Patch: no aplicado"
+                            setSniperSwitchSilently(false)
+                        }
+                    }
+                }.start()
+            }
+        }
+    }
+
+    // 6. ESP (master: busca PID) + ESP Skeleton / ESP Línea (modos excluyentes)
+    val espSwitch = bubbleView.findViewById<Switch>(R.id.esp_switch)
+    val espSkeletonSwitch = bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)
+    val espLineSwitch = bubbleView.findViewById<Switch>(R.id.esp_line_switch)
+    val espStatus = bubbleView.findViewById<TextView>(R.id.esp_status)
+    val espColorSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_color_seekbar)
+    val espRgbSwitch = bubbleView.findViewById<Switch>(R.id.esp_rgb_switch)
+    val espOriginStatus = bubbleView.findViewById<TextView>(R.id.esp_origin_status)
+    val espOriginSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_origin_seekbar)
+    val espWidthStatus = bubbleView.findViewById<TextView>(R.id.esp_width_status)
+    val espWidthSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_width_seekbar)
+
+    val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
+
+    val savedColor = prefs.getInt("esp_color", 1).coerceIn(0, 7)
+    espColorSeekbar?.progress = savedColor
+    espStatus?.text = "Color: ${espColorNames[savedColor]}"
+
+    val savedRgb = prefs.getBoolean("esp_rgb", false)
+    espRgbSwitch?.isChecked = savedRgb
+
+    val savedOrigin = prefs.getInt("esp_origin", 0).coerceIn(0, 2)
+    espOriginSeekbar?.progress = savedOrigin
+    espOriginStatus?.text = "Origen línea: ${espOriginNames[savedOrigin]}"
+
+    val savedWidth = (prefs.getInt("esp_width", 3).coerceIn(1, 10) - 1)
+    espWidthSeekbar?.progress = savedWidth
+    espWidthStatus?.text = "Grosor línea: ${savedWidth + 1}px"
+
+    fun setEspMode(skeleton: Boolean, line: Boolean) {
+        espOverlayView?.drawSkeleton = skeleton
+        espOverlayView?.drawLines = line
+    }
+
+    espColorSeekbar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            val idx = progress.coerceIn(0, 7)
+            if (fromUser) {
+                prefs.edit().putInt("esp_color", idx).apply()
+                espStatus?.text = "Color: ${espColorNames[idx]}"
+            }
+            espOverlayView?.lineColor = espColorValues[idx]
+        }
+
+        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+    })
+
+    espRgbSwitch?.setOnCheckedChangeListener { _, checked ->
+        prefs.edit().putBoolean("esp_rgb", checked).apply()
+        espOverlayView?.rgbMode = checked
+    }
+
+    espOriginSeekbar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            val idx = progress.coerceIn(0, 2)
+            if (fromUser) {
+                prefs.edit().putInt("esp_origin", idx).apply()
+                espOriginStatus?.text = "Origen línea: ${espOriginNames[idx]}"
+            }
+            espOverlayView?.lineOrigin = idx
+        }
+
+        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+    })
+
+    espWidthSeekbar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            val px = progress.coerceIn(0, 9) + 1
+            if (fromUser) {
+                prefs.edit().putInt("esp_width", px).apply()
+                espWidthStatus?.text = "Grosor línea: ${px}px"
+            }
+            espOverlayView?.lineWidth = px.toFloat()
+        }
+
+        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+    })
+
+    // ESP (master): busca el PID y arranca/para el overlay.
+    espSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                startEspOverlay()
+            } else {
+                stopEspOverlay()
+            }
+        }
+    }
+
+    // ESP Skeleton y ESP Línea son independientes: cada uno activa solo su dibujo.
+    // RESTRICCIÓN ANTI-BAN: el cráneo solo se activa MANTENIENDO PRESIONADO el switch ~1.2s
+    // (un tap normal se revierte), para evitar activaciones accidentales que dan ban en minutos.
+    setupSkullSwitch(
+        espSkeletonSwitch,
+        { checked -> setEspMode(checked, espOverlayView?.drawLines ?: false) }
+    )
+    setupSkullSwitch(
+        espLineSwitch,
+        { checked -> setEspMode(espOverlayView?.drawSkeleton ?: false, checked) }
+    )
+
+    // ESP Count: muestra el contador de enemigos arriba al centro.
+    val espCountSwitch = bubbleView.findViewById<Switch>(R.id.esp_count_switch)
+    val savedCount = prefs.getBoolean("esp_count", true)
+    espCountSwitch?.isChecked = savedCount
+    espCountSwitch?.setOnCheckedChangeListener { _, checked ->
+        prefs.edit().putBoolean("esp_count", checked).apply()
+        espOverlayView?.showCount = checked
+    }
+
+    // 3. MOVIMIENTO DE LA BURBUJA (tu código existente)
+    val menuHeader = bubbleView.findViewById<LinearLayout>(R.id.menu_header)
+    menuHeader.setOnTouchListener { _, event ->
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                initialX = params.x
+                initialY = params.y
+                initialTouchX = event.rawX
+                initialTouchY = event.rawY
+                true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.rawX - initialTouchX
+                val dy = event.rawY - initialTouchY
+                params.x = initialX + dx.toInt()
+                params.y = initialY + dy.toInt()
+                windowManager.updateViewLayout(bubbleView, params)
+                true
+            }
+            MotionEvent.ACTION_UP -> {
+                getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
+                        .edit()
+                        .putInt("bubble_x", params.x)
+                        .putInt("bubble_y", params.y)
+                        .apply()
+                true
+            }
+            else -> false
+        }
+    }
+}
+
+// RESTRICCIÓN ANTI-BAN para los switches del cráneo (ESP Skeleton / ESP Línea).
+// Un tap normal se ignora y se revierte con un aviso; solo se activa manteniendo presionado
+// ~1200ms (con confirmación por vibración y Toast). Evita activar el cráneo por accidente.
+private fun setupSkullSwitch(switch: Switch?, onActivate: (Boolean) -> Unit) {
+    if (switch == null) return
+    val SWITCH_HOLD_MS = 1200L
+    var holdFired = false
+    val holdRunnable = Runnable {
+        holdFired = true
+        if (!switch.isChecked) {
+            switch.isChecked = true
+            switch.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            Toast.makeText(this@BubbleService, "☠️ Cráneo activado", Toast.LENGTH_SHORT).show()
+        } else {
+            switch.isChecked = false
+            switch.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            Toast.makeText(this@BubbleService, "Cráneo desactivado", Toast.LENGTH_SHORT).show()
+        }
+    }
+    switch.setOnTouchListener { v, event ->
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                holdFired = false
+                handler.postDelayed(holdRunnable, SWITCH_HOLD_MS)
+                true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                handler.removeCallbacks(holdRunnable)
+                // Si NO se mantuvo el tiempo suficiente y el switch quedó encendido por el tap
+                // accidental, se revierte a OFF (el cráneo no se activa con un tap normal).
+                if (!holdFired && v is Switch && v.isChecked) {
+                    v.isChecked = false
+                    onActivate(false)
+                    Toast.makeText(this@BubbleService, "⚠️ Mantén presionado para activar el cráneo", Toast.LENGTH_SHORT).show()
+                }
+                true
+            }
+            else -> false
+        }
+    }
+    // Listener final: solo se dispara con el hold (no con el tap accidental, que ya se revirtió)
+    switch.setOnCheckedChangeListener { _, checked -> onActivate(checked) }
+}
+
+// Activa el aimbot: busca el PID, confirma que la memoria es legible y lo aplica.
+private fun toggleAimbot() {
+    val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
+    statusText?.text = "🔍 Buscando en memoria..."
+    Toast.makeText(this@BubbleService, "🔍 Buscando en memoria...", Toast.LENGTH_SHORT).show()
+
+    Thread {
+        val pid = NativeBridge.findGamePid()
+        if (pid <= 0) {
+            Log.e("FreezyMenu", "❌ Juego no encontrado (PID <= 0). ¿Está corriendo?")
+            failAimbot("❌ Memoria no encontrada, aimbot no aplicado", "pid<=0")
+            return@Thread
+        }
+        Log.d("FreezyMenu", "PID encontrado: $pid — verificando memoria del juego...")
+        if (!NativeBridge.isGameMemoryReady(pid)) {
+            val diag = NativeBridge.getGameMemoryDiagnostics(pid)
+            Log.e("FreezyMenu", "❌ Memoria no legible → $diag")
+            failAimbot("❌ Memoria no encontrada, aimbot no aplicado", diag)
+            return@Thread
+        }
+
+        NativeBridge.startAimbot()
+        Log.d("FreezyMenu", "Aimbot aplicado (PID: $pid)")
+        runOnUiThread {
+            val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
+            statusText?.text = "Aimbot: ON ✅ | PID: $pid"
+            Toast.makeText(this@BubbleService, "✅ Aimbot aplicado (PID: $pid)", Toast.LENGTH_SHORT).show()
+        }
+    }.start()
+}
+
+private fun failAimbot(message: String, detail: String = "") {
+    runOnUiThread {
+        val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
+        statusText?.text = message
+        if (detail.isNotEmpty()) {
+            Toast.makeText(this@BubbleService, "$message\n\n$detail", Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(this@BubbleService, message, Toast.LENGTH_SHORT).show()
+        }
+        setSwitchSilently(false)
+    }
+}
+
+// Cambia el switch sin volver a disparar el listener
+private fun setSwitchSilently(checked: Boolean) {
+    val switch = bubbleView.findViewById<Switch>(R.id.recoil_switch) ?: return
+    aimbotSwitchBusy = true
+    switch.isChecked = checked
+    aimbotSwitchBusy = false
+}
+
+private fun setSniperSwitchSilently(checked: Boolean) {
+    val switch = bubbleView.findViewById<Switch>(R.id.sniper_switch_switch) ?: return
+    sniperSwitchBusy = true
+    switch.isChecked = checked
+    sniperSwitchBusy = false
+}
+
+// Activa el aim-assist de sniper: busca PID y memoria, configura modo y arranca.
+private fun toggleSniperScope() {
+    val statusText = bubbleView.findViewById<TextView>(R.id.sniper_scope_status)
+    statusText?.text = "🔍 Buscando en memoria..."
+    Toast.makeText(this@BubbleService, "🔍 Buscando en memoria...", Toast.LENGTH_SHORT).show()
+
+    Thread {
+        val pid = NativeBridge.findGamePid()
+        if (pid <= 0) {
+            Log.e("FreezyMenu", "❌ Juego no encontrado (PID <= 0). ¿Está corriendo?")
+            runOnUiThread {
+                statusText?.text = "Sniper: OFF | Juego no encontrado"
+                Toast.makeText(this@BubbleService, "❌ Memoria no encontrada, sniper no aplicado", Toast.LENGTH_LONG).show()
+                setSniperScopeSilently(false)
+            }
+            return@Thread
+        }
+        if (!NativeBridge.isGameMemoryReady(pid)) {
+            runOnUiThread {
+                statusText?.text = "Sniper: OFF | Memoria no legible"
+                Toast.makeText(this@BubbleService, "❌ Memoria no legible, sniper no aplicado", Toast.LENGTH_LONG).show()
+                setSniperScopeSilently(false)
+            }
+            return@Thread
+        }
+
+        val mode = if (bubbleView.findViewById<Switch>(R.id.sniper_body_switch).isChecked) 1 else 0
+        NativeBridge.setSniperMode(mode)
+        NativeBridge.setSniperScope(true)
+        Log.d("FreezyMenu", "Sniper Scope aplicado (PID: $pid, modo: $mode)")
+        runOnUiThread {
+            statusText?.text = if (mode == 1) "Sniper: ON ✅ | Cuerpo" else "Sniper: ON ✅ | Cabeza"
+            Toast.makeText(this@BubbleService, "✅ Sniper Scope aplicado (PID: $pid)", Toast.LENGTH_SHORT).show()
+        }
+    }.start()
+}
+
+private fun setSniperScopeSilently(checked: Boolean) {
+    val switch = bubbleView.findViewById<Switch>(R.id.sniper_scope_switch) ?: return
+    sniperScopeSwitchBusy = true
+    switch.isChecked = checked
+    sniperScopeSwitchBusy = false
+}
+
+// Aplica el patch de la mira (patrones de SniperSwitch.cs)
+private fun toggleSniperSwitch() {
+    val statusText = bubbleView.findViewById<TextView>(R.id.sniper_switch_status)
+    statusText?.text = "🔍 Buscando en memoria..."
+    Toast.makeText(this@BubbleService, "🔍 Buscando en memoria...", Toast.LENGTH_SHORT).show()
+
+    Thread {
+        val ok = NativeBridge.sniperSwitchApply()
+        if (ok) {
+            Log.d("FreezyMenu", "Sniper Switch aplicado")
+            runOnUiThread {
+                statusText?.text = "Patch: Aplicado ✅"
+                Toast.makeText(this@BubbleService, "✅ Sniper Switch aplicado", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Log.e("FreezyMenu", "Sniper Switch: patrón no encontrado")
+            runOnUiThread {
+                statusText?.text = "Patch: Patrón no encontrado"
+                Toast.makeText(this@BubbleService, "❌ Patrón no encontrado", Toast.LENGTH_LONG).show()
+                setSniperSwitchSilently(false)
+            }
+        }
+    }.start()
+}
+
+private fun runOnUiThread(action: () -> Unit) {
+    android.os.Handler(mainLooper).post(action)
+}
+
+private val espColorNames = arrayOf("Rojo", "Verde", "Azul", "Cyan", "Rosa", "Morado", "Blanco", "Amarillo")
+
+private val espOriginNames = arrayOf("Abajo", "Medio", "Arriba")
+
+private val espColorValues = intArrayOf(
+    0xFFF44336.toInt(), // Rojo
+    0xFF4CAF50.toInt(), // Verde
+    0xFF2196F3.toInt(), // Azul
+    0xFF00BCD4.toInt(), // Cyan
+    0xFFE91E63.toInt(), // Rosa
+    0xFF9C27B0.toInt(), // Morado
+    0xFFFFFFFF.toInt(), // Blanco
+    0xFFFFEB3B.toInt()  // Amarillo
+)
+
+private fun startEspOverlay() {
+    val pid = NativeBridge.findGamePid()
+    if (pid <= 0) {
+        Toast.makeText(this@BubbleService, "❌ Juego no encontrado, ESP no activado", Toast.LENGTH_SHORT).show()
+        setEspSwitchSilently(false)
+        return
+    }
+    if (espOverlayView != null) return
+    val overlay = EspOverlayView(this)
+    val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
+    val colorIdx = prefs.getInt("esp_color", 1).coerceIn(0, 7)
+    overlay.lineColor = espColorValues[colorIdx]
+    overlay.rgbMode = prefs.getBoolean("esp_rgb", false)
+    overlay.lineOrigin = prefs.getInt("esp_origin", 0).coerceIn(0, 2)
+    overlay.lineWidth = prefs.getInt("esp_width", 3).coerceIn(1, 10).toFloat()
+    overlay.showCount = prefs.getBoolean("esp_count", true)
+    overlay.drawSkeleton = bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)?.isChecked ?: false
+    overlay.drawLines = bubbleView.findViewById<Switch>(R.id.esp_line_switch)?.isChecked ?: false
+    val overlayParams =
+            WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                    PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+            }
+    try {
+        windowManager.addView(overlay, overlayParams)
+        espOverlayView = overlay
+        overlay.start(pid)
+        Toast.makeText(this@BubbleService, "✅ ESP activado", Toast.LENGTH_SHORT).show()
+    } catch (e: Exception) {
+        Log.e("FreezyMenu", "ESP overlay error: ${e.message}")
+        setEspSwitchSilently(false)
+    }
+}
+
+private fun stopEspOverlay() {
+    val overlay = espOverlayView ?: run { return }
+    overlay.stop()
+    try { windowManager.removeView(overlay) } catch (e: Exception) {}
+    espOverlayView = null
+}
+
+private fun setEspSwitchSilently(checked: Boolean) {
+    val switch = bubbleView.findViewById<Switch>(R.id.esp_switch) ?: return
+    switch.setOnCheckedChangeListener(null)
+    switch.isChecked = checked
+    val espSwitch = switch
+    // religar el listener
+    espSwitch.setOnCheckedChangeListener { _, isChecked ->
+        if (isChecked) startEspOverlay() else stopEspOverlay()
+    }
+}
+
+    private fun expandBubbleMenu() {
+        if (isMenuExpanded) return
+        isMenuExpanded = true
+        recoilMenu.visibility = View.VISIBLE
+        bubbleFaceOverlay.visibility = View.GONE
+
+        params.width = WindowManager.LayoutParams.WRAP_CONTENT
+        params.height = WindowManager.LayoutParams.WRAP_CONTENT
+        try {
+            windowManager.updateViewLayout(bubbleView, params)
+        } catch (e: Exception) {
+            recreateBubbles()
+        }
+    }
+
+    private fun returnToFakeLag() {
+        recoilMenu.visibility = View.GONE
+        bubbleFaceOverlay.visibility = View.VISIBLE
+        isMenuExpanded = false
+
+        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
+        val sizePercent = prefs.getInt("bubble_size", 20).coerceIn(0, 100)
+        val sizePx = ((50 + sizePercent) * resources.displayMetrics.density).toInt()
+        params.width = sizePx
+        params.height = sizePx
+        try {
+            windowManager.updateViewLayout(bubbleView, params)
+        } catch (e: Exception) {
+            recreateBubbles()
+        }
     }
 
     private fun actualizarUI() {
@@ -468,10 +1055,12 @@ class BubbleService : Service() {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         isDragging = false
+                        isLongClickTriggered = false
                         initialX = params.x
                         initialY = params.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
+                        handler.postDelayed(longClickRunnable, 3000L)
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -479,6 +1068,7 @@ class BubbleService : Service() {
                         val dy = event.rawY - initialTouchY
                         if (abs(dx) > 8 || abs(dy) > 8) {
                             isDragging = true
+                            handler.removeCallbacks(longClickRunnable)
                         }
                         if (isDragging) {
                             params.x = initialX + dx.toInt()
@@ -488,12 +1078,13 @@ class BubbleService : Service() {
                         true
                     }
                     MotionEvent.ACTION_UP -> {
-                        if (!isDragging) {
+                        handler.removeCallbacks(longClickRunnable)
+                        if (!isDragging && !isLongClickTriggered) {
                             bubbleFaceOverlay.performHapticFeedback(
                                     android.view.HapticFeedbackConstants.KEYBOARD_TAP
                             )
                             onBubbleTapped()
-                        } else {
+                        } else if (isDragging) {
                             getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
                                     .edit()
                                     .putInt("bubble_x", params.x)
@@ -672,6 +1263,7 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        handler.removeCallbacks(longClickRunnable)
         // Limpieza de iptables si estaban activos en LagController
         try {
             LagController.desactivarFakeLagRoot()
@@ -689,6 +1281,7 @@ class BubbleService : Service() {
         fillAnimator?.cancel()
 
         // Limpieza de Overlays para evitar que queden pegados en pantalla
+        stopEspOverlay()
         if (::bubbleView.isInitialized && bubbleView.parent != null) {
             try { windowManager.removeView(bubbleView) } catch (e: Exception) {}
         }

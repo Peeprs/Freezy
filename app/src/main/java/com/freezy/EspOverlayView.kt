@@ -1,0 +1,246 @@
+package com.freezy
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.os.Handler
+import android.os.Looper
+import android.view.View
+import org.json.JSONObject
+
+class EspOverlayView(context: Context) : View(context) {
+
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        textSize = 30f
+        textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+    }
+
+    private val textStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 6f
+        textSize = 30f
+        textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+    }
+
+    @Volatile var lineColor: Int = Color.parseColor("#00FF41")
+        set(value) {
+            field = value
+            linePaint.color = value
+        }
+
+    @Volatile var drawSkeleton: Boolean = false
+    @Volatile var drawLines: Boolean = false
+    @Volatile var showCount: Boolean = true
+    @Volatile var rgbMode: Boolean = false
+        set(value) {
+            field = value
+            if (value) {
+                handler.removeCallbacks(rgbRunnable)
+                handler.post(rgbRunnable)
+            }
+        }
+    @Volatile var lineOrigin: Int = 0
+    @Volatile var lineWidth: Float = 3f
+        set(value) {
+            field = value
+            linePaint.strokeWidth = value
+        }
+
+    private val handler = Handler(Looper.getMainLooper())
+    @Volatile private var running = false
+    @Volatile private var pid = 0
+
+    private data class Bone(val x: Float, val y: Float)
+
+    // Una entidad dibujada: esqueleto + si está derribada (rojo) o viva (color normal)
+    private data class Skeleton(val bones: List<Bone>, val knocked: Boolean)
+
+    private var skeletons: MutableList<Skeleton> = mutableListOf()
+
+    private val pollThread = object : Thread("esp-poll") {
+        override fun run() {
+            while (running) {
+                poll()
+                try {
+                    Thread.sleep(16)
+                } catch (e: InterruptedException) {
+                    return
+                }
+            }
+        }
+    }
+
+    private val paintRunnable = object : Runnable {
+        override fun run() {
+            if (running) postInvalidate()
+        }
+    }
+
+    // Loop propio de animación RGB a ~60fps, independiente de la tasa de snapshots.
+    private val rgbRunnable = object : Runnable {
+        override fun run() {
+            if (!running || !rgbMode) return
+            postInvalidate()
+            handler.postDelayed(this, 16)
+        }
+    }
+
+    private var skeletonsLock = Any()
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w > 0 && h > 0) NativeBridge.setScreenSize(w, h)
+    }
+
+    fun start(targetPid: Int) {
+        if (running) return
+        running = true
+        pid = targetPid
+        if (width > 0 && height > 0) NativeBridge.setScreenSize(width, height)
+        pollThread.start()
+        handler.post(paintRunnable)
+        if (rgbMode) {
+            handler.removeCallbacks(rgbRunnable)
+            handler.post(rgbRunnable)
+        }
+    }
+
+    fun stop() {
+        running = false
+        handler.removeCallbacks(paintRunnable)
+        handler.removeCallbacks(rgbRunnable)
+        synchronized(skeletonsLock) { skeletons.clear() }
+        postInvalidate()
+    }
+
+    private fun poll() {
+        val jsonStr = try { NativeBridge.getEspSnapshot(pid) } catch (e: Exception) { null }
+        if (jsonStr.isNullOrEmpty()) return
+        try {
+            val root = JSONObject(jsonStr)
+            if (!root.optBoolean("ok", false)) return
+            val ents = root.getJSONArray("entities")
+            val newSkeletons = mutableListOf<Skeleton>()
+            synchronized(skeletonsLock) {
+                for (i in 0 until ents.length()) {
+                    val ent = ents.getJSONObject(i)
+                    // Solo enemigos: nada de aliados ni desconocidos
+                    if (ent.optInt("team", 0) != 2) continue
+                    if (ent.optBoolean("dead", false)) continue
+                    val skel = ent.optJSONArray("skel") ?: continue
+                    if (skel.length() < 28) continue
+                    val bones = mutableListOf<Bone>()
+                    for (b in 0 until 14) {
+                        bones.add(Bone(
+                            skel.getDouble(b * 2).toFloat(),
+                            skel.getDouble(b * 2 + 1).toFloat()
+                        ))
+                    }
+                    // Derribado -> rojo; vivo -> color normal
+                    newSkeletons.add(Skeleton(bones, ent.optBoolean("knocked", false)))
+                }
+                skeletons = newSkeletons
+            }
+            handler.post(paintRunnable)
+        } catch (e: Exception) {
+            // JSON inválido: ignorar y reintentar en el siguiente ciclo
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val bonesToDraw: List<Skeleton>
+        synchronized(skeletonsLock) { bonesToDraw = skeletons }
+
+        val w = width.toFloat()
+        val h = height.toFloat()
+
+        // Color RGB animado (si está activo) -> afecta el paint de línea
+        var baseColor = lineColor
+        if (rgbMode) {
+            val t = System.currentTimeMillis() / 1000.0
+            val hue = ((t * 180.0) % 360.0).toFloat()
+            baseColor = Color.HSVToColor(255, floatArrayOf(hue, 1f, 1f))
+        }
+        linePaint.color = baseColor
+
+        // ESP Count: enemigos vivos, arriba al centro a ~30px del borde
+        if (showCount && bonesToDraw.isNotEmpty()) {
+            val countText = "Enemigos: ${bonesToDraw.size}"
+            textStrokePaint.color = Color.BLACK
+            textPaint.color = linePaint.color
+            canvas.drawText(countText, w / 2f, 30f + textPaint.textSize, textStrokePaint)
+            canvas.drawText(countText, w / 2f, 30f + textPaint.textSize, textPaint)
+        }
+
+        if (bonesToDraw.isEmpty()) return
+
+        val originY = when (lineOrigin) {
+            0 -> h            // abajo
+            1 -> h / 2f       // medio
+            else -> 60f       // arriba
+        }
+
+        // Derribado (knocked) -> rojo
+        val knockedColor = Color.RED
+
+        for (s in bonesToDraw) {
+            val b = s.bones
+            if (b.size < 14) continue
+
+            val paint = if (s.knocked) {
+                linePaint.color = knockedColor
+                linePaint
+            } else {
+                linePaint.color = baseColor
+                linePaint
+            }
+
+            if (drawLines) {
+                val head = b[0]
+                if (head.x > 0 && head.y > 0) {
+                    canvas.drawLine(w / 2f, originY, head.x, head.y, paint)
+                }
+            }
+
+            if (!drawSkeleton) continue
+
+            drawLine(canvas, b[0], b[1], paint)    // cabeza - cuello
+            drawLine(canvas, b[1], b[2], paint)    // cuello - cadera
+            drawLine(canvas, b[1], b[4], paint)    // cuello - hombro izq
+            drawLine(canvas, b[1], b[5], paint)    // cuello - hombro der
+            drawLine(canvas, b[4], b[6], paint)    // hombro izq - codo izq
+            drawLine(canvas, b[5], b[7], paint)    // hombro der - codo der
+            drawLine(canvas, b[6], b[8], paint)    // codo izq - muñeca izq
+            drawLine(canvas, b[7], b[9], paint)    // codo der - muñeca der
+            drawLine(canvas, b[2], b[3], paint)    // cadera - ingle
+            drawLine(canvas, b[3], b[10], paint)   // ingle - tobillo izq
+            drawLine(canvas, b[3], b[11], paint)   // ingle - tobillo der
+            drawLine(canvas, b[10], b[12], paint)  // tobillo izq - pie izq
+            drawLine(canvas, b[11], b[13], paint)  // tobillo der - pie der
+
+            // articulaciones
+            for (i in 0 until 14) {
+                val bone = b[i]
+                if (bone.x > 0 && bone.y > 0) {
+                    canvas.drawCircle(bone.x, bone.y, 3f, paint)
+                }
+            }
+        }
+    }
+
+    private fun drawLine(canvas: Canvas, a: Bone, b: Bone, paint: Paint) {
+        if (a.x <= 0 || a.y <= 0 || b.x <= 0 || b.y <= 0) return
+        canvas.drawLine(a.x, a.y, b.x, b.y, paint)
+    }
+}

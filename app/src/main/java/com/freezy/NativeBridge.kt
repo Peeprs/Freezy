@@ -5,39 +5,103 @@ object NativeBridge {
         System.loadLibrary("ncx")
     }
 
-    @JvmStatic
-    external fun setNativeMaxDesyncMs(ms: Long)
+    @JvmStatic external fun setNativeMaxDesyncMs(ms: Long)
 
-    @JvmStatic
-    external fun setNativeJitterMs(ms: Int)
+    @JvmStatic external fun setNativeJitterMs(ms: Int)
 
-    @JvmStatic
-    external fun setNativeDropProbability(probability: Int)
+    @JvmStatic external fun setNativeDropProbability(probability: Int)
 
-    @JvmStatic
-    external fun getNativeString(id: Int): String
+    @JvmStatic external fun getNativeString(id: Int): String
 
-    @JvmStatic
-    private external fun getNativeHWID(androidId: String, hardwareInfo: String): String
+    @JvmStatic private external fun getNativeHWID(androidId: String, hardwareInfo: String): String
 
     @JvmStatic
     fun getHWID(context: android.content.Context): String {
-        val androidId = android.provider.Settings.Secure.getString(
-            context.contentResolver,
-            android.provider.Settings.Secure.ANDROID_ID
-        ) ?: "UNKNOWN_ANDROID_ID"
-        val hardwareInfo = "${android.os.Build.BOARD}-${android.os.Build.BRAND}-${android.os.Build.DEVICE}-${android.os.Build.HARDWARE}-${android.os.Build.MODEL}-${android.os.Build.PRODUCT}"
+        val androidId =
+                android.provider.Settings.Secure.getString(
+                        context.contentResolver,
+                        android.provider.Settings.Secure.ANDROID_ID
+                )
+                        ?: "UNKNOWN_ANDROID_ID"
+        val hardwareInfo =
+                "${android.os.Build.BOARD}-${android.os.Build.BRAND}-${android.os.Build.DEVICE}-${android.os.Build.HARDWARE}-${android.os.Build.MODEL}-${android.os.Build.PRODUCT}"
         return getNativeHWID(androidId, hardwareInfo)
     }
 
-    @JvmStatic
-    external fun setSecurePayload(payload: String)
+    @JvmStatic external fun setSecurePayload(payload: String)
 
-    @JvmStatic
-    external fun isPayloadReady(): Boolean
+    @JvmStatic external fun isPayloadReady(): Boolean
 
-    @JvmStatic
-    external fun getHmacSecret(): String
+    @JvmStatic external fun getHmacSecret(): String
+
+    /** Encuentra el PID del juego */
+    @JvmStatic external fun findGamePid(): Int
+
+    /** Obtiene el nombre del paquete del juego */
+    @JvmStatic external fun getGamePackageName(): String
+
+    /** Verifica que la memoria del juego (libil2cpp.so) sea legible */
+    @JvmStatic external fun isGameMemoryReady(pid: Int): Boolean
+
+    /** Devuelve un diagnóstico detallado del acceso a memoria (para depurar fallos) */
+    @JvmStatic external fun getGameMemoryDiagnostics(pid: Int): String
+
+    /** Lee memoria del juego */
+    @JvmStatic external fun readGameMemory(pid: Int, address: Long, size: Int): ByteArray?
+
+    /** Escribe memoria del juego */
+    @JvmStatic external fun writeGameMemory(pid: Int, address: Long, value: ByteArray): Boolean
+
+    /** Inicia el aimbot (se llama automáticamente al abrir la app) */
+    @JvmStatic external fun startAimbot()
+
+    /** Detiene el aimbot */
+    @JvmStatic external fun stopAimbot()
+
+    /** Obtiene el estado del menú */
+    @JvmStatic external fun getMenuStatus(): String
+
+    // ============ Sniper Switch (patch de patrones) ============
+
+    /** Busca el patrón de la mira y aplica el patch */
+    @JvmStatic external fun sniperSwitchApply(): Boolean
+
+    /** Restaura el patch original */
+    @JvmStatic external fun sniperSwitchRemove(): Boolean
+
+    /** ¿El patch de la mira está aplicado? */
+    @JvmStatic external fun sniperSwitchIsApplied(): Boolean
+
+    // ============ Sniper Scope (aim-assist) ============
+
+    /** Activa/desactiva el aim-assist de francotirador */
+    @JvmStatic external fun setSniperScope(active: Boolean)
+
+    /** Modo de puntería: 0 = cabeza, 1 = cuerpo */
+    @JvmStatic external fun setSniperMode(mode: Int)
+
+    /** Ignorar jugadores derribados */
+    @JvmStatic external fun setSniperIgnoreKnocked(ignore: Boolean)
+
+    /** Ignorar bots */
+    @JvmStatic external fun setSniperIgnoreBots(ignore: Boolean)
+
+    /** Tamaño de pantalla (para el FOV del aim assist) */
+    @JvmStatic external fun setScreenSize(w: Int, h: Int)
+
+    // ============ Config nativa ============
+
+    /** Ruta del helper ffmem (para lecturas rápidas como root) */
+    @JvmStatic external fun setMemoryHelperPath(path: String)
+
+    /** Ancho de los punteros del juego: 4 (emulador) u 8 (teléfono 64-bit) */
+    @JvmStatic external fun setPointerWidth(width: Int)
+
+    /** Diagnóstico paso a paso de la cadena de punteros IL2CPP */
+    @JvmStatic external fun getChainDiagnostics(pid: Int): String
+
+    /** Snapshot JSON con datos ESP (posición, salud, arma, nombre, team...) */
+    @JvmStatic external fun getEspSnapshot(pid: Int): String
 
     const val STRING_ENDPOINT = 1
     const val STRING_BTN_START = 2
