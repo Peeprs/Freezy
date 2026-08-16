@@ -815,8 +815,7 @@ bool getBonePosFast(int pid, long entity, int boneIdx, float* outPos) {
 }
 
 // Diccionario de entidades (port de Data.GetEntities del dump de referencia).
-// Optimizado: las entradas son contiguas (0x10 B c/u: hash en +0x0, entidad en +0xC), así que
-// con ptr_width=4 el array completo se lee en UNA llamada en vez de 2 reads por entrada.
+// Lectura por entrada (2 reads por entry) — método probado que devuelve entidades estables.
 std::vector<long> getEntities(int pid, long currentGame) {
     std::vector<long> out;
     long dict = 0;
@@ -830,24 +829,6 @@ std::vector<long> getEntities(int pid, long currentGame) {
     if (!readPtr(pid, dict + OFF_DICT_ENTRIES_PTR, entries) || !isPlausiblePtr(entries)) return out;
 
     long start = entries + OFF_DICT_START;
-
-    // Block read del array de entradas (solo válido con punteros de 4 bytes).
-    if (g_ptr_width.load() == 4 && (long)count * 0x10 <= 16384) {
-        std::vector<uint8_t> buf((size_t)count * 0x10);
-        if (readGameMemory(pid, start, buf.data(), buf.size())) {
-            for (int i = 0; i < count; i++) {
-                size_t off = (size_t)i * 0x10;
-                int hash = 0;
-                memcpy(&hash, buf.data() + off + OFF_ENTRY_HASH, 4);
-                if (hash < 0) continue;
-                uint32_t entity32 = 0;
-                memcpy(&entity32, buf.data() + off + OFF_ENTRY_ENTITY, 4);
-                if (entity32 == 0) continue;
-                out.push_back((long)entity32);
-            }
-            return out;
-        }
-    }
 
     for (int i = 0; i < count; i++) {
         long entry = start + (long)i * 0x10;
@@ -885,13 +866,15 @@ bool worldToScreen(const float* m, const float* pos, int w, int h, float& sx, fl
     return true;
 }
 
-// Calcula las coordenadas de pantalla de los 14 huesos del esqueleto.
-// outSkel[2*i] = sx, outSkel[2*i+1] = sy; -1 si el hueso no está en pantalla.
-void getSkeletonScreen(int pid, long localPlayer, long entity, const float* vm, int w, int h, float* outSkel) {
-    long bones[14];
-    readBonePtrBlock(pid, entity, bones);
+// Calcula las coordenadas de pantalla de los huesos del esqueleto que se dibujan.
+// Recibe los 14 punteros de hueso YA leídos (para no re-leer el bloque).
+// OPTIMIZACIÓN: codos (6,7) y tobillos (10,11) NO se calculan (quedan en -1) y el overlay
+// dibuja hombro->muñeca / ingle->pie directos: ahorra 4 huesos * 3 reads por enemigo.
+// outSkel[2*i] = sx, outSkel[2*i+1] = sy; -1 si el hueso no está en pantalla o se omite.
+void getSkeletonScreen(int pid, long localPlayer, long entity, const long* bones, const float* vm, int w, int h, float* outSkel) {
     for (int i = 0; i < 28; i++) outSkel[i] = -1.0f;
     for (int b = 0; b < 14; b++) {
+        if (b == 6 || b == 7 || b == 10 || b == 11) continue; // codos y tobillos omitidos
         float pos[3];
         if (!getBonePosFromPtr(pid, bones[b], pos)) continue;
         float sx, sy;
@@ -1795,7 +1778,9 @@ Java_com_freezy_NativeBridge_getEspSnapshot(JNIEnv* env, jclass clazz, jint pid)
         readU8(pid, e + OFF_IS_CLIENT_BOT, isBot);
 
         float head[3] = {0, 0, 0};
-        bool headOk = getBonePosFast(pid, e, 0, head);
+        long bones[14];
+        readBonePtrBlock(pid, e, bones);
+        bool headOk = getBonePosFromPtr(pid, bones[0], head);
         float dist = sqrtf((head[0]-myPos[0])*(head[0]-myPos[0]) +
                            (head[1]-myPos[1])*(head[1]-myPos[1]) +
                            (head[2]-myPos[2])*(head[2]-myPos[2]));
@@ -1842,7 +1827,7 @@ Java_com_freezy_NativeBridge_getEspSnapshot(JNIEnv* env, jclass clazz, jint pid)
             // la cámara más reciente y no queda fijo en pantalla al girar la cámara.
             float vm[16];
             if (getViewMatrix(pid, gp.localPlayer, vm)) {
-                getSkeletonScreen(pid, gp.localPlayer, e, vm, g_screen_w.load(), g_screen_h.load(), skel);
+                getSkeletonScreen(pid, gp.localPlayer, e, bones, vm, g_screen_w.load(), g_screen_h.load(), skel);
             } else {
                 for (int i = 0; i < 28; i++) skel[i] = -1.0f;
             }

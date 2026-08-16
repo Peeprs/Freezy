@@ -219,18 +219,15 @@ class EspOverlayView(context: Context) : View(context) {
             drawLine(canvas, b[1], b[2], paint)    // cuello - cadera
             drawLine(canvas, b[1], b[4], paint)    // cuello - hombro izq
             drawLine(canvas, b[1], b[5], paint)    // cuello - hombro der
-            drawLine(canvas, b[4], b[6], paint)    // hombro izq - codo izq
-            drawLine(canvas, b[5], b[7], paint)    // hombro der - codo der
-            drawLine(canvas, b[6], b[8], paint)    // codo izq - muñeca izq
-            drawLine(canvas, b[7], b[9], paint)    // codo der - muñeca der
+            drawLine(canvas, b[4], b[8], paint)    // hombro izq - muñeca izq (codo omitido)
+            drawLine(canvas, b[5], b[9], paint)    // hombro der - muñeca der (codo omitido)
             drawLine(canvas, b[2], b[3], paint)    // cadera - ingle
-            drawLine(canvas, b[3], b[10], paint)   // ingle - tobillo izq
-            drawLine(canvas, b[3], b[11], paint)   // ingle - tobillo der
-            drawLine(canvas, b[10], b[12], paint)  // tobillo izq - pie izq
-            drawLine(canvas, b[11], b[13], paint)  // tobillo der - pie der
+            drawLine(canvas, b[3], b[12], paint)   // ingle - pie izq (tobillo omitido)
+            drawLine(canvas, b[3], b[13], paint)   // ingle - pie der (tobillo omitido)
 
-            // articulaciones
+            // articulaciones (codos y tobillos quedan en -1 y no se dibujan)
             for (i in 0 until 14) {
+                if (i == 6 || i == 7 || i == 10 || i == 11) continue
                 val bone = b[i]
                 if (bone.x > 0 && bone.y > 0) {
                     canvas.drawCircle(bone.x, bone.y, 3f, paint)

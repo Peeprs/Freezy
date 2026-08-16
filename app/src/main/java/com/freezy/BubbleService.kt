@@ -523,18 +523,15 @@ private fun setupMenu() {
     // 2. Conectar el Switch de Aimbot (recoil_switch)
     val aimbotSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
 
-    aimbotSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked ->
-            if (aimbotSwitchBusy) return@setOnCheckedChangeListener
-            if (checked) {
-                toggleAimbot()
-            } else {
-                NativeBridge.stopAimbot()
-                Log.d("FreezyMenu", "Aimbot desactivado")
-                Toast.makeText(this@BubbleService, "⛔ Aimbot desactivado", Toast.LENGTH_SHORT).show()
-                statusText?.text = "Aimbot: OFF | Esperando activación"
-            }
+    // RESTRICCIÓN ANTI-BAN: el cráneo (aimbot/sniper/switch) requiere doble confirmación
+    setupSkullSwitch(aimbotSwitch) { checked ->
+        if (checked) {
+            toggleAimbot()
+        } else {
+            NativeBridge.stopAimbot()
+            Log.d("FreezyMenu", "Aimbot desactivado")
+            Toast.makeText(this@BubbleService, "⛔ Aimbot desactivado", Toast.LENGTH_SHORT).show()
+            statusText?.text = "Aimbot: OFF | Esperando activación"
         }
     }
 
@@ -543,18 +540,14 @@ private fun setupMenu() {
     val sniperBodySwitch = bubbleView.findViewById<Switch>(R.id.sniper_body_switch)
     val sniperScopeStatus = bubbleView.findViewById<TextView>(R.id.sniper_scope_status)
 
-    sniperScopeSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked ->
-            if (sniperScopeSwitchBusy) return@setOnCheckedChangeListener
-            if (checked) {
-                toggleSniperScope()
-            } else {
-                NativeBridge.setSniperScope(false)
-                Log.d("FreezyMenu", "Sniper Scope desactivado")
-                Toast.makeText(this@BubbleService, "⛔ Sniper Scope desactivado", Toast.LENGTH_SHORT).show()
-                sniperScopeStatus?.text = "Sniper: OFF | Cabeza"
-            }
+    setupSkullSwitch(sniperScopeSwitch) { checked ->
+        if (checked) {
+            toggleSniperScope()
+        } else {
+            NativeBridge.setSniperScope(false)
+            Log.d("FreezyMenu", "Sniper Scope desactivado")
+            Toast.makeText(this@BubbleService, "⛔ Sniper Scope desactivado", Toast.LENGTH_SHORT).show()
+            sniperScopeStatus?.text = "Sniper: OFF | Cabeza"
         }
     }
 
@@ -572,27 +565,23 @@ private fun setupMenu() {
     val sniperSwitch = bubbleView.findViewById<Switch>(R.id.sniper_switch_switch)
     val sniperSwitchStatus = bubbleView.findViewById<TextView>(R.id.sniper_switch_status)
 
-    sniperSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked ->
-            if (sniperSwitchBusy) return@setOnCheckedChangeListener
-            if (checked) {
-                toggleSniperSwitch()
-            } else {
-                Thread {
-                    if (NativeBridge.sniperSwitchRemove()) {
-                        runOnUiThread {
-                            sniperSwitchStatus?.text = "Patch: Quitado"
-                            Toast.makeText(this@BubbleService, "⛔ Patch quitado", Toast.LENGTH_SHORT).show()
-                        }
-                    } else {
-                        runOnUiThread {
-                            sniperSwitchStatus?.text = "Patch: no aplicado"
-                            setSniperSwitchSilently(false)
-                        }
+    setupSkullSwitch(sniperSwitch) { checked ->
+        if (checked) {
+            toggleSniperSwitch()
+        } else {
+            Thread {
+                if (NativeBridge.sniperSwitchRemove()) {
+                    runOnUiThread {
+                        sniperSwitchStatus?.text = "Patch: Quitado"
+                        Toast.makeText(this@BubbleService, "⛔ Patch quitado", Toast.LENGTH_SHORT).show()
                     }
-                }.start()
-            }
+                } else {
+                    runOnUiThread {
+                        sniperSwitchStatus?.text = "Patch: no aplicado"
+                        setSniperSwitchSilently(false)
+                    }
+                }
+            }.start()
         }
     }
 
@@ -690,16 +679,14 @@ private fun setupMenu() {
     }
 
     // ESP Skeleton y ESP Línea son independientes: cada uno activa solo su dibujo.
-    // RESTRICCIÓN ANTI-BAN: el cráneo solo se activa MANTENIENDO PRESIONADO el switch ~1.2s
-    // (un tap normal se revierte), para evitar activaciones accidentales que dan ban en minutos.
-    setupSkullSwitch(
-        espSkeletonSwitch,
-        { checked -> setEspMode(checked, espOverlayView?.drawLines ?: false) }
-    )
-    setupSkullSwitch(
-        espLineSwitch,
-        { checked -> setEspMode(espOverlayView?.drawSkeleton ?: false, checked) }
-    )
+    espSkeletonSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked -> setEspMode(checked, espOverlayView?.drawLines ?: false) }
+    }
+    espLineSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked -> setEspMode(espOverlayView?.drawSkeleton ?: false, checked) }
+    }
 
     // ESP Count: muestra el contador de enemigos arriba al centro.
     val espCountSwitch = bubbleView.findViewById<Switch>(R.id.esp_count_switch)
@@ -742,48 +729,46 @@ private fun setupMenu() {
     }
 }
 
-// RESTRICCIÓN ANTI-BAN para los switches del cráneo (ESP Skeleton / ESP Línea).
-// Un tap normal se ignora y se revierte con un aviso; solo se activa manteniendo presionado
-// ~1200ms (con confirmación por vibración y Toast). Evita activar el cráneo por accidente.
+// RESTRICCIÓN ANTI-BAN para los switches del cráneo (Aimbot / Sniper Scope / Sniper Switch).
+// Mecanismo de doble confirmación: un solo tap se revierte y avisa; hay que tocar el switch
+// de nuevo dentro de 3s para activar de verdad. Evita activaciones accidentales que dan ban.
 private fun setupSkullSwitch(switch: Switch?, onActivate: (Boolean) -> Unit) {
     if (switch == null) return
-    val SWITCH_HOLD_MS = 1200L
-    var holdFired = false
-    val holdRunnable = Runnable {
-        holdFired = true
-        if (!switch.isChecked) {
-            switch.isChecked = true
-            switch.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-            Toast.makeText(this@BubbleService, "☠️ Cráneo activado", Toast.LENGTH_SHORT).show()
+    val CONFIRM_WINDOW_MS = 3000L
+    var armed = false
+    var reverting = false
+    val disarmRunnable = Runnable { armed = false }
+
+    // Estado de partida arranca en OFF
+    switch.isChecked = false
+    switch.setOnCheckedChangeListener { _, checked ->
+        if (reverting) {
+            reverting = false
+            return@setOnCheckedChangeListener
+        }
+        if (!checked) {
+            // Apagado: siempre permitido (desactivar no da ban)
+            handler.removeCallbacks(disarmRunnable)
+            armed = false
+            onActivate(false)
         } else {
-            switch.isChecked = false
-            switch.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-            Toast.makeText(this@BubbleService, "Cráneo desactivado", Toast.LENGTH_SHORT).show()
+            // Encendido: requiere confirmación con un segundo tap dentro de la ventana
+            if (armed) {
+                handler.removeCallbacks(disarmRunnable)
+                armed = false
+                switch.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                Toast.makeText(this@BubbleService, "☠️ Cráneo activado", Toast.LENGTH_SHORT).show()
+                onActivate(true)
+            } else {
+                armed = true
+                handler.postDelayed(disarmRunnable, CONFIRM_WINDOW_MS)
+                // Reverto a OFF: el primer tap NUNCA activa, solo arma la confirmación
+                reverting = true
+                switch.isChecked = false
+                Toast.makeText(this@BubbleService, "⚠️ Riesgo de ban. Pulsa de nuevo para activar", Toast.LENGTH_SHORT).show()
+            }
         }
     }
-    switch.setOnTouchListener { v, event ->
-        when (event.action) {
-            MotionEvent.ACTION_DOWN -> {
-                holdFired = false
-                handler.postDelayed(holdRunnable, SWITCH_HOLD_MS)
-                true
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                handler.removeCallbacks(holdRunnable)
-                // Si NO se mantuvo el tiempo suficiente y el switch quedó encendido por el tap
-                // accidental, se revierte a OFF (el cráneo no se activa con un tap normal).
-                if (!holdFired && v is Switch && v.isChecked) {
-                    v.isChecked = false
-                    onActivate(false)
-                    Toast.makeText(this@BubbleService, "⚠️ Mantén presionado para activar el cráneo", Toast.LENGTH_SHORT).show()
-                }
-                true
-            }
-            else -> false
-        }
-    }
-    // Listener final: solo se dispara con el hold (no con el tap accidental, que ya se revirtió)
-    switch.setOnCheckedChangeListener { _, checked -> onActivate(checked) }
 }
 
 // Activa el aimbot: busca el PID, confirma que la memoria es legible y lo aplica.
