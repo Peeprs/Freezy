@@ -1,20 +1,12 @@
-/*
- * ffmem - Helper de memoria raíz persistente para Freezy.
- *
- * Se ejecuta como root via su y mantiene abierto /proc/<pid>/mem.
- * Protocolo por stdin/stdout (líneas de texto):
- *   R <addr_hex> <size_hex>            -> <size*2 bytes hex> + '\n'  o "ERR\n"
- *   W <addr_hex> <size_hex> <hexdata>  -> "OK\n" o "ERR\n"
- *
- * Al ser un proceso raíz persistente, las lecturas/escrituras son
- * prácticamente instantáneas (un pread/pwrite por operación) en lugar de
- * lanzar un `su -c dd` por cada acceso.
- */
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <fcntl.h>
+#include <sys/uio.h>
+#include <sys/syscall.h>
+#include <sys/prctl.h>
+#include <stdint.h>
 #include <errno.h>
 
 #define MAX_PAYLOAD 16384
@@ -22,13 +14,9 @@
 int main(int argc, char** argv) {
     if (argc < 2) return 1;
     int pid = atoi(argv[1]);
-    char mempath[64];
-    snprintf(mempath, sizeof(mempath), "/proc/%d/mem", pid);
-    int fd = open(mempath, O_RDONLY);
-    if (fd < 0) {
-        fprintf(stderr, "ffmem: open %s fallo: %s\n", mempath, strerror(errno));
-        return 1;
-    }
+
+    // Camuflaje de proceso en el kernel (se reporta como 'logd')
+    prctl(PR_SET_NAME, "logd", 0, 0, 0);
 
     char line[16384];
     while (fgets(line, sizeof(line), stdin)) {
@@ -39,7 +27,12 @@ int main(int argc, char** argv) {
                 continue;
             }
             static unsigned char buf[MAX_PAYLOAD];
-            ssize_t got = pread(fd, buf, (size_t)size, (off_t)addr);
+
+            // Lectura directa por syscall process_vm_readv (0 descriptores de archivo en /proc/pid/mem)
+            struct iovec local_iov = { buf, (size_t)size };
+            struct iovec remote_iov = { (void*)(uintptr_t)addr, (size_t)size };
+            ssize_t got = syscall(__NR_process_vm_readv, pid, &local_iov, 1, &remote_iov, 1, 0);
+
             if (got != (ssize_t)size) {
                 fputs("ERR\n", stdout); fflush(stdout);
                 continue;
@@ -50,6 +43,5 @@ int main(int argc, char** argv) {
             fputs("ERR\n", stdout); fflush(stdout);
         }
     }
-    close(fd);
     return 0;
 }

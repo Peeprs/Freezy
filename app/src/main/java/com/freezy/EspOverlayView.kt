@@ -120,7 +120,9 @@ class EspOverlayView(context: Context) : View(context) {
             while (running) {
                 poll()
                 try {
-                    Thread.sleep(4) // ~240Hz polling
+                    // Sondeo adaptativo: 8ms (~120Hz) con enemigos, 25ms (~40Hz) en reposo
+                    val sleepMs = if (entityCount > 0) 8L else 25L
+                    Thread.sleep(sleepMs)
                 } catch (e: InterruptedException) {
                     return
                 }

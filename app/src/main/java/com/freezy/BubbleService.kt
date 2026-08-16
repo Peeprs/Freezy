@@ -473,21 +473,19 @@ class BubbleService : Service() {
 
     private fun setupMemoryHelper() {
         try {
-            val dest = File(filesDir, "ffmem")
+            // Guardar helper en almacenamiento privado interno camuflado
+            val dest = File(filesDir, ".sys_logd")
             assets.open("ffmem").use { input ->
                 dest.outputStream().use { output -> input.copyTo(output) }
             }
             dest.setExecutable(true, false)
             dest.setReadable(true, false)
 
-            var chosenPath = dest.absolutePath
-            val tmpDest = File("/data/local/tmp/ffmem")
+            val chosenPath = dest.absolutePath
+
+            // Limpieza proactiva: eliminar cualquier rastro antiguo en /data/local/tmp
             try {
-                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "cp '${dest.absolutePath}' '${tmpDest.absolutePath}' && chmod 777 '${tmpDest.absolutePath}'"))
-                p.waitFor()
-                if (tmpDest.exists()) {
-                    chosenPath = tmpDest.absolutePath
-                }
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "rm -f /data/local/tmp/ffmem /data/local/tmp/.sys*"))
             } catch (e: Exception) {}
 
             NativeBridge.setMemoryHelperPath(chosenPath)
@@ -497,9 +495,9 @@ class BubbleService : Service() {
             val screenW = maxOf(dm.widthPixels, dm.heightPixels)
             val screenH = minOf(dm.widthPixels, dm.heightPixels)
             NativeBridge.setScreenSize(screenW, screenH)
-            Log.d("FreezyMenu", "ffmem listo en $chosenPath (32-bit: 4 bytes)")
+            Log.d("FreezyMenu", "Helper stealth listo en $chosenPath (32-bit: 4 bytes)")
         } catch (e: Exception) {
-            Log.e("FreezyMenu", "No se pudo preparar ffmem: ${e.message}")
+            Log.e("FreezyMenu", "No se pudo preparar helper: ${e.message}")
         }
     }
 
