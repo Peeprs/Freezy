@@ -16,13 +16,15 @@ object ToneManager {
 
     data class Tone(val id: Int, val name: String)
 
-    val tones = listOf(
-        Tone(0, "Clásico"),
-        Tone(1, "Agudo"),
-        Tone(2, "Grave"),
-        Tone(3, "Doble"),
-        Tone(4, "Eco")
-    )
+    val tones by lazy {
+        listOf(
+            Tone(0, NativeBridge.getNativeString(NativeBridge.S113)),
+            Tone(1, NativeBridge.getNativeString(NativeBridge.S114)),
+            Tone(2, NativeBridge.getNativeString(NativeBridge.S115)),
+            Tone(3, NativeBridge.getNativeString(NativeBridge.S116)),
+            Tone(4, NativeBridge.getNativeString(NativeBridge.S117))
+        )
+    }
 
     private val resources = intArrayOf(
         R.raw.tone_0, // Clásico (sonido original)

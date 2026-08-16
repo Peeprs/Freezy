@@ -21,10 +21,17 @@
 #include <dirent.h>
 
 #define LOG_TAG "NativeBridge"
+#ifdef NDEBUG
+#define LOGI(...) ((void)0)
+#define LOGD(...) ((void)0)
+#define LOGW(...) ((void)0)
+#define LOGE(...) ((void)0)
+#else
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+#endif
 
 extern void start_anti_frida();
 
@@ -157,7 +164,8 @@ bool rootMemIOReadVectorDirect(int pid, const long* addresses, const size_t* siz
     std::lock_guard<std::mutex> lock(g_io_mutex);
     if (!g_io_out || !g_io_in || pid != g_io_pid) return false;
 
-    std::string cmd = "V " + std::to_string(count);
+    std::string cmd = "V ";
+    cmd += std::to_string(count);
     size_t totalBytes = 0;
     for (int i = 0; i < count; i++) {
         char tmp[64];
@@ -386,7 +394,7 @@ bool writeGameMemory(int pid, long address, const void* buffer, size_t size) {
 // [FUNCIÓN PARA OBTENER LA BASE DEL JUEGO - CORREGIDA PARA 64 BITS]
 // ==============================================================================================
 
-// Lee /proc/<pid>/maps directamente (o vía helper stealth). Devuelve true si se obtuvo contenido.
+// Lee /proc/<pid>/maps directamente o vía su si SELinux bloquea cross-app.
 bool readProcessMaps(int pid, std::string& content) {
     std::string mapsPath = "/proc/" + std::to_string(pid) + "/maps";
     std::ifstream f(mapsPath);
@@ -396,7 +404,16 @@ bool readProcessMaps(int pid, std::string& content) {
         content = ss.str();
         if (!content.empty()) return true;
     }
-    return false;
+    std::string cmd = "su -c 'cat " + mapsPath + " 2>/dev/null'";
+    FILE* fp = popen(cmd.c_str(), "r");
+    if (!fp) return false;
+    char buf[8192];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
+        content.append(buf, n);
+    }
+    pclose(fp);
+    return !content.empty();
 }
 
 long getGameBase(int pid) {
@@ -417,7 +434,7 @@ long getGameBase(int pid) {
         return base;
     }
 
-    // 2. Fallback: lectura directa sin su
+    // 2. Fallback de lectura de maps
     std::string content;
     if (readProcessMaps(pid, content)) {
         size_t pos = 0;
@@ -486,16 +503,17 @@ void logMappedLibs(int pid, const char* context) {
 }
 
 // ==============================================================================================
-// [FUNCIÓN PARA ENCONTRAR EL PID - 100% STEALTH SIN SU]
+// [FUNCIÓN PARA ENCONTRAR EL PID]
 // ==============================================================================================
 
 int findGamePidNative() {
     const char* PACKAGES[] = {
-        "com.dts.freefiremax",
         "com.dts.freefireth",
+        "com.dts.freefiremax",
         "com.dts.freefire"
     };
 
+    // 1. Intento directo por /proc (si los permisos SELinux lo permiten)
     DIR* dir = opendir("/proc");
     if (dir) {
         struct dirent* entry;
@@ -511,18 +529,38 @@ int findGamePidNative() {
             char cmdline[128] = {0};
             size_t n = fread(cmdline, 1, sizeof(cmdline) - 1, fp);
             fclose(fp);
-            if (n <= 0) continue;
-
-            for (int i = 0; i < 3; i++) {
-                if (strstr(cmdline, PACKAGES[i]) != nullptr) {
-                    closedir(dir);
-                    LOGI("[FREEZY] PID encontrado stealth (sin su): %ld (%s)", pid, PACKAGES[i]);
-                    return (int)pid;
+            if (n > 0) {
+                for (int i = 0; i < 3; i++) {
+                    if (strstr(cmdline, PACKAGES[i]) != nullptr) {
+                        closedir(dir);
+                        LOGI("[FREEZY] PID encontrado (/proc): %ld (%s)", pid, PACKAGES[i]);
+                        return (int)pid;
+                    }
                 }
             }
         }
         closedir(dir);
     }
+
+    // 2. Fallback rápido y confiable con pidof
+    for (int i = 0; i < 3; i++) {
+        std::string cmd = "su -c 'pidof " + std::string(PACKAGES[i]) + " 2>/dev/null'";
+        FILE* fp = popen(cmd.c_str(), "r");
+        if (fp) {
+            char buffer[64] = {0};
+            if (fgets(buffer, sizeof(buffer), fp) != nullptr) {
+                int pid = atoi(buffer);
+                pclose(fp);
+                if (pid > 0) {
+                    LOGI("[FREEZY] PID encontrado (pidof): %d (%s)", pid, PACKAGES[i]);
+                    return pid;
+                }
+            } else {
+                pclose(fp);
+            }
+        }
+    }
+
     return -1;
 }
 

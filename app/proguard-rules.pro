@@ -52,7 +52,7 @@
 -keep public class * extends android.app.Activity
 -keep public class * extends android.app.Service
 
-# ── 5. ELIMINAR LOGS EN RELEASE ────────────────────────────────────────
+# ── 5. ELIMINAR LOGS E INTRINSICS EN RELEASE ───────────────────────────
 -assumenosideeffects class android.util.Log {
     public static int v(...);
     public static int d(...);
@@ -67,12 +67,25 @@
     public void print(...);
 }
 
-# ── 6. PRESERVAR ATRIBUTOS NECESARIOS ──────────────────────────────────
--keepattributes *Annotation*
+# Eliminar validaciones de parámetros de Kotlin que filtran nombres en DEX
+-assumenosideeffects class kotlin.jvm.internal.Intrinsics {
+    public static void checkNotNullParameter(...);
+    public static void checkParameterIsNotNull(...);
+    public static void checkNotNull(...);
+    public static void checkExpressionValueIsNotNull(...);
+}
+
+# ── 6. SUPRIMIR METADATOS Y TRAZAS DE KOTLIN ───────────────────────────
+# NO conservar @kotlin.Metadata para evitar que decompiladores lean nombres .kt
+-dontwarn kotlin.**
+-keepattributes Exceptions,InnerClasses,Signature,Deprecated,EnclosingMethod
+
 -keep class androidx.** { *; }
 -keep interface androidx.** { *; }
 
-# ── 7. REGLAS ANTI-DECOMPILACIÓN ───────────────────────────────────────
+# ── 7. REGLAS ANTI-DECOMPILACIÓN Y REPAQUETIZACIÓN TOTAL ────────────────
 -optimizationpasses 5
 -optimizations !code/simplification/arithmetic,!code/simplification/cast,!field/*,!class/merging/*
+-flattenpackagehierarchy ''
+-repackageclasses ''
 -verbose

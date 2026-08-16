@@ -114,8 +114,11 @@ class EspOverlayView(context: Context) : View(context) {
     private val bufferLock = Any()
 
     private val nameBuilder = StringBuilder(16)
+    private val labelBuilder = StringBuilder(32)
+    private val boneEdges = intArrayOf(0, 1, 1, 2, 1, 4, 1, 5, 4, 8, 5, 9, 2, 3, 3, 12, 3, 13)
+    private val skeletonLines = FloatArray(boneEdges.size * 2)
 
-    private val pollThread = object : Thread("esp-poll") {
+    private val pollThread = object : Thread(NativeBridge.getNativeString(NativeBridge.S125)) {
         override fun run() {
             while (running) {
                 poll()
@@ -200,7 +203,7 @@ class EspOverlayView(context: Context) : View(context) {
     }
 
     private fun unpackName(buffer: FloatArray, off: Int, isBot: Boolean): String {
-        if (isBot) return "BOT"
+        if (isBot) return NativeBridge.getNativeString(NativeBridge.S119)
         nameBuilder.setLength(0)
         for (i in 0 until 6) {
             val packed = buffer[off + i].toInt()
@@ -210,42 +213,42 @@ class EspOverlayView(context: Context) : View(context) {
             if (c1 in 32..126) nameBuilder.append(c1.toChar())
             if (c2 in 32..126) nameBuilder.append(c2.toChar())
         }
-        return if (nameBuilder.isNotEmpty()) nameBuilder.toString() else "Player"
+        return if (nameBuilder.isNotEmpty()) nameBuilder.toString() else NativeBridge.getNativeString(NativeBridge.S120)
     }
 
     private fun getWeaponName(id: Int): String {
         return when (id) {
-            1 -> "M4A1"
-            2 -> "AK47"
-            3 -> "M14"
-            4 -> "AWM"
-            5 -> "SKS"
-            6 -> "Groza"
-            7 -> "MP40"
-            8 -> "UMP"
-            9 -> "MP5"
-            10 -> "M1014"
-            11 -> "SPAS12"
-            12 -> "M1887"
-            13 -> "MAG-7"
-            14 -> "Desert Eagle"
-            15 -> "USP"
-            16 -> "G18"
-            17 -> "M500"
-            21 -> "Kar98k"
-            64 -> "M82B"
-            65 -> "SVD"
-            75 -> "AC80"
-            78 -> "Woodpecker"
-            128 -> "Barrett"
-            129 -> "AWM-Y"
-            197 -> "M24"
-            201 -> "Mini Uzi"
-            202 -> "Charge Buster"
-            203 -> "Bizon"
-            204 -> "Trogon"
+            1 -> NativeBridge.getNativeString(NativeBridge.S126)
+            2 -> NativeBridge.getNativeString(NativeBridge.S127)
+            3 -> NativeBridge.getNativeString(NativeBridge.S128)
+            4 -> NativeBridge.getNativeString(NativeBridge.S129)
+            5 -> NativeBridge.getNativeString(NativeBridge.S130)
+            6 -> NativeBridge.getNativeString(NativeBridge.S131)
+            7 -> NativeBridge.getNativeString(NativeBridge.S132)
+            8 -> NativeBridge.getNativeString(NativeBridge.S133)
+            9 -> NativeBridge.getNativeString(NativeBridge.S134)
+            10 -> NativeBridge.getNativeString(NativeBridge.S135)
+            11 -> NativeBridge.getNativeString(NativeBridge.S136)
+            12 -> NativeBridge.getNativeString(NativeBridge.S137)
+            13 -> NativeBridge.getNativeString(NativeBridge.S138)
+            14 -> NativeBridge.getNativeString(NativeBridge.S139)
+            15 -> NativeBridge.getNativeString(NativeBridge.S140)
+            16 -> NativeBridge.getNativeString(NativeBridge.S141)
+            17 -> NativeBridge.getNativeString(NativeBridge.S142)
+            21 -> NativeBridge.getNativeString(NativeBridge.S143)
+            64 -> NativeBridge.getNativeString(NativeBridge.S144)
+            65 -> NativeBridge.getNativeString(NativeBridge.S145)
+            75 -> NativeBridge.getNativeString(NativeBridge.S146)
+            78 -> NativeBridge.getNativeString(NativeBridge.S147)
+            128 -> NativeBridge.getNativeString(NativeBridge.S148)
+            129 -> NativeBridge.getNativeString(NativeBridge.S149)
+            197 -> NativeBridge.getNativeString(NativeBridge.S150)
+            201 -> NativeBridge.getNativeString(NativeBridge.S151)
+            202 -> NativeBridge.getNativeString(NativeBridge.S152)
+            203 -> NativeBridge.getNativeString(NativeBridge.S153)
+            204 -> NativeBridge.getNativeString(NativeBridge.S154)
             0 -> ""
-            else -> "Arma #$id"
+            else -> "${NativeBridge.getNativeString(NativeBridge.S124)}$id"
         }
     }
 
@@ -417,28 +420,29 @@ class EspOverlayView(context: Context) : View(context) {
 
             // 4. ESP Name & ESP Distance
             if (drawName || drawDistance) {
-                val name = if (drawName) unpackName(localBuffer, off + 6, isBot) else ""
-                val distStr = if (drawDistance && dist > 0) "${dist.toInt()}m" else ""
-
-                val label = when {
-                    drawName && drawDistance && dist > 0 -> "$name [$distStr]"
-                    drawName -> name
-                    drawDistance && dist > 0 -> "[$distStr]"
-                    else -> ""
+                labelBuilder.setLength(0)
+                if (drawName) {
+                    val name = unpackName(localBuffer, off + 6, isBot)
+                    labelBuilder.append(name)
+                }
+                if (drawDistance && dist > 0) {
+                    if (labelBuilder.isNotEmpty()) labelBuilder.append(' ')
+                    labelBuilder.append('[').append(dist.toInt()).append('m').append(']')
                 }
 
-                if (label.isNotEmpty()) {
+                if (labelBuilder.isNotEmpty()) {
+                    val str = labelBuilder.toString()
                     smallTextStrokePaint.color = Color.BLACK
                     smallTextPaint.color = if (isBot) Color.parseColor("#B0BEC5") else Color.WHITE
-                    canvas.drawText(label, headX, currentTop - 2f, smallTextStrokePaint)
-                    canvas.drawText(label, headX, currentTop - 2f, smallTextPaint)
+                    canvas.drawText(str, headX, currentTop - 2f, smallTextStrokePaint)
+                    canvas.drawText(str, headX, currentTop - 2f, smallTextPaint)
                     currentTop -= 16f
                 }
             }
 
             // 5. ESP Team
             if (drawTeam) {
-                val teamText = if (isAlly) "[TEAM]" else "[ENEMY]"
+                val teamText = if (isAlly) NativeBridge.getNativeString(NativeBridge.S121) else NativeBridge.getNativeString(NativeBridge.S122)
                 smallTextStrokePaint.color = Color.BLACK
                 smallTextPaint.color = if (isAlly) teamColor else Color.WHITE
                 canvas.drawText(teamText, headX, currentTop - 2f, smallTextStrokePaint)
@@ -458,25 +462,26 @@ class EspOverlayView(context: Context) : View(context) {
 
             // 7. ESP Skeleton
             if (drawSkeleton) {
-                fun drawBoneSegment(b1: Int, b2: Int) {
+                var lineIdx = 0
+                var i = 0
+                while (i < boneEdges.size) {
+                    val b1 = boneEdges[i]
+                    val b2 = boneEdges[i + 1]
                     val x1 = localBuffer[off + 12 + b1 * 2]
                     val y1 = localBuffer[off + 12 + b1 * 2 + 1]
                     val x2 = localBuffer[off + 12 + b2 * 2]
                     val y2 = localBuffer[off + 12 + b2 * 2 + 1]
                     if (x1 > 0 && y1 > 0 && x2 > 0 && y2 > 0) {
-                        canvas.drawLine(x1, y1, x2, y2, linePaint)
+                        skeletonLines[lineIdx++] = x1
+                        skeletonLines[lineIdx++] = y1
+                        skeletonLines[lineIdx++] = x2
+                        skeletonLines[lineIdx++] = y2
                     }
+                    i += 2
                 }
-
-                drawBoneSegment(0, 1)  // cabeza - cuello
-                drawBoneSegment(1, 2)  // cuello - cadera
-                drawBoneSegment(1, 4)  // cuello - hombro izq
-                drawBoneSegment(1, 5)  // cuello - hombro der
-                drawBoneSegment(4, 8)  // hombro izq - muñeca izq (codo omitido)
-                drawBoneSegment(5, 9)  // hombro der - muñeca der (codo omitido)
-                drawBoneSegment(2, 3)  // cadera - ingle
-                drawBoneSegment(3, 12) // ingle - pie izq (tobillo omitido)
-                drawBoneSegment(3, 13) // ingle - pie der (tobillo omitido)
+                if (lineIdx > 0) {
+                    canvas.drawLines(skeletonLines, 0, lineIdx, linePaint)
+                }
 
                 for (b in 0 until 14) {
                     if (b == 6 || b == 7 || b == 10 || b == 11) continue
@@ -491,7 +496,7 @@ class EspOverlayView(context: Context) : View(context) {
 
         // ESP Count: enemigos vivos
         if (showCount) {
-            val countText = "Enemigos: $visibleCount"
+            val countText = "${NativeBridge.getNativeString(NativeBridge.S123)}$visibleCount"
             textStrokePaint.color = Color.BLACK
             textPaint.color = baseColor
             canvas.drawText(countText, w / 2f, 30f + textPaint.textSize, textStrokePaint)

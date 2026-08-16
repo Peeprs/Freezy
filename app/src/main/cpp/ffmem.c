@@ -6,9 +6,20 @@
 #include <sys/uio.h>
 #include <sys/syscall.h>
 #include <sys/prctl.h>
+#include <fcntl.h>
 #include <stdint.h>
 
 #define MAX_PAYLOAD 16384
+
+static int g_mem_fd = -1;
+
+static int get_mem_fd(int pid) {
+    if (g_mem_fd >= 0) return g_mem_fd;
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/mem", pid);
+    g_mem_fd = open(path, O_RDONLY);
+    return g_mem_fd;
+}
 
 int main(int argc, char** argv) {
     if (argc < 2) return 1;
@@ -27,10 +38,18 @@ int main(int argc, char** argv) {
             }
             static unsigned char buf[MAX_PAYLOAD];
 
-            // Lectura directa por syscall process_vm_readv (0 descriptores de archivo en /proc/pid/mem)
+            // 1. Intentar process_vm_readv
             struct iovec local_iov = { buf, (size_t)size };
             struct iovec remote_iov = { (void*)(uintptr_t)addr, (size_t)size };
             ssize_t got = syscall(__NR_process_vm_readv, pid, &local_iov, 1, &remote_iov, 1, 0);
+
+            // 2. Fallback con pread si el kernel bloquea process_vm_readv por Yama/SELinux
+            if (got != (ssize_t)size) {
+                int fd = get_mem_fd(pid);
+                if (fd >= 0) {
+                    got = pread(fd, buf, (size_t)size, (off_t)addr);
+                }
+            }
 
             if (got != (ssize_t)size) {
                 fputs("ERR\n", stdout); fflush(stdout);
@@ -113,8 +132,21 @@ int main(int argc, char** argv) {
                 continue;
             }
 
-            // 1 sola llamada de sistema al kernel para todos los vectores
+            // 1. Intentar llamada de sistema process_vm_readv
             ssize_t got = syscall(__NR_process_vm_readv, pid, local_iov, count, remote_iov, count, 0);
+            if (got != (ssize_t)total_expected) {
+                // 2. Fallback con pread
+                int fd = get_mem_fd(pid);
+                if (fd >= 0) {
+                    size_t read_sum = 0;
+                    for (int i = 0; i < count; i++) {
+                        ssize_t n = pread(fd, local_iov[i].iov_base, local_iov[i].iov_len, (off_t)(uintptr_t)remote_iov[i].iov_base);
+                        if (n != (ssize_t)local_iov[i].iov_len) break;
+                        read_sum += n;
+                    }
+                    got = read_sum;
+                }
+            }
             if (got != (ssize_t)total_expected) {
                 fputs("ERR\n", stdout); fflush(stdout);
                 continue;

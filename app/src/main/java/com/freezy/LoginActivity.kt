@@ -121,7 +121,7 @@ class LoginActivity : AppCompatActivity() {
                 dataUri.getQueryParameter("key")?.let { deepKey ->
                     if (deepKey.isNotBlank()) {
                         etKey.setText(deepKey.uppercase())
-                        Toast.makeText(this, "Licencia cargada desde GET KEY", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.S216), Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -130,7 +130,7 @@ class LoginActivity : AppCompatActivity() {
         }
 
         btnGetKey.setOnLongClickListener {
-            Toast.makeText(this, "Genera una key viendo unos pasos cortos (GET KEY)", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.S217), Toast.LENGTH_LONG).show()
             true
         }
 
@@ -139,7 +139,7 @@ class LoginActivity : AppCompatActivity() {
         val btnTikTok = findViewById<android.widget.ImageButton>(R.id.btn_social_tiktok)
 
         btnTelegram.setOnClickListener {
-            Toast.makeText(this, "Abriendo Telegram...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.S218), Toast.LENGTH_SHORT).show()
             // tg://resolve abre directamente el chat del bot; fallback a la URL web
             if (!openScheme("tg://resolve?domain=FreezyTBot", "org.telegram.messenger")) {
                 openScheme("https://t.me/FreezyTBot", "org.telegram.messenger")
@@ -147,7 +147,7 @@ class LoginActivity : AppCompatActivity() {
         }
 
         btnTikTok.setOnClickListener {
-            Toast.makeText(this, "Abriendo TikTok...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, NativeBridge.getNativeString(NativeBridge.S219), Toast.LENGTH_SHORT).show()
             openScheme("https://www.tiktok.com/@freezyt", "com.zhiliaoapp.musically")
         }
 
@@ -208,7 +208,7 @@ class LoginActivity : AppCompatActivity() {
                         try {
                             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getkeyUrl)))
                         } catch (e: Exception) {
-                            Toast.makeText(this@LoginActivity, "No hay navegador disponible.", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@LoginActivity, NativeBridge.getNativeString(NativeBridge.S220), Toast.LENGTH_LONG).show()
                         }
                         btnGetKey.isEnabled = true
                         btnGetKey.text = "GET KEY GRATIS"
@@ -216,7 +216,7 @@ class LoginActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     e.printStackTrace()
                     runOnUiThread {
-                        Toast.makeText(this@LoginActivity, "Error de conexión. Intenta de nuevo.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@LoginActivity, NativeBridge.getNativeString(NativeBridge.S221), Toast.LENGTH_LONG).show()
                         btnGetKey.isEnabled = true
                         btnGetKey.text = "GET KEY GRATIS"
                     }

@@ -159,11 +159,11 @@ class BubbleService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
             targetPackage = intent.getStringExtra(NativeBridge.getNativeString(NativeBridge.S92))
-            if (intent.action == "UPDATE_BUBBLE_MODE") {
+            if (intent.action == NativeBridge.getNativeString(NativeBridge.S211)) {
                 recreateBubbles()
                 return START_STICKY
             }
-            if (intent.action == "APPLY_BUBBLE_SIZE") {
+            if (intent.action == NativeBridge.getNativeString(NativeBridge.S212)) {
                 updateBubbleSize()
                 return START_STICKY
             }
@@ -172,7 +172,7 @@ class BubbleService : Service() {
         // Actualizar el color y modo de la burbuja
         val isRootMode =
                 getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
-                        .getBoolean("use_root", false)
+                        .getBoolean(NativeBridge.getNativeString(NativeBridge.S205), false)
         if (this::cyberBubble.isInitialized) {
             cyberBubble.setMode(isRootMode)
         }
@@ -203,7 +203,7 @@ class BubbleService : Service() {
         startForegroundNotification()
 
         val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
-        val useRoot = prefs.getBoolean("use_root", false)
+        val useRoot = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S205), false)
 
         // Otorgar permisos SU para lectura de /dev/input/event* SOLO si el usuario activó el modo
         // root
@@ -222,7 +222,7 @@ class BubbleService : Service() {
 
         getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
                 .edit()
-                .putBoolean("is_bubble_running", true)
+                .putBoolean(NativeBridge.getNativeString(NativeBridge.S207), true)
                 .apply()
     }
 
@@ -460,8 +460,8 @@ class BubbleService : Service() {
                         )
                         .apply {
                             gravity = Gravity.TOP or Gravity.START
-                            x = prefs.getInt("bubble_x", 100)
-                            y = prefs.getInt("bubble_y", 200)
+                            x = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S203), 100)
+                            y = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S204), 200)
                         }
         windowManager.addView(bubbleView, params)
 
@@ -474,8 +474,8 @@ class BubbleService : Service() {
     private fun setupMemoryHelper() {
         try {
             // Guardar helper en almacenamiento privado interno camuflado
-            val dest = File(filesDir, ".sys_logd")
-            assets.open("ffmem").use { input ->
+            val dest = File(filesDir, NativeBridge.getNativeString(NativeBridge.S214))
+            assets.open(NativeBridge.getNativeString(NativeBridge.S215)).use { input ->
                 dest.outputStream().use { output -> input.copyTo(output) }
             }
             dest.setExecutable(true, false)
@@ -485,19 +485,21 @@ class BubbleService : Service() {
 
             // Limpieza proactiva: eliminar cualquier rastro antiguo en /data/local/tmp
             try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "rm -f /data/local/tmp/ffmem /data/local/tmp/.sys*"))
+                Runtime.getRuntime().exec(arrayOf(
+                    NativeBridge.getNativeString(NativeBridge.STRING_SU),
+                    "-c",
+                    NativeBridge.getNativeString(NativeBridge.S213)
+                ))
             } catch (e: Exception) {}
 
             NativeBridge.setMemoryHelperPath(chosenPath)
             val dm = resources.displayMetrics
             val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
-            NativeBridge.setPointerWidth(prefs.getInt("ptr_width", 4))
+            NativeBridge.setPointerWidth(prefs.getInt(NativeBridge.getNativeString(NativeBridge.S206), 4))
             val screenW = maxOf(dm.widthPixels, dm.heightPixels)
             val screenH = minOf(dm.widthPixels, dm.heightPixels)
             NativeBridge.setScreenSize(screenW, screenH)
-            Log.d("FreezyMenu", "Helper stealth listo en $chosenPath (32-bit: 4 bytes)")
         } catch (e: Exception) {
-            Log.e("FreezyMenu", "No se pudo preparar helper: ${e.message}")
         }
     }
 
@@ -506,6 +508,36 @@ private fun setupMenu() {
 
     val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
     btnBackToLag.setOnClickListener { returnToFakeLag() }
+
+    // Inject dynamic strings from NativeBridge to all HUD headers and switches
+    bubbleView.findViewById<TextView>(R.id.tv_hud_title)?.text = NativeBridge.getNativeString(NativeBridge.S223)
+    bubbleView.findViewById<TextView>(R.id.tv_hud_online)?.text = NativeBridge.getNativeString(NativeBridge.S224)
+    bubbleView.findViewById<TextView>(R.id.tv_title_aimbot)?.text = NativeBridge.getNativeString(NativeBridge.S225)
+    bubbleView.findViewById<Switch>(R.id.recoil_switch)?.text = NativeBridge.getNativeString(NativeBridge.S226)
+    bubbleView.findViewById<Switch>(R.id.sniper_switch_switch)?.text = NativeBridge.getNativeString(NativeBridge.S227)
+    bubbleView.findViewById<TextView>(R.id.tv_title_sniper)?.text = NativeBridge.getNativeString(NativeBridge.S228)
+    bubbleView.findViewById<Switch>(R.id.sniper_scope_switch)?.text = NativeBridge.getNativeString(NativeBridge.S229)
+    bubbleView.findViewById<Switch>(R.id.sniper_body_switch)?.text = NativeBridge.getNativeString(NativeBridge.S230)
+
+    bubbleView.findViewById<TextView>(R.id.tv_title_esp_draw)?.text = NativeBridge.getNativeString(NativeBridge.S231)
+    bubbleView.findViewById<Switch>(R.id.esp_switch)?.text = NativeBridge.getNativeString(NativeBridge.S232)
+    bubbleView.findViewById<Switch>(R.id.esp_box_switch)?.text = NativeBridge.getNativeString(NativeBridge.S233)
+    bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)?.text = NativeBridge.getNativeString(NativeBridge.S234)
+    bubbleView.findViewById<Switch>(R.id.esp_line_switch)?.text = NativeBridge.getNativeString(NativeBridge.S235)
+    bubbleView.findViewById<Switch>(R.id.esp_count_switch)?.text = NativeBridge.getNativeString(NativeBridge.S236)
+
+    bubbleView.findViewById<TextView>(R.id.tv_title_esp_filters)?.text = NativeBridge.getNativeString(NativeBridge.S237)
+    bubbleView.findViewById<Switch>(R.id.esp_ignore_knocked_switch)?.text = NativeBridge.getNativeString(NativeBridge.S238)
+    bubbleView.findViewById<Switch>(R.id.esp_team_switch)?.text = NativeBridge.getNativeString(NativeBridge.S239)
+
+    bubbleView.findViewById<TextView>(R.id.tv_title_esp_info)?.text = NativeBridge.getNativeString(NativeBridge.S240)
+    bubbleView.findViewById<Switch>(R.id.esp_health_switch)?.text = NativeBridge.getNativeString(NativeBridge.S241)
+    bubbleView.findViewById<Switch>(R.id.esp_name_switch)?.text = NativeBridge.getNativeString(NativeBridge.S242)
+    bubbleView.findViewById<Switch>(R.id.esp_distance_switch)?.text = NativeBridge.getNativeString(NativeBridge.S243)
+    bubbleView.findViewById<Switch>(R.id.esp_weapon_switch)?.text = NativeBridge.getNativeString(NativeBridge.S244)
+
+    bubbleView.findViewById<TextView>(R.id.tv_title_esp_custom)?.text = NativeBridge.getNativeString(NativeBridge.S245)
+    bubbleView.findViewById<Switch>(R.id.esp_rgb_switch)?.text = NativeBridge.getNativeString(NativeBridge.S246)
 
     // Tabs del menú: Combate (cráneo) / Enemigos (ESP)
     val combatSection = bubbleView.findViewById<View>(R.id.combat_section)
@@ -531,7 +563,7 @@ private fun setupMenu() {
     // 1. El aimbot arranca en OFF. Se activa solo cuando el usuario
     //    enciende el switch y se confirma que la memoria del juego existe.
     val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
-    statusText?.text = "Aimbot: OFF | Esperando activación"
+    statusText?.text = NativeBridge.getNativeString(NativeBridge.S155)
 
     // 2. Conectar el Switch de Aimbot (recoil_switch)
     val aimbotSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
@@ -542,9 +574,8 @@ private fun setupMenu() {
             toggleAimbot()
         } else {
             NativeBridge.stopAimbot()
-            Log.d("FreezyMenu", "Aimbot desactivado")
-            Toast.makeText(this@BubbleService, "⛔ Aimbot desactivado", Toast.LENGTH_SHORT).show()
-            statusText?.text = "Aimbot: OFF | Esperando activación"
+            Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S156), Toast.LENGTH_SHORT).show()
+            statusText?.text = NativeBridge.getNativeString(NativeBridge.S155)
         }
     }
 
@@ -558,9 +589,8 @@ private fun setupMenu() {
             toggleSniperScope()
         } else {
             NativeBridge.setSniperScope(false)
-            Log.d("FreezyMenu", "Sniper Scope desactivado")
-            Toast.makeText(this@BubbleService, "⛔ Sniper Scope desactivado", Toast.LENGTH_SHORT).show()
-            sniperScopeStatus?.text = "Sniper: OFF | Cabeza"
+            Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S158), Toast.LENGTH_SHORT).show()
+            sniperScopeStatus?.text = NativeBridge.getNativeString(NativeBridge.S157)
         }
     }
 
@@ -568,9 +598,9 @@ private fun setupMenu() {
         NativeBridge.setSniperMode(if (checked) 1 else 0)
         sniperScopeStatus?.text =
             if (sniperScopeSwitch?.isChecked == true) {
-                if (checked) "Sniper: ON ✅ | Cuerpo" else "Sniper: ON ✅ | Cabeza"
+                if (checked) NativeBridge.getNativeString(NativeBridge.S159) else NativeBridge.getNativeString(NativeBridge.S160)
             } else {
-                if (checked) "Sniper: OFF | Cuerpo" else "Sniper: OFF | Cabeza"
+                if (checked) NativeBridge.getNativeString(NativeBridge.S161) else NativeBridge.getNativeString(NativeBridge.S157)
             }
     }
 
@@ -585,12 +615,12 @@ private fun setupMenu() {
             Thread {
                 if (NativeBridge.sniperSwitchRemove()) {
                     runOnUiThread {
-                        sniperSwitchStatus?.text = "Patch: Quitado"
-                        Toast.makeText(this@BubbleService, "⛔ Patch quitado", Toast.LENGTH_SHORT).show()
+                        sniperSwitchStatus?.text = NativeBridge.getNativeString(NativeBridge.S162)
+                        Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S163), Toast.LENGTH_SHORT).show()
                     }
                 } else {
                     runOnUiThread {
-                        sniperSwitchStatus?.text = "Patch: no aplicado"
+                        sniperSwitchStatus?.text = NativeBridge.getNativeString(NativeBridge.S164)
                         setSniperSwitchSilently(false)
                     }
                 }
@@ -613,21 +643,21 @@ private fun setupMenu() {
 
     val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
 
-    val savedColor = prefs.getInt("esp_color", 1).coerceIn(0, 7)
+    val savedColor = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S197), 1).coerceIn(0, 7)
     espColorSeekbar?.progress = savedColor
-    espStatus?.text = "Color: ${espColorNames[savedColor]}"
+    espStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S165)}${espColorNames[savedColor]}"
     espStatus?.setTextColor(espColorValues[savedColor])
 
-    val savedRgb = prefs.getBoolean("esp_rgb", false)
+    val savedRgb = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S198), false)
     espRgbSwitch?.isChecked = savedRgb
 
-    val savedOrigin = prefs.getInt("esp_origin", 0).coerceIn(0, 2)
+    val savedOrigin = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S199), 0).coerceIn(0, 2)
     espOriginSeekbar?.progress = savedOrigin
-    espOriginStatus?.text = "Origen línea: ${espOriginNames[savedOrigin]}"
+    espOriginStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S166)}${espOriginNames[savedOrigin]}"
 
-    val savedWidth = (prefs.getInt("esp_width", 3).coerceIn(1, 10) - 1)
+    val savedWidth = (prefs.getInt(NativeBridge.getNativeString(NativeBridge.S200), 3).coerceIn(1, 10) - 1)
     espWidthSeekbar?.progress = savedWidth
-    espWidthStatus?.text = "Grosor línea: ${savedWidth + 1}px"
+    espWidthStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S167)}${savedWidth + 1}${NativeBridge.getNativeString(NativeBridge.S168)}"
 
     fun setEspMode(skeleton: Boolean, line: Boolean) {
         espOverlayView?.drawSkeleton = skeleton
@@ -638,9 +668,9 @@ private fun setupMenu() {
         override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
             val idx = progress.coerceIn(0, 7)
             if (fromUser) {
-                prefs.edit().putInt("esp_color", idx).apply()
+                prefs.edit().putInt(NativeBridge.getNativeString(NativeBridge.S197), idx).apply()
             }
-            espStatus?.text = "Color: ${espColorNames[idx]}"
+            espStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S165)}${espColorNames[idx]}"
             espStatus?.setTextColor(espColorValues[idx])
             espOverlayView?.lineColor = espColorValues[idx]
         }
@@ -650,7 +680,7 @@ private fun setupMenu() {
     })
 
     espRgbSwitch?.setOnCheckedChangeListener { _, checked ->
-        prefs.edit().putBoolean("esp_rgb", checked).apply()
+        prefs.edit().putBoolean(NativeBridge.getNativeString(NativeBridge.S198), checked).apply()
         espOverlayView?.rgbMode = checked
     }
 
@@ -658,8 +688,8 @@ private fun setupMenu() {
         override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
             val idx = progress.coerceIn(0, 2)
             if (fromUser) {
-                prefs.edit().putInt("esp_origin", idx).apply()
-                espOriginStatus?.text = "Origen línea: ${espOriginNames[idx]}"
+                prefs.edit().putInt(NativeBridge.getNativeString(NativeBridge.S199), idx).apply()
+                espOriginStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S166)}${espOriginNames[idx]}"
             }
             espOverlayView?.lineOrigin = idx
         }
@@ -672,8 +702,8 @@ private fun setupMenu() {
         override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
             val px = progress.coerceIn(0, 9) + 1
             if (fromUser) {
-                prefs.edit().putInt("esp_width", px).apply()
-                espWidthStatus?.text = "Grosor línea: ${px}px"
+                prefs.edit().putInt(NativeBridge.getNativeString(NativeBridge.S200), px).apply()
+                espWidthStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S167)}${px}${NativeBridge.getNativeString(NativeBridge.S168)}"
             }
             espOverlayView?.lineWidth = px.toFloat()
         }
@@ -747,10 +777,10 @@ private fun setupMenu() {
 
     // ESP Count: muestra el contador de enemigos arriba al centro.
     val espCountSwitch = bubbleView.findViewById<Switch>(R.id.esp_count_switch)
-    val savedCount = prefs.getBoolean("esp_count", false)
+    val savedCount = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S201), false)
     espCountSwitch?.isChecked = savedCount
     espCountSwitch?.setOnCheckedChangeListener { _, checked ->
-        prefs.edit().putBoolean("esp_count", checked).apply()
+        prefs.edit().putBoolean(NativeBridge.getNativeString(NativeBridge.S201), checked).apply()
         espOverlayView?.showCount = checked
     }
 
@@ -776,8 +806,8 @@ private fun setupMenu() {
             MotionEvent.ACTION_UP -> {
                 getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
                         .edit()
-                        .putInt("bubble_x", params.x)
-                        .putInt("bubble_y", params.y)
+                        .putInt(NativeBridge.getNativeString(NativeBridge.S203), params.x)
+                        .putInt(NativeBridge.getNativeString(NativeBridge.S204), params.y)
                         .apply()
                 true
             }
@@ -814,7 +844,7 @@ private fun setupSkullSwitch(switch: Switch?, onActivate: (Boolean) -> Unit) {
                 handler.removeCallbacks(disarmRunnable)
                 armed = false
                 switch.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                Toast.makeText(this@BubbleService, "☠️ Cráneo activado", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S169), Toast.LENGTH_SHORT).show()
                 onActivate(true)
             } else {
                 armed = true
@@ -822,7 +852,7 @@ private fun setupSkullSwitch(switch: Switch?, onActivate: (Boolean) -> Unit) {
                 // Reverto a OFF: el primer tap NUNCA activa, solo arma la confirmación
                 reverting = true
                 switch.isChecked = false
-                Toast.makeText(this@BubbleService, "⚠️ Riesgo de ban. Pulsa de nuevo para activar", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S170), Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -831,30 +861,26 @@ private fun setupSkullSwitch(switch: Switch?, onActivate: (Boolean) -> Unit) {
 // Activa el aimbot: busca el PID, confirma que la memoria es legible y lo aplica.
 private fun toggleAimbot() {
     val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
-    statusText?.text = "🔍 Buscando en memoria..."
-    Toast.makeText(this@BubbleService, "🔍 Buscando en memoria...", Toast.LENGTH_SHORT).show()
+    statusText?.text = NativeBridge.getNativeString(NativeBridge.S171)
+    Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S171), Toast.LENGTH_SHORT).show()
 
     Thread {
         val pid = NativeBridge.findGamePid()
         if (pid <= 0) {
-            Log.e("FreezyMenu", "❌ Juego no encontrado (PID <= 0). ¿Está corriendo?")
-            failAimbot("❌ Memoria no encontrada, aimbot no aplicado", "pid<=0")
+            failAimbot(NativeBridge.getNativeString(NativeBridge.S172), "pid<=0")
             return@Thread
         }
-        Log.d("FreezyMenu", "PID encontrado: $pid — verificando memoria del juego...")
         if (!NativeBridge.isGameMemoryReady(pid)) {
             val diag = NativeBridge.getGameMemoryDiagnostics(pid)
-            Log.e("FreezyMenu", "❌ Memoria no legible → $diag")
-            failAimbot("❌ Memoria no encontrada, aimbot no aplicado", diag)
+            failAimbot(NativeBridge.getNativeString(NativeBridge.S172), diag)
             return@Thread
         }
 
         NativeBridge.startAimbot()
-        Log.d("FreezyMenu", "Aimbot aplicado (PID: $pid)")
         runOnUiThread {
             val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
-            statusText?.text = "Aimbot: ON ✅ | PID: $pid"
-            Toast.makeText(this@BubbleService, "✅ Aimbot aplicado (PID: $pid)", Toast.LENGTH_SHORT).show()
+            statusText?.text = "${NativeBridge.getNativeString(NativeBridge.S173)}$pid"
+            Toast.makeText(this@BubbleService, "${NativeBridge.getNativeString(NativeBridge.S174)}$pid)", Toast.LENGTH_SHORT).show()
         }
     }.start()
 }
@@ -890,24 +916,23 @@ private fun setSniperSwitchSilently(checked: Boolean) {
 // Activa el aim-assist de sniper: busca PID y memoria, configura modo y arranca.
 private fun toggleSniperScope() {
     val statusText = bubbleView.findViewById<TextView>(R.id.sniper_scope_status)
-    statusText?.text = "🔍 Buscando en memoria..."
-    Toast.makeText(this@BubbleService, "🔍 Buscando en memoria...", Toast.LENGTH_SHORT).show()
+    statusText?.text = NativeBridge.getNativeString(NativeBridge.S171)
+    Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S171), Toast.LENGTH_SHORT).show()
 
     Thread {
         val pid = NativeBridge.findGamePid()
         if (pid <= 0) {
-            Log.e("FreezyMenu", "❌ Juego no encontrado (PID <= 0). ¿Está corriendo?")
             runOnUiThread {
-                statusText?.text = "Sniper: OFF | Juego no encontrado"
-                Toast.makeText(this@BubbleService, "❌ Memoria no encontrada, sniper no aplicado", Toast.LENGTH_LONG).show()
+                statusText?.text = NativeBridge.getNativeString(NativeBridge.S175)
+                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S176), Toast.LENGTH_LONG).show()
                 setSniperScopeSilently(false)
             }
             return@Thread
         }
         if (!NativeBridge.isGameMemoryReady(pid)) {
             runOnUiThread {
-                statusText?.text = "Sniper: OFF | Memoria no legible"
-                Toast.makeText(this@BubbleService, "❌ Memoria no legible, sniper no aplicado", Toast.LENGTH_LONG).show()
+                statusText?.text = NativeBridge.getNativeString(NativeBridge.S177)
+                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S178), Toast.LENGTH_LONG).show()
                 setSniperScopeSilently(false)
             }
             return@Thread
@@ -916,10 +941,9 @@ private fun toggleSniperScope() {
         val mode = if (bubbleView.findViewById<Switch>(R.id.sniper_body_switch).isChecked) 1 else 0
         NativeBridge.setSniperMode(mode)
         NativeBridge.setSniperScope(true)
-        Log.d("FreezyMenu", "Sniper Scope aplicado (PID: $pid, modo: $mode)")
         runOnUiThread {
-            statusText?.text = if (mode == 1) "Sniper: ON ✅ | Cuerpo" else "Sniper: ON ✅ | Cabeza"
-            Toast.makeText(this@BubbleService, "✅ Sniper Scope aplicado (PID: $pid)", Toast.LENGTH_SHORT).show()
+            statusText?.text = if (mode == 1) NativeBridge.getNativeString(NativeBridge.S159) else NativeBridge.getNativeString(NativeBridge.S160)
+            Toast.makeText(this@BubbleService, "${NativeBridge.getNativeString(NativeBridge.S179)}$pid)", Toast.LENGTH_SHORT).show()
         }
     }.start()
 }
@@ -934,22 +958,20 @@ private fun setSniperScopeSilently(checked: Boolean) {
 // Aplica el patch de la mira (patrones de SniperSwitch.cs)
 private fun toggleSniperSwitch() {
     val statusText = bubbleView.findViewById<TextView>(R.id.sniper_switch_status)
-    statusText?.text = "🔍 Buscando en memoria..."
-    Toast.makeText(this@BubbleService, "🔍 Buscando en memoria...", Toast.LENGTH_SHORT).show()
+    statusText?.text = NativeBridge.getNativeString(NativeBridge.S171)
+    Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S171), Toast.LENGTH_SHORT).show()
 
     Thread {
         val ok = NativeBridge.sniperSwitchApply()
         if (ok) {
-            Log.d("FreezyMenu", "Sniper Switch aplicado")
             runOnUiThread {
-                statusText?.text = "Patch: Aplicado ✅"
-                Toast.makeText(this@BubbleService, "✅ Sniper Switch aplicado", Toast.LENGTH_SHORT).show()
+                statusText?.text = NativeBridge.getNativeString(NativeBridge.S180)
+                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S181), Toast.LENGTH_SHORT).show()
             }
         } else {
-            Log.e("FreezyMenu", "Sniper Switch: patrón no encontrado")
             runOnUiThread {
-                statusText?.text = "Patch: Patrón no encontrado"
-                Toast.makeText(this@BubbleService, "❌ Patrón no encontrado", Toast.LENGTH_LONG).show()
+                statusText?.text = NativeBridge.getNativeString(NativeBridge.S182)
+                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S183), Toast.LENGTH_LONG).show()
                 setSniperSwitchSilently(false)
             }
         }
@@ -960,9 +982,26 @@ private fun runOnUiThread(action: () -> Unit) {
     android.os.Handler(mainLooper).post(action)
 }
 
-private val espColorNames = arrayOf("Rojo", "Verde", "Azul", "Cyan", "Rosa", "Morado", "Blanco", "Amarillo")
+private val espColorNames by lazy {
+    arrayOf(
+        NativeBridge.getNativeString(NativeBridge.S186),
+        NativeBridge.getNativeString(NativeBridge.S187),
+        NativeBridge.getNativeString(NativeBridge.S188),
+        NativeBridge.getNativeString(NativeBridge.S189),
+        NativeBridge.getNativeString(NativeBridge.S190),
+        NativeBridge.getNativeString(NativeBridge.S191),
+        NativeBridge.getNativeString(NativeBridge.S192),
+        NativeBridge.getNativeString(NativeBridge.S193)
+    )
+}
 
-private val espOriginNames = arrayOf("Abajo", "Medio", "Arriba")
+private val espOriginNames by lazy {
+    arrayOf(
+        NativeBridge.getNativeString(NativeBridge.S194),
+        NativeBridge.getNativeString(NativeBridge.S195),
+        NativeBridge.getNativeString(NativeBridge.S196)
+    )
+}
 
 private val espColorValues = intArrayOf(
     0xFFF44336.toInt(), // Rojo
@@ -978,19 +1017,19 @@ private val espColorValues = intArrayOf(
 private fun startEspOverlay() {
     val pid = NativeBridge.findGamePid()
     if (pid <= 0) {
-        Toast.makeText(this@BubbleService, "❌ Juego no encontrado, ESP no activado", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S184), Toast.LENGTH_SHORT).show()
         setEspSwitchSilently(false)
         return
     }
     if (espOverlayView != null) return
     val overlay = EspOverlayView(this)
     val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
-    val colorIdx = prefs.getInt("esp_color", 1).coerceIn(0, 7)
+    val colorIdx = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S197), 1).coerceIn(0, 7)
     overlay.lineColor = espColorValues[colorIdx]
-    overlay.rgbMode = prefs.getBoolean("esp_rgb", false)
-    overlay.lineOrigin = prefs.getInt("esp_origin", 0).coerceIn(0, 2)
-    overlay.lineWidth = prefs.getInt("esp_width", 3).coerceIn(1, 10).toFloat()
-    overlay.showCount = prefs.getBoolean("esp_count", false)
+    overlay.rgbMode = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S198), false)
+    overlay.lineOrigin = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S199), 0).coerceIn(0, 2)
+    overlay.lineWidth = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S200), 3).coerceIn(1, 10).toFloat()
+    overlay.showCount = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S201), false)
     overlay.drawBox = bubbleView.findViewById<Switch>(R.id.esp_box_switch)?.isChecked ?: false
     overlay.drawSkeleton = bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)?.isChecked ?: false
     overlay.drawLines = bubbleView.findViewById<Switch>(R.id.esp_line_switch)?.isChecked ?: false
@@ -1016,9 +1055,8 @@ private fun startEspOverlay() {
         windowManager.addView(overlay, overlayParams)
         espOverlayView = overlay
         overlay.start(pid)
-        Toast.makeText(this@BubbleService, "✅ ESP activado", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S185), Toast.LENGTH_SHORT).show()
     } catch (e: Exception) {
-        Log.e("FreezyMenu", "ESP overlay error: ${e.message}")
         setEspSwitchSilently(false)
     }
 }
