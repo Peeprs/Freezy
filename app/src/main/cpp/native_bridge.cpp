@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <mutex>
 #include <unordered_map>
+#include <dirent.h>
 
 #define LOG_TAG "NativeBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -70,6 +71,8 @@ static std::mutex g_io_mutex;
 static FILE* g_io_in = nullptr;    // stdout del helper (lectura)
 static FILE* g_io_out = nullptr;   // stdin del helper (escritura)
 static int g_io_pid = -1;
+
+bool ensureHelperSpawned(int pid);
 
 bool rootMemIOSpawn(int pid) {
     std::lock_guard<std::mutex> lock(g_io_mutex);
@@ -148,22 +151,22 @@ bool rootMemIOReadDirect(int pid, long address, void* buffer, size_t size) {
     return true;
 }
 
-// Escribe a través del helper. Devuelve false si no hay helper activo.
-bool rootMemIOWriteDirect(int pid, long address, const void* buffer, size_t size) {
-    if (pid != g_io_pid || !g_io_in || !g_io_out || size == 0 || size > 16384) return false;
+// Lee múltiples regiones de memoria en 1 sola syscall al kernel (Batch I/O Vectorial)
+bool rootMemIOReadVectorDirect(int pid, const long* addresses, const size_t* sizes, void** outBuffers, int count) {
+    if (pid != g_io_pid || !g_io_in || !g_io_out || count <= 0 || count > 64) return false;
     std::lock_guard<std::mutex> lock(g_io_mutex);
     if (!g_io_out || !g_io_in || pid != g_io_pid) return false;
 
-    std::string cmd = "W ";
-    char tmp[32];
-    snprintf(tmp, sizeof(tmp), "%llx %zx ", (unsigned long long)address, size);
-    cmd += tmp;
-    const uint8_t* src = static_cast<const uint8_t*>(buffer);
-    for (size_t i = 0; i < size; i++) {
-        snprintf(tmp, sizeof(tmp), "%02x", src[i]);
+    std::string cmd = "V " + std::to_string(count);
+    size_t totalBytes = 0;
+    for (int i = 0; i < count; i++) {
+        char tmp[64];
+        snprintf(tmp, sizeof(tmp), " %llx %zx", (unsigned long long)addresses[i], sizes[i]);
         cmd += tmp;
+        totalBytes += sizes[i];
     }
     cmd += '\n';
+
     if (fputs(cmd.c_str(), g_io_out) < 0) {
         if (g_io_in) fclose(g_io_in);
         if (g_io_out) fclose(g_io_out);
@@ -174,7 +177,50 @@ bool rootMemIOWriteDirect(int pid, long address, const void* buffer, size_t size
     }
     fflush(g_io_out);
 
-    char resp[16] = {0};
+    std::string hex(1 + totalBytes * 2 + 16, '\0');
+    if (fgets(hex.data(), (int)hex.size(), g_io_in) == nullptr) {
+        if (g_io_in) fclose(g_io_in);
+        if (g_io_out) fclose(g_io_out);
+        g_io_in = nullptr;
+        g_io_out = nullptr;
+        g_io_pid = -1;
+        return false;
+    }
+    if (hex.compare(0, 3, "ERR") == 0) return false;
+
+    size_t hexOffset = 0;
+    for (int i = 0; i < count; i++) {
+        uint8_t* buf = static_cast<uint8_t*>(outBuffers[i]);
+        for (size_t b = 0; b < sizes[i]; b++) {
+            unsigned int byteVal = 0;
+            if (sscanf(hex.data() + hexOffset, "%2x", &byteVal) != 1) return false;
+            buf[b] = (uint8_t)byteVal;
+            hexOffset += 2;
+        }
+    }
+    return true;
+}
+
+// Resuelve la dirección base de un módulo (.so) a través del helper stealth en memoria.
+bool rootMemIOGetModuleBase(int pid, const char* modName, long& outBase, int& outPtrWidth) {
+    outBase = 0;
+    outPtrWidth = 4;
+    ensureHelperSpawned(pid);
+    if (pid != g_io_pid || !g_io_in || !g_io_out) return false;
+    std::lock_guard<std::mutex> lock(g_io_mutex);
+    if (!g_io_out || !g_io_in || pid != g_io_pid) return false;
+
+    if (fprintf(g_io_out, "B %s\n", modName) < 0) {
+        if (g_io_in) fclose(g_io_in);
+        if (g_io_out) fclose(g_io_out);
+        g_io_in = nullptr;
+        g_io_out = nullptr;
+        g_io_pid = -1;
+        return false;
+    }
+    fflush(g_io_out);
+
+    char resp[128] = {0};
     if (fgets(resp, sizeof(resp), g_io_in) == nullptr) {
         if (g_io_in) fclose(g_io_in);
         if (g_io_out) fclose(g_io_out);
@@ -183,7 +229,16 @@ bool rootMemIOWriteDirect(int pid, long address, const void* buffer, size_t size
         g_io_pid = -1;
         return false;
     }
-    return resp[0] == 'O' && resp[1] == 'K';
+    if (strncmp(resp, "ERR", 3) == 0) return false;
+
+    unsigned long long base = 0;
+    int ptrW = 4;
+    if (sscanf(resp, "%llx %d", &base, &ptrW) >= 1 && base > 0) {
+        outBase = (long)base;
+        outPtrWidth = ptrW;
+        return true;
+    }
+    return false;
 }
 
 // ==============================================================================================
@@ -331,8 +386,7 @@ bool writeGameMemory(int pid, long address, const void* buffer, size_t size) {
 // [FUNCIÓN PARA OBTENER LA BASE DEL JUEGO - CORREGIDA PARA 64 BITS]
 // ==============================================================================================
 
-// Lee /proc/<pid>/maps. Intenta directo primero; si Android/SELinux lo bloquea
-// (acceso cross-app), reintenta con su. Devuelve true si se obtuvo contenido.
+// Lee /proc/<pid>/maps directamente (o vía helper stealth). Devuelve true si se obtuvo contenido.
 bool readProcessMaps(int pid, std::string& content) {
     std::string mapsPath = "/proc/" + std::to_string(pid) + "/maps";
     std::ifstream f(mapsPath);
@@ -342,26 +396,7 @@ bool readProcessMaps(int pid, std::string& content) {
         content = ss.str();
         if (!content.empty()) return true;
     }
-
-    LOGW("[FREEZY] readProcessMaps: apertura directa de %s falló, reintentando con su...",
-         mapsPath.c_str());
-    std::string cmd = "su -c 'cat " + mapsPath + " 2>/dev/null'";
-    FILE* fp = popen(cmd.c_str(), "r");
-    if (!fp) {
-        LOGE("[FREEZY] readProcessMaps: popen(su) falló");
-        return false;
-    }
-    char buf[8192];
-    size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
-        content.append(buf, n);
-    }
-    int rc = pclose(fp);
-    if (content.empty()) {
-        LOGW("[FREEZY] readProcessMaps: su no devolvió contenido (rc=%d)", rc);
-        return false;
-    }
-    return true;
+    return false;
 }
 
 long getGameBase(int pid) {
@@ -370,55 +405,55 @@ long getGameBase(int pid) {
         return g_game_base.load();
     }
 
-    std::string content;
-    if (!readProcessMaps(pid, content)) {
-        LOGE("[FREEZY] getGameBase: no se pudo leer /proc/%d/maps (ni directo ni su)", pid);
-        return 0;
+    // 1. Método primario Stealth: Resolver base directamente por el helper en RAM
+    long base = 0;
+    int ptrW = 4;
+    if (rootMemIOGetModuleBase(pid, "libil2cpp.so", base, ptrW) && base > 0) {
+        g_ptr_width = ptrW;
+        g_base_pid = pid;
+        g_game_base = base;
+        LOGI("[FREEZY] getGameBase (via stealth helper): libil2cpp.so en 0x%llx ptr_width=%d",
+             (unsigned long long)base, ptrW);
+        return base;
     }
 
-    size_t pos = 0;
-    while (pos < content.size()) {
-        size_t eol = content.find('\n', pos);
-        if (eol == std::string::npos) eol = content.size();
-        std::string line = content.substr(pos, eol - pos);
-        pos = eol + 1;
+    // 2. Fallback: lectura directa sin su
+    std::string content;
+    if (readProcessMaps(pid, content)) {
+        size_t pos = 0;
+        while (pos < content.size()) {
+            size_t eol = content.find('\n', pos);
+            if (eol == std::string::npos) eol = content.size();
+            std::string line = content.substr(pos, eol - pos);
+            pos = eol + 1;
 
-        if (line.find("libil2cpp.so") != std::string::npos) {
-            // Autodetectar ancho de puntero según ABI: /arm64/ (o arm64-v8a) = 8 bytes; /arm/ = 4 bytes
-            if (line.find("/arm64") != std::string::npos) {
-                g_ptr_width = 8;
-            } else {
-                g_ptr_width = 4;
-            }
-            size_t dash = line.find('-');
-            if (dash != std::string::npos) {
-                std::string addrStr = line.substr(0, dash);
-                try {
-                    long base = std::stoull(addrStr, nullptr, 16);
-                    LOGI("[FREEZY] getGameBase: libil2cpp.so en 0x%llx (PID %d) ptr_width=%d → %s",
-                         (unsigned long long)base, pid, g_ptr_width.load(), line.c_str());
-                    g_base_pid = pid;
-                    g_game_base = base;
-                    return base;
-                } catch (const std::exception& e) {
-                    LOGE("Error al parsear dirección: %s", e.what());
-                    return 0;
+            if (line.find("libil2cpp.so") != std::string::npos) {
+                if (line.find("/arm64") != std::string::npos || line.find("arm64-v8a") != std::string::npos) {
+                    g_ptr_width = 8;
+                } else {
+                    g_ptr_width = 4;
+                }
+                size_t dash = line.find('-');
+                if (dash != std::string::npos) {
+                    std::string addrStr = line.substr(0, dash);
+                    try {
+                        base = std::stoull(addrStr, nullptr, 16);
+                        g_base_pid = pid;
+                        g_game_base = base;
+                        return base;
+                    } catch (...) {}
                 }
             }
         }
     }
-    LOGE("[FREEZY] getGameBase: libil2cpp.so NO encontrada en /proc/%d/maps", pid);
+    LOGE("[FREEZY] getGameBase: no se pudo obtener base de libil2cpp.so");
     return 0;
 }
 
-// Registra un resumen de las librerías .so mapeadas en el proceso para diagnosticar
-// por qué no aparece libil2cpp.so (cambio de versión/engine o proceso equivocado).
+// Registra un resumen de las librerías .so mapeadas en el proceso
 void logMappedLibs(int pid, const char* context) {
     std::string content;
-    if (!readProcessMaps(pid, content)) {
-        LOGE("[FREEZY] [%s] No se pudo leer /proc/%d/maps", context, pid);
-        return;
-    }
+    if (!readProcessMaps(pid, content)) return;
 
     int lines = 0;
     int soLines = 0;
@@ -448,17 +483,10 @@ void logMappedLibs(int pid, const char* context) {
 
     LOGI("[FREEZY] [%s] maps: %d líneas, %d con .so, %zu libs distintas",
          context, lines, soLines, soNames.size());
-
-    std::string summary;
-    for (size_t i = 0; i < soNames.size() && i < 40; i++) {
-        summary += soNames[i];
-        summary += " ";
-    }
-    LOGI("[FREEZY] [%s] libs: %s", context, summary.c_str());
 }
 
 // ==============================================================================================
-// [FUNCIÓN PARA ENCONTRAR EL PID - CORREGIDA]
+// [FUNCIÓN PARA ENCONTRAR EL PID - 100% STEALTH SIN SU]
 // ==============================================================================================
 
 int findGamePidNative() {
@@ -467,23 +495,33 @@ int findGamePidNative() {
         "com.dts.freefireth",
         "com.dts.freefire"
     };
-    
-    for (int i = 0; i < 3; i++) {
-        // Usar ps -A con grep para Android 7+
-        std::string cmd = "su -c 'ps -A | grep " + std::string(PACKAGES[i]) + " | awk \"{print \\$2}\"'";
-        FILE* fp = popen(cmd.c_str(), "r");
-        if (!fp) continue;
-        
-        char buffer[32];
-        if (fgets(buffer, sizeof(buffer), fp) != nullptr) {
-            int pid = atoi(buffer);
-            pclose(fp);
-            if (pid > 0) {
-                LOGI("[FREEZY] PID encontrado: %d (%s)", pid, PACKAGES[i]);
-                return pid;
+
+    DIR* dir = opendir("/proc");
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            char* endptr = nullptr;
+            long pid = strtol(entry->d_name, &endptr, 10);
+            if (*endptr != '\0' || pid <= 0) continue;
+
+            char cmdPath[64];
+            snprintf(cmdPath, sizeof(cmdPath), "/proc/%ld/cmdline", pid);
+            FILE* fp = fopen(cmdPath, "r");
+            if (!fp) continue;
+            char cmdline[128] = {0};
+            size_t n = fread(cmdline, 1, sizeof(cmdline) - 1, fp);
+            fclose(fp);
+            if (n <= 0) continue;
+
+            for (int i = 0; i < 3; i++) {
+                if (strstr(cmdline, PACKAGES[i]) != nullptr) {
+                    closedir(dir);
+                    LOGI("[FREEZY] PID encontrado stealth (sin su): %ld (%s)", pid, PACKAGES[i]);
+                    return (int)pid;
+                }
             }
         }
-        pclose(fp);
+        closedir(dir);
     }
     return -1;
 }
@@ -495,10 +533,11 @@ int findGamePidNative() {
 // Heurística para descartar punteros basura ANTES de lanzar lecturas costosas.
 // El rango depende del ancho de puntero configurado (32 o 64 bits).
 inline bool isPlausiblePtr(long p) {
+    uintptr_t u = (uintptr_t)p;
     if (g_ptr_width.load() == 4) {
-        return p >= 0x10000 && p <= 0xFFFFFFFFLL && (p & 3) == 0;
+        return u >= 0x10000 && u <= 0xFFFFFFFFU && (u & 3) == 0;
     }
-    return p >= 0x10000 && p < 0x7fffffffffffLL && (p & 7) == 0;
+    return u >= 0x10000 && u < 0x7fffffffffffULL && (u & 7) == 0;
 }
 
 bool readPtr(int pid, long addr, long& out) {
