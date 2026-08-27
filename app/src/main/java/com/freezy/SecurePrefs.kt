@@ -37,7 +37,9 @@ object SecurePrefs {
         "server_base_url",
         "activation_date",
         "expiration_date",
-        "session_token"
+        "session_token",
+        "license_tier",
+        "license_tier_source"
     )
 
     private fun getSecretKey(): SecretKey {

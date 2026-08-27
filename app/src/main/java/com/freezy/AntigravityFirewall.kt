@@ -22,8 +22,24 @@ class AntigravityFirewall : VpnService() {
     companion object {
         init { System.loadLibrary("ncx") }
 
+        @Volatile
+        var isTunnelRunning: Boolean = false
+            private set
+
         /** Llamado desde BubbleService para activar/desactivar el drop asimétrico */
         @JvmStatic external fun setLagActive(active: Boolean)
+
+        /** Filtro Ghost saliente independiente: descarta UDP de 50..200 bytes. */
+        @JvmStatic external fun setGhostActive(active: Boolean)
+
+        /** Inicia captura o, al apagar, reproduce los paquetes de Teleport Drop. */
+        @JvmStatic external fun setTeleportDropActive(active: Boolean)
+
+        /** 0 Apagado, 1 Capturando, 2 Reproduciendo. */
+        @JvmStatic external fun getTeleportDropState(): Int
+
+        /** Cancela y limpia Teleport Drop sin reproducir (solo para cierre del servicio). */
+        @JvmStatic external fun cancelTeleportDrop()
 
         @JvmStatic external fun notifyNetworkChange()
     }
@@ -88,7 +104,10 @@ class AntigravityFirewall : VpnService() {
                 .addAddress(NativeBridge.getNativeString(NativeBridge.S94), 32)
                 .addRoute(NativeBridge.getNativeString(NativeBridge.S95), 0)   // Capturar todo el tráfico IPv4
             
-            builder.setMtu(65535)             // Evitar fragmentación IP entregando paquetes reensamblados al motor nativo
+            // MTU real de red. 65535 hacía que el juego generara datagramas que
+            // después no podían reconstruirse en el proxy (límite ~1500),
+            // provocando pérdida sostenida y un ping aparente de 999 ms.
+            builder.setMtu(1500)
 
             // Aislamiento de Aplicación Estricto
             try {
@@ -105,6 +124,7 @@ class AntigravityFirewall : VpnService() {
                 return
             }
             vpnInterface = iface
+            isTunnelRunning = true
 
             // Monitorear cambios de red activa (WiFi <-> Datos)
             try {
@@ -139,6 +159,7 @@ class AntigravityFirewall : VpnService() {
 
 
     private fun shutdown() {
+        isTunnelRunning = false
         stopNativeEngine()
         try {
             networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }

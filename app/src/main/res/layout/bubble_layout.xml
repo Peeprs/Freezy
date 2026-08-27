@@ -54,27 +54,39 @@
             android:gravity="center_horizontal"
             android:layout_marginEnd="10dp">
 
-            <!-- Tab 1: Combate / Aimbot (Calavera) -->
-            <ImageButton
-                android:id="@+id/tab_combat"
-                android:layout_width="42dp"
-                android:layout_height="42dp"
-                android:background="@drawable/shape_tab_active"
-                android:src="@drawable/ic_skull"
-                android:tint="#00E5FF"
-                android:contentDescription="Combate"
-                android:padding="8dp" />
-
-            <!-- Tab 2: Visuales / ESP (Stickman con arma) -->
+            <!-- Tab 1: Visuales / ESP (Stickman con arma) -->
             <ImageButton
                 android:id="@+id/tab_esp"
                 android:layout_width="42dp"
                 android:layout_height="42dp"
+                android:background="@drawable/shape_tab_active"
+                android:src="@drawable/ic_enemy"
+                android:tint="#00E5FF"
+                android:contentDescription="Visuales"
+                android:padding="8dp" />
+
+            <!-- Tab 2: Combate / Aim (Casco Táctico) -->
+            <ImageButton
+                android:id="@+id/tab_aim"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
                 android:layout_marginTop="8dp"
                 android:background="@drawable/shape_tab_inactive"
-                android:src="@drawable/ic_enemy"
-                android:tint="#7E8B9B"
-                android:contentDescription="Enemigos"
+                android:src="@drawable/ic_helmet"
+                android:tint="#8A9BA8"
+                android:contentDescription="Combate"
+                android:padding="8dp" />
+
+            <!-- Tab 3: Movimiento / Vuelo (Avión) -->
+            <ImageButton
+                android:id="@+id/tab_fly"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/shape_tab_inactive"
+                android:src="@drawable/ic_airplane"
+                android:tint="#8A9BA8"
+                android:contentDescription="Movimiento"
                 android:padding="8dp" />
 
             <!-- Espacio flexible para empujar el botón de regresar al fondo -->
@@ -137,6 +149,57 @@
                     android:paddingVertical="2dp" />
             </LinearLayout>
 
+            <!-- Sub-Tabs Segmentado: ESP | ESP V2 | CHAMS -->
+            <LinearLayout
+                android:id="@+id/visuals_subtabs_container"
+                android:layout_width="match_parent"
+                android:layout_height="28dp"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginBottom="6dp"
+                android:background="@drawable/shape_tab_back"
+                android:padding="2dp">
+
+                <TextView
+                    android:id="@+id/btn_subtab_esp"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="ESP"
+                    android:textColor="#00E5FF"
+                    android:textStyle="bold"
+                    android:textSize="10sp"
+                    android:letterSpacing="0.05"
+                    android:background="@drawable/shape_tab_active" />
+
+                <TextView
+                    android:id="@+id/btn_subtab_esp_v2"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="ESP V2"
+                    android:textColor="#8A9BA8"
+                    android:textStyle="bold"
+                    android:textSize="10sp"
+                    android:letterSpacing="0.05"
+                    android:background="@android:color/transparent" />
+
+                <TextView
+                    android:id="@+id/btn_subtab_chams"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="CHAMS"
+                    android:textColor="#8A9BA8"
+                    android:textStyle="bold"
+                    android:textSize="10sp"
+                    android:letterSpacing="0.05"
+                    android:background="@android:color/transparent" />
+            </LinearLayout>
+
             <ScrollView
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
@@ -150,143 +213,14 @@
                     android:layout_height="wrap_content">
 
                     <!-- ====================================================== -->
-                    <!-- SECCIÓN 1: COMBATE / AIMBOT (Modular: 2 Columnas)       -->
-                    <!-- ====================================================== -->
-                    <LinearLayout
-                        android:id="@+id/combat_section"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal">
-
-                        <!-- Módulo 1: Aimbot Principal -->
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="match_parent"
-                            android:layout_weight="1"
-                            android:orientation="vertical"
-                            android:background="@drawable/bg_glass_card"
-                            android:padding="8dp"
-                            android:layout_marginEnd="6dp">
-
-                            <TextView
-                                android:id="@+id/tv_title_aimbot"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:textColor="#00E5FF"
-                                android:textSize="10sp"
-                                android:textStyle="bold"
-                                android:letterSpacing="0.05"
-                                android:layout_marginBottom="6dp" />
-
-                            <Switch
-                                android:id="@+id/recoil_switch"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:textColor="#FFFFFF"
-                                android:textSize="11sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
-
-                            <TextView
-                                android:id="@+id/status_text"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:textColor="#8A9BA8"
-                                android:textSize="9sp" />
-
-                            <View
-                                android:layout_width="match_parent"
-                                android:layout_height="1dp"
-                                android:background="#20FFFFFF"
-                                android:layout_marginVertical="8dp" />
-
-                            <Switch
-                                android:id="@+id/sniper_switch_switch"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:textColor="#FFFFFF"
-                                android:textSize="11sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
-
-                            <TextView
-                                android:id="@+id/sniper_switch_status"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:textColor="#8A9BA8"
-                                android:textSize="9sp" />
-
-                        </LinearLayout>
-
-                        <!-- Módulo 2: Sniper Assist -->
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="match_parent"
-                            android:layout_weight="1"
-                            android:orientation="vertical"
-                            android:background="@drawable/bg_glass_card"
-                            android:padding="8dp">
-
-                            <TextView
-                                android:id="@+id/tv_title_sniper"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:textColor="#00E5FF"
-                                android:textSize="10sp"
-                                android:textStyle="bold"
-                                android:letterSpacing="0.05"
-                                android:layout_marginBottom="6dp" />
-
-                            <Switch
-                                android:id="@+id/sniper_scope_switch"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:textColor="#FFFFFF"
-                                android:textSize="11sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
-
-                            <Switch
-                                android:id="@+id/sniper_body_switch"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="6dp"
-                                android:textColor="#CFD8DC"
-                                android:textSize="10sp"
-                                android:track="@drawable/custom_switch_track"
-                                android:thumb="@drawable/custom_switch_thumb"
-                                android:splitTrack="false"
-                                android:switchMinWidth="38dp" />
-
-                            <TextView
-                                android:id="@+id/sniper_scope_status"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="6dp"
-                                android:textColor="#8A9BA8"
-                                android:textSize="9sp" />
-
-                        </LinearLayout>
-
-                    </LinearLayout>
-
-                    <!-- ====================================================== -->
-                    <!-- SECCIÓN 2: ENEMIGOS / ESP (Modular: 2 Columnas)         -->
+                    <!-- SECCIÓN: ENEMIGOS / ESP (Modular: 2 Columnas)          -->
                     <!-- ====================================================== -->
                     <LinearLayout
                         android:id="@+id/esp_section"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:visibility="gone">
+                        android:visibility="visible">
 
                         <!-- COLUMNA 1: TRAZADOS Y FILTROS -->
                         <LinearLayout
@@ -445,21 +379,9 @@
                                     android:layout_marginBottom="4dp" />
 
                                 <Switch
-                                    android:id="@+id/esp_health_switch"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:textColor="#CFD8DC"
-                                    android:textSize="10sp"
-                                    android:track="@drawable/custom_switch_track"
-                                    android:thumb="@drawable/custom_switch_thumb"
-                                    android:splitTrack="false"
-                                    android:switchMinWidth="38dp" />
-
-                                <Switch
                                     android:id="@+id/esp_name_switch"
                                     android:layout_width="match_parent"
                                     android:layout_height="wrap_content"
-                                    android:layout_marginTop="4dp"
                                     android:textColor="#CFD8DC"
                                     android:textSize="10sp"
                                     android:track="@drawable/custom_switch_track"
@@ -480,10 +402,24 @@
                                     android:switchMinWidth="38dp" />
 
                                 <Switch
+                                    android:id="@+id/esp_health_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="ESP Health"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
                                     android:id="@+id/esp_weapon_switch"
                                     android:layout_width="match_parent"
                                     android:layout_height="wrap_content"
                                     android:layout_marginTop="4dp"
+                                    android:text="ESP Weapon"
                                     android:textColor="#CFD8DC"
                                     android:textSize="10sp"
                                     android:track="@drawable/custom_switch_track"
@@ -542,6 +478,26 @@
                                     android:splitTrack="false" />
 
                                 <TextView
+                                    android:id="@+id/esp_box_color_status"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="Box: Azul"
+                                    android:textColor="#2196F3"
+                                    android:textSize="9sp" />
+
+                                <SeekBar
+                                    android:id="@+id/esp_box_color_seekbar"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="1dp"
+                                    android:max="7"
+                                    android:progress="2"
+                                    android:progressDrawable="@drawable/custom_seekbar_track"
+                                    android:thumb="@drawable/custom_seekbar_thumb"
+                                    android:splitTrack="false" />
+
+                                <TextView
                                     android:id="@+id/esp_origin_status"
                                     android:layout_width="match_parent"
                                     android:layout_height="wrap_content"
@@ -578,6 +534,686 @@
                                     android:progressDrawable="@drawable/custom_seekbar_track"
                                     android:thumb="@drawable/custom_seekbar_thumb"
                                     android:splitTrack="false" />
+                            </LinearLayout>
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                    <!-- ====================================================== -->
+                    <!-- SECCIÓN: ESP V2 (Glow / Corner / FullBox)              -->
+                    <!-- ====================================================== -->
+                    <LinearLayout
+                        android:id="@+id/esp_v2_section"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:orientation="vertical"
+                            android:background="@drawable/bg_glass_card"
+                            android:padding="8dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="ESP V2"
+                                android:textColor="#00E5FF"
+                                android:textSize="10sp"
+                                android:textStyle="bold"
+                                android:letterSpacing="0.05"
+                                android:layout_marginBottom="4dp" />
+
+                            <Switch
+                                android:id="@+id/esp_glow_switch"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="ESP Glow"
+                                android:textColor="#FFFFFF"
+                                android:textSize="11sp"
+                                android:track="@drawable/custom_switch_track"
+                                android:thumb="@drawable/custom_switch_thumb"
+                                android:splitTrack="false"
+                                android:switchMinWidth="38dp" />
+
+                            <Switch
+                                android:id="@+id/esp_corner_switch"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="ESP Corner"
+                                android:textColor="#CFD8DC"
+                                android:textSize="10sp"
+                                android:track="@drawable/custom_switch_track"
+                                android:thumb="@drawable/custom_switch_thumb"
+                                android:splitTrack="false"
+                                android:switchMinWidth="38dp" />
+
+                            <Switch
+                                android:id="@+id/esp_fullbox_switch"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="ESP FullBox"
+                                android:textColor="#CFD8DC"
+                                android:textSize="10sp"
+                                android:track="@drawable/custom_switch_track"
+                                android:thumb="@drawable/custom_switch_thumb"
+                                android:splitTrack="false"
+                                android:switchMinWidth="38dp" />
+
+                            <Switch
+                                android:id="@+id/esp_3d_box_switch"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="ESP 3D Box"
+                                android:textColor="#CFD8DC"
+                                android:textSize="10sp"
+                                android:track="@drawable/custom_switch_track"
+                                android:thumb="@drawable/custom_switch_thumb"
+                                android:splitTrack="false"
+                                android:switchMinWidth="38dp" />
+
+                            <Switch
+                                android:id="@+id/esp_closest_glow_switch"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="Closest Glow Line"
+                                android:textColor="#CFD8DC"
+                                android:textSize="10sp"
+                                android:track="@drawable/custom_switch_track"
+                                android:thumb="@drawable/custom_switch_thumb"
+                                android:splitTrack="false"
+                                android:switchMinWidth="38dp" />
+
+                            <Switch
+                                android:id="@+id/esp_minimap_switch"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="MiniMap"
+                                android:textColor="#CFD8DC"
+                                android:textSize="10sp"
+                                android:track="@drawable/custom_switch_track"
+                                android:thumb="@drawable/custom_switch_thumb"
+                                android:splitTrack="false"
+                                android:switchMinWidth="38dp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="Activa ESP en la pestaña principal para mostrar los estilos V2."
+                                android:textColor="#8A9BA8"
+                                android:textSize="8sp" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:background="@drawable/bg_glass_card"
+                            android:padding="8dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="COLORES INDEPENDIENTES"
+                                android:textColor="#00E5FF"
+                                android:textSize="10sp"
+                                android:textStyle="bold"
+                                android:letterSpacing="0.04"
+                                android:layout_marginBottom="3dp" />
+
+                            <TextView
+                                android:id="@+id/esp_glow_color_status"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Glow: Cyan"
+                                android:textColor="#00BCD4"
+                                android:textSize="9sp" />
+
+                            <SeekBar
+                                android:id="@+id/esp_glow_color_seekbar"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:max="7"
+                                android:progress="3"
+                                android:progressDrawable="@drawable/custom_seekbar_track"
+                                android:thumb="@drawable/custom_seekbar_thumb"
+                                android:splitTrack="false" />
+
+                            <TextView
+                                android:id="@+id/esp_corner_color_status"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Corner: Amarillo"
+                                android:textColor="#FFEB3B"
+                                android:textSize="9sp" />
+
+                            <SeekBar
+                                android:id="@+id/esp_corner_color_seekbar"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:max="7"
+                                android:progress="7"
+                                android:progressDrawable="@drawable/custom_seekbar_track"
+                                android:thumb="@drawable/custom_seekbar_thumb"
+                                android:splitTrack="false" />
+
+                            <TextView
+                                android:id="@+id/esp_fullbox_color_status"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="FullBox: Rosa"
+                                android:textColor="#E91E63"
+                                android:textSize="9sp" />
+
+                            <SeekBar
+                                android:id="@+id/esp_fullbox_color_seekbar"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:max="7"
+                                android:progress="4"
+                                android:progressDrawable="@drawable/custom_seekbar_track"
+                                android:thumb="@drawable/custom_seekbar_thumb"
+                                android:splitTrack="false" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ====================================================== -->
+                    <!-- SECCIÓN: CHAMS (Modular: 2 Columnas)                   -->
+                    <!-- ====================================================== -->
+                    <LinearLayout
+                        android:id="@+id/chams_section"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <!-- COLUMNA 1: ACTIVADORES CHAMS -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginEnd="6dp">
+
+                            <!-- Tarjeta 1: CHAMS PERSONAJE -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp">
+
+                                <TextView
+                                    android:id="@+id/tv_title_chams_player"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="CHAMS PERSONAJE"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
+
+                                <Switch
+                                    android:id="@+id/chams_player_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="Chams Personaje"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="11sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/chams_player_glow_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="Resplandor / Glow"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/chams_player_wireframe_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="Malla / Wireframe"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+                            </LinearLayout>
+
+                            <!-- Tarjeta 2: CHAMS ARMAS -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp"
+                                android:layout_marginTop="6dp">
+
+                                <TextView
+                                    android:id="@+id/tv_title_chams_weapon"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="CHAMS ARMA"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
+
+                                <Switch
+                                    android:id="@+id/chams_weapon_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="Chams Arma"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="11sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/chams_through_wall_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="Tras Paredes (Z-Test)"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+                            </LinearLayout>
+
+                        </LinearLayout>
+
+                        <!-- COLUMNA 2: PERSONALIZACIÓN & COLOR CHAMS -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <!-- Tarjeta 3: ESTILO Y COLOR CHAMS -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp">
+
+                                <TextView
+                                    android:id="@+id/tv_title_chams_custom"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="ESTILO Y COLOR"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
+
+                                <Switch
+                                    android:id="@+id/chams_rgb_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="Chams RGB Arcoíris"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <TextView
+                                    android:id="@+id/chams_status"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="Color: Verde Neón"
+                                    android:textColor="#8A9BA8"
+                                    android:textSize="9sp" />
+
+                                <SeekBar
+                                    android:id="@+id/chams_color_seekbar"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="1dp"
+                                    android:max="7"
+                                    android:progress="1"
+                                    android:progressDrawable="@drawable/custom_seekbar_track"
+                                    android:thumb="@drawable/custom_seekbar_thumb"
+                                    android:splitTrack="false" />
+
+                                <TextView
+                                    android:id="@+id/chams_mode_status"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="Modo: Sólido Intenso"
+                                    android:textColor="#8A9BA8"
+                                    android:textSize="9sp" />
+
+                                <SeekBar
+                                    android:id="@+id/chams_mode_seekbar"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="1dp"
+                                    android:max="3"
+                                    android:progress="0"
+                                    android:progressDrawable="@drawable/custom_seekbar_track"
+                                    android:thumb="@drawable/custom_seekbar_thumb"
+                                    android:splitTrack="false" />
+
+                            </LinearLayout>
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                    <!-- ====================================================== -->
+                    <!-- SECCIÓN: COMBATE / AIM (Icono Casco)                   -->
+                    <!-- ====================================================== -->
+                    <LinearLayout
+                        android:id="@+id/aim_section"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <!-- COLUMNA 1: APUNTADO & ASISTENCIA -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginEnd="6dp">
+
+                            <!-- Tarjeta 1: AUTO AIMBOT & SILENT -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp">
+
+                                <TextView
+                                    android:id="@+id/tv_title_aim_assist"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="ASISTENCIA DE APUNTADO"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
+
+                                <Switch
+                                    android:id="@+id/silent_aim_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="Silent Aim"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="11sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/aimbot_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="Aimbot"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/no_reload_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="NoReload"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                            </LinearLayout>
+
+                        </LinearLayout>
+
+                        <!-- COLUMNA 2: VERIFICACIÓN -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <!-- Tarjeta 2: VERIFICACIÓN VISIBLE Y COMBATE -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp">
+
+                                <TextView
+                                    android:id="@+id/tv_title_aim_advanced"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="ACCIONES DE COMBATE"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
+
+                                <Switch
+                                    android:id="@+id/aim_visible_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="Aim Visible"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="11sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <TextView
+                                    android:id="@+id/aim_visible_fov_status"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="5dp"
+                                    android:text="Aim Visible FOV: 200 px"
+                                    android:textColor="#8A9BA8"
+                                    android:textSize="8sp" />
+
+                                <SeekBar
+                                    android:id="@+id/aim_visible_fov_seekbar"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:max="450"
+                                    android:progress="150"
+                                    android:progressDrawable="@drawable/custom_seekbar_track"
+                                    android:thumb="@drawable/custom_seekbar_thumb"
+                                    android:splitTrack="false" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="7dp"
+                                    android:text="Aimbot Target"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="9sp"
+                                    android:textStyle="bold" />
+
+                                <Spinner
+                                    android:id="@+id/aimbot_target_spinner"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="32dp"
+                                    android:layout_marginTop="2dp"
+                                    android:background="@drawable/shape_tab_back"
+                                    android:popupBackground="#16242D"
+                                    android:spinnerMode="dropdown"
+                                    android:paddingStart="8dp"
+                                    android:paddingEnd="8dp" />
+                            </LinearLayout>
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                    <!-- ====================================================== -->
+                    <!-- SECCIÓN: MOVIMIENTO / VUELO (Icono Avión)               -->
+                    <!-- ====================================================== -->
+                    <LinearLayout
+                        android:id="@+id/fly_section"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <!-- COLUMNA 1: MODOS DE VUELO Y GHOST -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginEnd="6dp">
+
+                            <!-- Tarjeta 1: VUELO Y GHOST -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp">
+
+                                <TextView
+                                    android:id="@+id/tv_title_fly_modes"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="MODOS DE VUELO"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
+
+                                <Switch
+                                    android:id="@+id/fly_hack_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="Fly Hack"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="11sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/ghost_hack_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="Ghost Hack (Flotante)"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+                            </LinearLayout>
+
+                        </LinearLayout>
+
+                        <!-- COLUMNA 2: PULL & TELETRANSPORTE -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <!-- Tarjeta 2: TELETRANSPORTE Y EXPLOITS -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical"
+                                android:background="@drawable/bg_glass_card"
+                                android:padding="8dp">
+
+                                <TextView
+                                    android:id="@+id/tv_title_teleport_exploits"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="TELEPORT &amp; EXPLOITS"
+                                    android:textColor="#00E5FF"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold"
+                                    android:letterSpacing="0.05"
+                                    android:layout_marginBottom="4dp" />
+
+                                <Switch
+                                    android:id="@+id/enemy_pull_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="Enemy Pull (Flotante)"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="11sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
+                                <Switch
+                                    android:id="@+id/teleport_drop_switch"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="Teleport Drop (Flotante)"
+                                    android:textColor="#CFD8DC"
+                                    android:textSize="10sp"
+                                    android:track="@drawable/custom_switch_track"
+                                    android:thumb="@drawable/custom_switch_thumb"
+                                    android:splitTrack="false"
+                                    android:switchMinWidth="38dp" />
+
                             </LinearLayout>
 
                         </LinearLayout>

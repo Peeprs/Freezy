@@ -30,6 +30,8 @@ object SessionGuard {
             .remove("secure_endpoint")
             .remove("activation_date")
             .remove("expiration_date")
+            .remove(LicenseEntitlements.STORAGE_KEY)
+            .remove(LicenseEntitlements.SOURCE_KEY)
             .apply()
 
         // Cualquier cierre de sesión debe apagar la burbuja y su limpieza

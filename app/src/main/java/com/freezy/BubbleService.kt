@@ -19,13 +19,17 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.util.Log
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -63,13 +67,35 @@ class BubbleService : Service() {
     private lateinit var recoilMenu: LinearLayout
     private var isMenuExpanded = false
     private var isLongClickTriggered = false
-    private var aimbotSwitchBusy = false
-    private var sniperScopeSwitchBusy = false
-    private var sniperSwitchBusy = false
     private var espOverlayView: EspOverlayView? = null
+    private var ghostFloatingView: View? = null
+    private var ghostFloatingParams: WindowManager.LayoutParams? = null
+    private var teleportDropFloatingView: View? = null
+    private var teleportDropFloatingParams: WindowManager.LayoutParams? = null
+    @Volatile private var teleportDropOperationGeneration = 0
+    @Volatile private var teleportDropUsesRoot = false
+    private var enemyPullFloatingView: View? = null
+    private var enemyPullFloatingParams: WindowManager.LayoutParams? = null
+    private var enemyPullDirection = 0
+    private var enemyPullRequestGeneration = 0
+    private var isGhostActive = false
+    private var ghostUsesRoot = false
+    private var ghostTargetPackage: String? = null
+    @Volatile private var ghostOperationGeneration = 0
+    private var isAimbotPacketDelayActive = false
+    private var aimVisibleSwitchBusy = false
+    private var suppressEspMasterListener = false
+    private var appliedRootMode: Boolean? = null
     private val longClickRunnable = Runnable {
-        isLongClickTriggered = true
-        expandBubbleMenu()
+        if (LicenseEntitlements.hasPaidFeatures(this)) {
+            val compatibility = currentCompatibility()
+            if (compatibility.supportsAdvancedFeatures) {
+                isLongClickTriggered = true
+                expandBubbleMenu()
+            } else {
+                Toast.makeText(this, compatibility.message, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     // Vista personalizada que dibuja el arco circular de progreso
@@ -158,13 +184,19 @@ class BubbleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
-            targetPackage = intent.getStringExtra(NativeBridge.getNativeString(NativeBridge.S92))
+            val incomingPackage = intent.getStringExtra(NativeBridge.getNativeString(NativeBridge.S92))
+            val targetChanged = !incomingPackage.isNullOrEmpty() && incomingPackage != targetPackage
+            if (!incomingPackage.isNullOrEmpty()) targetPackage = incomingPackage
             if (intent.action == NativeBridge.getNativeString(NativeBridge.S211)) {
                 recreateBubbles()
                 return START_STICKY
             }
             if (intent.action == NativeBridge.getNativeString(NativeBridge.S212)) {
                 updateBubbleSize()
+                return START_STICKY
+            }
+            if (targetChanged && ::bubbleView.isInitialized) {
+                recreateBubbles()
                 return START_STICKY
             }
         }
@@ -209,6 +241,15 @@ class BubbleService : Service() {
         // root
         if (useRoot) {
             Thread {
+                        val startupPackage = if (prefs.getBoolean("use_ff_max", false)) {
+                            NativeBridge.getNativeString(NativeBridge.S98)
+                        } else {
+                            NativeBridge.getNativeString(NativeBridge.S99)
+                        }
+                        // Limpiar reglas que pudieran sobrevivir a un cierre
+                        // forzado anterior antes de aceptar nuevas activaciones.
+                        RootTeleportDropController.disable()
+                        GhostController.disableRoot(this@BubbleService, startupPackage)
                         executeRootCommand(NativeBridge.getNativeString(NativeBridge.S101))
                         executeRootCommand(NativeBridge.getNativeString(NativeBridge.S102))
                         executeRootCommand(NativeBridge.getNativeString(NativeBridge.S103))
@@ -331,6 +372,24 @@ class BubbleService : Service() {
                                 handleLicenseExpired(message)
                             } else {
                                 licenseCheckFailCount = 0
+                                val wasPaid = LicenseEntitlements.hasPaidFeatures(this@BubbleService)
+                                val isPaid = LicenseEntitlements.updateFromServer(
+                                    this@BubbleService,
+                                    jsonObject
+                                )
+                                if (wasPaid != isPaid || !isPaid) {
+                                    handler.post {
+                                        val policyPrefs = getSharedPreferences(
+                                            NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+                                            Context.MODE_PRIVATE
+                                        )
+                                        enforceModeAndLicensePolicy(
+                                            policyPrefs.getBoolean("use_root", false),
+                                            isPaid && currentCompatibility().supportsAdvancedFeatures
+                                        )
+                                        recreateBubbles()
+                                    }
+                                }
                                 val warning = jsonObject.optString("update_warning", "")
                                 if (warning.isNotEmpty()) {
                                     handler.post {
@@ -423,6 +482,10 @@ class BubbleService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
+        val hasAdvancedAccess = LicenseEntitlements.hasPaidFeatures(this) &&
+            currentCompatibility().supportsAdvancedFeatures
+
+        enforceModeAndLicensePolicy(useRoot, hasAdvancedAccess)
 
         bubbleView = LayoutInflater.from(this).inflate(R.layout.bubble_layout, null)
         bubbleMainIcon = bubbleView.findViewById(R.id.bubble_main_icon)
@@ -465,7 +528,9 @@ class BubbleService : Service() {
                         }
         windowManager.addView(bubbleView, params)
 
-        setupMemoryHelper()
+        // El lector de memoria y sus binarios auxiliares pertenecen únicamente
+        // al modo Root pagado. NoRoot y TRIAL nunca los preparan ni ejecutan.
+        if (useRoot && hasAdvancedAccess) setupMemoryHelper()
         setupMenu()
         setupTouchListener()
         actualizarUI()
@@ -495,11 +560,145 @@ class BubbleService : Service() {
             NativeBridge.setMemoryHelperPath(chosenPath)
             val dm = resources.displayMetrics
             val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
-            NativeBridge.setPointerWidth(prefs.getInt(NativeBridge.getNativeString(NativeBridge.S206), 4))
+            val defaultPtrW = if (android.os.Process.is64Bit() || android.os.Build.SUPPORTED_64_BIT_ABIS.isNotEmpty()) 8 else 4
+            NativeBridge.setPointerWidth(prefs.getInt(NativeBridge.getNativeString(NativeBridge.S206), defaultPtrW))
             val screenW = maxOf(dm.widthPixels, dm.heightPixels)
             val screenH = minOf(dm.widthPixels, dm.heightPixels)
             NativeBridge.setScreenSize(screenW, screenH)
         } catch (e: Exception) {
+        }
+    }
+
+    /**
+     * Elimina estados restaurados que no pertenecen al modo/licencia actuales.
+     * Esto evita que una preferencia antigua reactive una función aunque su
+     * switch ya no sea visible.
+     */
+    private fun enforceModeAndLicensePolicy(useRoot: Boolean, hasAdvancedAccess: Boolean) {
+        val prefs = getSharedPreferences(
+            NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+            Context.MODE_PRIVATE
+        )
+        val previousRootMode = appliedRootMode
+
+        // Un cambio de selector desmonta primero la tecnología anterior. Así no
+        // quedan simultáneamente una cadena Root y un túnel NoRoot activos.
+        if (previousRootMode != null && previousRootMode != useRoot) {
+            hideTeleportDropFloatingControl(replayCaptured = false)
+            if (previousRootMode) {
+                try { LagController.toggleFakeLag(false, true) } catch (_: Throwable) {}
+            } else {
+                try { LagController.toggleFakeLag(false, false) } catch (_: Throwable) {}
+            }
+            isFreezing = false
+            fillAnimator?.cancel()
+        }
+
+        if (!useRoot || !hasAdvancedAccess) {
+            prefs.edit()
+                .putBoolean("pref_silent_aim", false)
+                .putBoolean("pref_no_reload", false)
+                .putBoolean("pref_aimbot_switch", false)
+                .putBoolean("pref_aim_visible", false)
+                .putBoolean("pref_fly_hack", false)
+                .putBoolean("pref_enemy_pull", false)
+                .apply()
+            try { NativeBridge.setAimVisible(false) } catch (_: Throwable) {}
+            try { NativeBridge.setSilentAim(false) } catch (_: Throwable) {}
+            try { NativeBridge.setEnemyPull(false) } catch (_: Throwable) {}
+            try { NativeBridge.setEnemyPullDirection(0) } catch (_: Throwable) {}
+            try { NativeBridge.setFlyHack(false) } catch (_: Throwable) {}
+            try { NativeBridge.setNoReload(false) } catch (_: Throwable) {}
+            try { NativeBridge.setCameraAimbot(false) } catch (_: Throwable) {}
+            stopEspOverlay()
+            hideEnemyPullFloatingControl()
+            try { NativeBridge.shutdownMemoryAccess() } catch (_: Throwable) {}
+        }
+
+        if (!hasAdvancedAccess) {
+            prefs.edit().putBoolean("pref_teleport_drop", false).apply()
+            hideTeleportDropFloatingControl(replayCaptured = false)
+        }
+
+        if (!hasAdvancedAccess) {
+            prefs.edit().putBoolean("pref_ghost_hack", false).apply()
+            hideGhostFloatingSwitch()
+        } else if (GhostController.active && GhostController.usingRoot != useRoot) {
+            // Al cambiar de modo se desmonta primero la implementación anterior;
+            // el menú nuevo podrá crear después la burbuja de la ruta correcta.
+            hideGhostFloatingSwitch()
+        }
+
+        if (previousRootMode == false && useRoot && AntigravityFirewall.isTunnelRunning) {
+            try {
+                startService(Intent(this, AntigravityFirewall::class.java).apply {
+                    action = NativeBridge.getNativeString(NativeBridge.S91)
+                })
+            } catch (_: Exception) {}
+        }
+        appliedRootMode = useRoot
+    }
+
+    /** Menú pagado NoRoot: únicamente herramientas que usan el túnel de red. */
+    private fun setupNoRootPremiumMenu(prefs: android.content.SharedPreferences) {
+        val tabEsp = bubbleView.findViewById<ImageButton>(R.id.tab_esp)
+        val tabAim = bubbleView.findViewById<ImageButton>(R.id.tab_aim)
+        val tabFly = bubbleView.findViewById<ImageButton>(R.id.tab_fly)
+        tabEsp?.visibility = View.GONE
+        tabAim?.visibility = View.GONE
+        tabFly?.visibility = View.VISIBLE
+        tabFly?.setBackgroundResource(R.drawable.shape_tab_active)
+        tabFly?.setColorFilter(
+            Color.parseColor("#00E5FF"),
+            android.graphics.PorterDuff.Mode.SRC_IN
+        )
+
+        bubbleView.findViewById<View>(R.id.visuals_subtabs_container)?.visibility = View.GONE
+        bubbleView.findViewById<View>(R.id.esp_section)?.visibility = View.GONE
+        bubbleView.findViewById<View>(R.id.esp_v2_section)?.visibility = View.GONE
+        bubbleView.findViewById<View>(R.id.chams_section)?.visibility = View.GONE
+        bubbleView.findViewById<View>(R.id.aim_section)?.visibility = View.GONE
+        bubbleView.findViewById<View>(R.id.fly_section)?.visibility = View.VISIBLE
+        bubbleView.findViewById<TextView>(R.id.tv_hud_title)?.text = "FREEZY - RED NO ROOT"
+        bubbleView.findViewById<TextView>(R.id.tv_title_fly_modes)?.text = "RED NO ROOT"
+        bubbleView.findViewById<TextView>(R.id.tv_title_teleport_exploits)?.text = "DATOS Y RUTA"
+
+        val rootOnlySwitches = intArrayOf(
+            R.id.fly_hack_switch,
+            R.id.enemy_pull_switch
+        )
+        rootOnlySwitches.forEach { id ->
+            bubbleView.findViewById<View>(id)?.visibility = View.GONE
+        }
+
+        val ghostSwitch = bubbleView.findViewById<Switch>(R.id.ghost_hack_switch)
+        val teleportDropSwitch = bubbleView.findViewById<Switch>(R.id.teleport_drop_switch)
+        ghostSwitch?.visibility = View.VISIBLE
+        teleportDropSwitch?.visibility = View.VISIBLE
+
+        val savedGhost = prefs.getBoolean("pref_ghost_hack", false)
+        ghostSwitch?.isChecked = savedGhost
+        if (savedGhost) showGhostFloatingSwitch()
+        ghostSwitch?.setOnCheckedChangeListener { _, checked ->
+            if (!canUseAdvancedFeatures()) {
+                ghostSwitch.isChecked = false
+                return@setOnCheckedChangeListener
+            }
+            prefs.edit().putBoolean("pref_ghost_hack", checked).apply()
+            if (checked) showGhostFloatingSwitch() else hideGhostFloatingSwitch()
+        }
+
+        val savedDrop = prefs.getBoolean("pref_teleport_drop", false)
+        teleportDropSwitch?.isChecked = savedDrop
+        if (savedDrop) showTeleportDropFloatingControl()
+        teleportDropSwitch?.setOnCheckedChangeListener { _, checked ->
+            if (!canUseAdvancedFeatures()) {
+                teleportDropSwitch.isChecked = false
+                return@setOnCheckedChangeListener
+            }
+            prefs.edit().putBoolean("pref_teleport_drop", checked).apply()
+            if (checked) showTeleportDropFloatingControl()
+            else hideTeleportDropFloatingControl(replayCaptured = true)
         }
     }
 
@@ -509,15 +708,85 @@ private fun setupMenu() {
     val btnBackToLag = bubbleView.findViewById<ImageButton>(R.id.btn_back_to_lag)
     btnBackToLag.setOnClickListener { returnToFakeLag() }
 
-    // Inject dynamic strings from NativeBridge to all HUD headers and switches
+    val accessPrefs = getSharedPreferences(
+        NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+        Context.MODE_PRIVATE
+    )
+    val hasAdvancedAccess = canUseAdvancedFeatures()
+    if (!hasAdvancedAccess) return
+    if (!accessPrefs.getBoolean("use_root", false)) {
+        setupNoRootPremiumMenu(accessPrefs)
+        return
+    }
+
+    // ==========================================
+    // NAVEGACIÓN DE PESTAÑAS LATERALES (TABS)
+    // ==========================================
+    val tabEsp = bubbleView.findViewById<ImageButton>(R.id.tab_esp)
+    val tabAim = bubbleView.findViewById<ImageButton>(R.id.tab_aim)
+    val tabFly = bubbleView.findViewById<ImageButton>(R.id.tab_fly)
+
+    val visualsSubtabs = bubbleView.findViewById<View>(R.id.visuals_subtabs_container)
+    val espSection = bubbleView.findViewById<View>(R.id.esp_section)
+    val espV2Section = bubbleView.findViewById<View>(R.id.esp_v2_section)
+    val chamsSection = bubbleView.findViewById<View>(R.id.chams_section)
+    val aimSection = bubbleView.findViewById<View>(R.id.aim_section)
+    val flySection = bubbleView.findViewById<View>(R.id.fly_section)
+    val btnSubtabEsp = bubbleView.findViewById<TextView>(R.id.btn_subtab_esp)
+    val btnSubtabEspV2 = bubbleView.findViewById<TextView>(R.id.btn_subtab_esp_v2)
+    val btnSubtabChams = bubbleView.findViewById<TextView>(R.id.btn_subtab_chams)
+    var selectedVisualSubtab = 0
+
+    val tvHudTitle = bubbleView.findViewById<TextView>(R.id.tv_hud_title)
+
+    fun selectTab(tabIndex: Int) {
+        tabEsp?.setBackgroundResource(if (tabIndex == 0) R.drawable.shape_tab_active else R.drawable.shape_tab_inactive)
+        tabEsp?.setColorFilter(if (tabIndex == 0) Color.parseColor("#00E5FF") else Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
+
+        tabAim?.setBackgroundResource(if (tabIndex == 1) R.drawable.shape_tab_active else R.drawable.shape_tab_inactive)
+        tabAim?.setColorFilter(if (tabIndex == 1) Color.parseColor("#00E5FF") else Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
+
+        tabFly?.setBackgroundResource(if (tabIndex == 2) R.drawable.shape_tab_active else R.drawable.shape_tab_inactive)
+        tabFly?.setColorFilter(if (tabIndex == 2) Color.parseColor("#00E5FF") else Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
+
+        when (tabIndex) {
+            0 -> {
+                tvHudTitle?.text = NativeBridge.getNativeString(NativeBridge.S223)
+                visualsSubtabs?.visibility = View.VISIBLE
+                espSection?.visibility = if (selectedVisualSubtab == 0) View.VISIBLE else View.GONE
+                espV2Section?.visibility = if (selectedVisualSubtab == 1) View.VISIBLE else View.GONE
+                chamsSection?.visibility = if (selectedVisualSubtab == 2) View.VISIBLE else View.GONE
+                aimSection?.visibility = View.GONE
+                flySection?.visibility = View.GONE
+            }
+            1 -> {
+                tvHudTitle?.text = "FREEZY MODS - COMBATE"
+                visualsSubtabs?.visibility = View.GONE
+                espSection?.visibility = View.GONE
+                espV2Section?.visibility = View.GONE
+                chamsSection?.visibility = View.GONE
+                aimSection?.visibility = View.VISIBLE
+                flySection?.visibility = View.GONE
+            }
+            2 -> {
+                tvHudTitle?.text = "FREEZY MODS - MOVIMIENTO"
+                visualsSubtabs?.visibility = View.GONE
+                espSection?.visibility = View.GONE
+                espV2Section?.visibility = View.GONE
+                chamsSection?.visibility = View.GONE
+                aimSection?.visibility = View.GONE
+                flySection?.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    tabEsp?.setOnClickListener { selectTab(0) }
+    tabAim?.setOnClickListener { selectTab(1) }
+    tabFly?.setOnClickListener { selectTab(2) }
+
+    // Inject dynamic strings from NativeBridge to HUD headers and ESP switches
     bubbleView.findViewById<TextView>(R.id.tv_hud_title)?.text = NativeBridge.getNativeString(NativeBridge.S223)
     bubbleView.findViewById<TextView>(R.id.tv_hud_online)?.text = NativeBridge.getNativeString(NativeBridge.S224)
-    bubbleView.findViewById<TextView>(R.id.tv_title_aimbot)?.text = NativeBridge.getNativeString(NativeBridge.S225)
-    bubbleView.findViewById<Switch>(R.id.recoil_switch)?.text = NativeBridge.getNativeString(NativeBridge.S226)
-    bubbleView.findViewById<Switch>(R.id.sniper_switch_switch)?.text = NativeBridge.getNativeString(NativeBridge.S227)
-    bubbleView.findViewById<TextView>(R.id.tv_title_sniper)?.text = NativeBridge.getNativeString(NativeBridge.S228)
-    bubbleView.findViewById<Switch>(R.id.sniper_scope_switch)?.text = NativeBridge.getNativeString(NativeBridge.S229)
-    bubbleView.findViewById<Switch>(R.id.sniper_body_switch)?.text = NativeBridge.getNativeString(NativeBridge.S230)
 
     bubbleView.findViewById<TextView>(R.id.tv_title_esp_draw)?.text = NativeBridge.getNativeString(NativeBridge.S231)
     bubbleView.findViewById<Switch>(R.id.esp_switch)?.text = NativeBridge.getNativeString(NativeBridge.S232)
@@ -531,122 +800,109 @@ private fun setupMenu() {
     bubbleView.findViewById<Switch>(R.id.esp_team_switch)?.text = NativeBridge.getNativeString(NativeBridge.S239)
 
     bubbleView.findViewById<TextView>(R.id.tv_title_esp_info)?.text = NativeBridge.getNativeString(NativeBridge.S240)
-    bubbleView.findViewById<Switch>(R.id.esp_health_switch)?.text = NativeBridge.getNativeString(NativeBridge.S241)
     bubbleView.findViewById<Switch>(R.id.esp_name_switch)?.text = NativeBridge.getNativeString(NativeBridge.S242)
     bubbleView.findViewById<Switch>(R.id.esp_distance_switch)?.text = NativeBridge.getNativeString(NativeBridge.S243)
-    bubbleView.findViewById<Switch>(R.id.esp_weapon_switch)?.text = NativeBridge.getNativeString(NativeBridge.S244)
 
     bubbleView.findViewById<TextView>(R.id.tv_title_esp_custom)?.text = NativeBridge.getNativeString(NativeBridge.S245)
     bubbleView.findViewById<Switch>(R.id.esp_rgb_switch)?.text = NativeBridge.getNativeString(NativeBridge.S246)
 
-    // Tabs del menú: Combate (cráneo) / Enemigos (ESP)
-    val combatSection = bubbleView.findViewById<View>(R.id.combat_section)
-    val espSection = bubbleView.findViewById<View>(R.id.esp_section)
-    val tabCombat = bubbleView.findViewById<ImageButton>(R.id.tab_combat)
-    val tabEsp = bubbleView.findViewById<ImageButton>(R.id.tab_esp)
-    fun selectTab(combat: Boolean) {
-        combatSection?.visibility = if (combat) View.VISIBLE else View.GONE
-        espSection?.visibility = if (combat) View.GONE else View.VISIBLE
-        tabCombat?.background = if (combat) getDrawable(R.drawable.shape_tab_active) else getDrawable(R.drawable.shape_tab_inactive)
-        tabCombat?.setColorFilter(if (combat) Color.parseColor("#00E5FF") else Color.parseColor("#7E8B9B"))
-        tabEsp?.background = if (combat) getDrawable(R.drawable.shape_tab_inactive) else getDrawable(R.drawable.shape_tab_active)
-        tabEsp?.setColorFilter(if (combat) Color.parseColor("#7E8B9B") else Color.parseColor("#00E5FF"))
-    }
-    tabCombat?.setOnClickListener { selectTab(true) }
-    tabEsp?.setOnClickListener { selectTab(false) }
-    selectTab(false) // Por defecto abrir en pestaña ESP (segura)
-
-    // ================================================================
-    // [FREEZY MENU - AIMBOT]
-    // ================================================================
-
-    // 1. El aimbot arranca en OFF. Se activa solo cuando el usuario
-    //    enciende el switch y se confirma que la memoria del juego existe.
-    val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
-    statusText?.text = NativeBridge.getNativeString(NativeBridge.S155)
-
-    // 2. Conectar el Switch de Aimbot (recoil_switch)
-    val aimbotSwitch = bubbleView.findViewById<Switch>(R.id.recoil_switch)
-
-    // RESTRICCIÓN ANTI-BAN: el cráneo (aimbot/sniper/switch) requiere doble confirmación
-    setupSkullSwitch(aimbotSwitch) { checked ->
-        if (checked) {
-            toggleAimbot()
-        } else {
-            NativeBridge.stopAimbot()
-            Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S156), Toast.LENGTH_SHORT).show()
-            statusText?.text = NativeBridge.getNativeString(NativeBridge.S155)
-        }
-    }
-
-    // 4. Switch Sniper Scope (aim-assist)
-    val sniperScopeSwitch = bubbleView.findViewById<Switch>(R.id.sniper_scope_switch)
-    val sniperBodySwitch = bubbleView.findViewById<Switch>(R.id.sniper_body_switch)
-    val sniperScopeStatus = bubbleView.findViewById<TextView>(R.id.sniper_scope_status)
-
-    setupSkullSwitch(sniperScopeSwitch) { checked ->
-        if (checked) {
-            toggleSniperScope()
-        } else {
-            NativeBridge.setSniperScope(false)
-            Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S158), Toast.LENGTH_SHORT).show()
-            sniperScopeStatus?.text = NativeBridge.getNativeString(NativeBridge.S157)
-        }
-    }
-
-    sniperBodySwitch?.setOnCheckedChangeListener { _, checked ->
-        NativeBridge.setSniperMode(if (checked) 1 else 0)
-        sniperScopeStatus?.text =
-            if (sniperScopeSwitch?.isChecked == true) {
-                if (checked) NativeBridge.getNativeString(NativeBridge.S159) else NativeBridge.getNativeString(NativeBridge.S160)
-            } else {
-                if (checked) NativeBridge.getNativeString(NativeBridge.S161) else NativeBridge.getNativeString(NativeBridge.S157)
-            }
-    }
-
-    // 5. Switch Sniper Switch (patch de la mira)
-    val sniperSwitch = bubbleView.findViewById<Switch>(R.id.sniper_switch_switch)
-    val sniperSwitchStatus = bubbleView.findViewById<TextView>(R.id.sniper_switch_status)
-
-    setupSkullSwitch(sniperSwitch) { checked ->
-        if (checked) {
-            toggleSniperSwitch()
-        } else {
-            Thread {
-                if (NativeBridge.sniperSwitchRemove()) {
-                    runOnUiThread {
-                        sniperSwitchStatus?.text = NativeBridge.getNativeString(NativeBridge.S162)
-                        Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S163), Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    runOnUiThread {
-                        sniperSwitchStatus?.text = NativeBridge.getNativeString(NativeBridge.S164)
-                        setSniperSwitchSilently(false)
-                    }
-                }
-            }.start()
-        }
-    }
-
-    // 6. ESP (master: busca PID) + ESP Box / ESP Skeleton / ESP Línea
+    // ESP (master: busca PID) + ESP Box / ESP Skeleton / ESP Línea
     val espSwitch = bubbleView.findViewById<Switch>(R.id.esp_switch)
     val espBoxSwitch = bubbleView.findViewById<Switch>(R.id.esp_box_switch)
     val espSkeletonSwitch = bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)
     val espLineSwitch = bubbleView.findViewById<Switch>(R.id.esp_line_switch)
     val espStatus = bubbleView.findViewById<TextView>(R.id.esp_status)
     val espColorSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_color_seekbar)
+    val espBoxColorStatus = bubbleView.findViewById<TextView>(R.id.esp_box_color_status)
+    val espBoxColorSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_box_color_seekbar)
     val espRgbSwitch = bubbleView.findViewById<Switch>(R.id.esp_rgb_switch)
     val espOriginStatus = bubbleView.findViewById<TextView>(R.id.esp_origin_status)
     val espOriginSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_origin_seekbar)
     val espWidthStatus = bubbleView.findViewById<TextView>(R.id.esp_width_status)
     val espWidthSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_width_seekbar)
+    val espGlowSwitch = bubbleView.findViewById<Switch>(R.id.esp_glow_switch)
+    val espCornerSwitch = bubbleView.findViewById<Switch>(R.id.esp_corner_switch)
+    val espFullBoxSwitch = bubbleView.findViewById<Switch>(R.id.esp_fullbox_switch)
+    val esp3dBoxSwitch = bubbleView.findViewById<Switch>(R.id.esp_3d_box_switch)
+    val espClosestGlowSwitch = bubbleView.findViewById<Switch>(R.id.esp_closest_glow_switch)
+    val espMinimapSwitch = bubbleView.findViewById<Switch>(R.id.esp_minimap_switch)
+    val espHealthSwitch = bubbleView.findViewById<Switch>(R.id.esp_health_switch)
+    val espWeaponSwitch = bubbleView.findViewById<Switch>(R.id.esp_weapon_switch)
+    val espTeamSwitch = bubbleView.findViewById<Switch>(R.id.esp_team_switch)
+    val espNameSwitch = bubbleView.findViewById<Switch>(R.id.esp_name_switch)
+    val espDistanceSwitch = bubbleView.findViewById<Switch>(R.id.esp_distance_switch)
+    val espIgnoreKnockedSwitch = bubbleView.findViewById<Switch>(R.id.esp_ignore_knocked_switch)
+    val espCountSwitch = bubbleView.findViewById<Switch>(R.id.esp_count_switch)
+    val espGlowColorStatus = bubbleView.findViewById<TextView>(R.id.esp_glow_color_status)
+    val espGlowColorSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_glow_color_seekbar)
+    val espCornerColorStatus = bubbleView.findViewById<TextView>(R.id.esp_corner_color_status)
+    val espCornerColorSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_corner_color_seekbar)
+    val espFullBoxColorStatus = bubbleView.findViewById<TextView>(R.id.esp_fullbox_color_status)
+    val espFullBoxColorSeekbar = bubbleView.findViewById<SeekBar>(R.id.esp_fullbox_color_seekbar)
 
     val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
 
-    val savedColor = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S197), 1).coerceIn(0, 7)
-    espColorSeekbar?.progress = savedColor
-    espStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S165)}${espColorNames[savedColor]}"
-    espStatus?.setTextColor(espColorValues[savedColor])
+    fun bindEspColorControl(
+        seekBar: SeekBar?,
+        status: TextView?,
+        preferenceKey: String,
+        defaultColor: Int,
+        label: String,
+        applyColor: (Int) -> Unit
+    ) {
+        val saved = prefs.getInt(preferenceKey, defaultColor).coerceIn(0, 7)
+        seekBar?.progress = saved
+        status?.text = "$label: ${espColorNames[saved]}"
+        status?.setTextColor(espColorValues[saved])
+        applyColor(espColorValues[saved])
+        seekBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val idx = progress.coerceIn(0, 7)
+                if (fromUser) prefs.edit().putInt(preferenceKey, idx).apply()
+                status?.text = "$label: ${espColorNames[idx]}"
+                status?.setTextColor(espColorValues[idx])
+                applyColor(espColorValues[idx])
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+    }
+
+    bindEspColorControl(
+        espColorSeekbar,
+        espStatus,
+        NativeBridge.getNativeString(NativeBridge.S197),
+        1,
+        "Línea"
+    ) { espOverlayView?.lineColor = it }
+    bindEspColorControl(
+        espBoxColorSeekbar,
+        espBoxColorStatus,
+        "pref_esp_box_color",
+        2,
+        "Box"
+    ) { espOverlayView?.boxColor = it }
+    bindEspColorControl(
+        espGlowColorSeekbar,
+        espGlowColorStatus,
+        "pref_esp_glow_color",
+        3,
+        "Glow"
+    ) { espOverlayView?.glowColor = it }
+    bindEspColorControl(
+        espCornerColorSeekbar,
+        espCornerColorStatus,
+        "pref_esp_corner_color",
+        7,
+        "Corner"
+    ) { espOverlayView?.cornerColor = it }
+    bindEspColorControl(
+        espFullBoxColorSeekbar,
+        espFullBoxColorStatus,
+        "pref_esp_fullbox_color",
+        4,
+        "FullBox"
+    ) { espOverlayView?.fullBoxColor = it }
 
     val savedRgb = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S198), false)
     espRgbSwitch?.isChecked = savedRgb
@@ -663,21 +919,6 @@ private fun setupMenu() {
         espOverlayView?.drawSkeleton = skeleton
         espOverlayView?.drawLines = line
     }
-
-    espColorSeekbar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-            val idx = progress.coerceIn(0, 7)
-            if (fromUser) {
-                prefs.edit().putInt(NativeBridge.getNativeString(NativeBridge.S197), idx).apply()
-            }
-            espStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S165)}${espColorNames[idx]}"
-            espStatus?.setTextColor(espColorValues[idx])
-            espOverlayView?.lineColor = espColorValues[idx]
-        }
-
-        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-    })
 
     espRgbSwitch?.setOnCheckedChangeListener { _, checked ->
         prefs.edit().putBoolean(NativeBridge.getNativeString(NativeBridge.S198), checked).apply()
@@ -712,76 +953,549 @@ private fun setupMenu() {
         override fun onStopTrackingTouch(seekBar: SeekBar?) {}
     })
 
-    // ESP (master): busca el PID y arranca/para el overlay.
-    espSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked ->
-            if (checked) {
-                startEspOverlay()
-            } else {
-                stopEspOverlay()
-            }
+    espBoxSwitch?.isChecked = false
+    espSkeletonSwitch?.isChecked = false
+    espLineSwitch?.isChecked = false
+    espTeamSwitch?.isChecked = false
+    espNameSwitch?.isChecked = false
+    espDistanceSwitch?.isChecked = false
+    espIgnoreKnockedSwitch?.isChecked = false
+
+    val savedCount = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S201), false)
+    espCountSwitch?.isChecked = savedCount
+
+    // Los estados individuales son configuración. Sólo ESP Master autoriza que
+    // lleguen al lector y al dibujado, incluso si el overlay existe por Chams/Aim Visible.
+    fun applyEspMasterState(masterEnabled: Boolean) {
+        espOverlayView?.apply {
+            espMasterEnabled = masterEnabled
+            drawBox = masterEnabled && espBoxSwitch?.isChecked == true
+            drawSkeleton = masterEnabled && espSkeletonSwitch?.isChecked == true
+            drawLines = masterEnabled && espLineSwitch?.isChecked == true
+            drawGlow = masterEnabled && espGlowSwitch?.isChecked == true
+            drawCornerBox = masterEnabled && espCornerSwitch?.isChecked == true
+            drawFullBox = masterEnabled && espFullBoxSwitch?.isChecked == true
+            draw3dBox = masterEnabled && esp3dBoxSwitch?.isChecked == true
+            drawClosestGlowLine = masterEnabled && espClosestGlowSwitch?.isChecked == true
+            showMinimap = masterEnabled && espMinimapSwitch?.isChecked == true
+            drawHealth = masterEnabled && espHealthSwitch?.isChecked == true
+            drawWeapon = masterEnabled && espWeaponSwitch?.isChecked == true
+            drawTeam = masterEnabled && espTeamSwitch?.isChecked == true
+            drawName = masterEnabled && espNameSwitch?.isChecked == true
+            drawDistance = masterEnabled && espDistanceSwitch?.isChecked == true
+            ignoreKnocked = masterEnabled && espIgnoreKnockedSwitch?.isChecked == true
+            showCount = masterEnabled && espCountSwitch?.isChecked == true
         }
     }
 
-    // ESP Box, ESP Skeleton y ESP Línea son independientes: cada uno activa su dibujo.
-    espBoxSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawBox = checked }
-    }
-    espSkeletonSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawSkeleton = checked }
-    }
-    espLineSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawLines = checked }
+    val espMasterControlledSwitches = listOf(
+        espBoxSwitch,
+        espSkeletonSwitch,
+        espLineSwitch,
+        espCountSwitch,
+        espIgnoreKnockedSwitch,
+        espTeamSwitch,
+        espNameSwitch,
+        espDistanceSwitch,
+        espHealthSwitch,
+        espWeaponSwitch,
+        espGlowSwitch,
+        espCornerSwitch,
+        espFullBoxSwitch,
+        esp3dBoxSwitch,
+        espClosestGlowSwitch,
+        espMinimapSwitch
+    )
+
+    fun updateEspMasterControls(masterEnabled: Boolean) {
+        espMasterControlledSwitches.forEach { featureSwitch ->
+            featureSwitch?.isEnabled = masterEnabled
+            featureSwitch?.alpha = if (masterEnabled) 1f else 0.45f
+        }
     }
 
-    // ESP Health, ESP Team, Ignore Knocked
-    val espHealthSwitch = bubbleView.findViewById<Switch>(R.id.esp_health_switch)
-    espHealthSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawHealth = checked }
+    fun applyCurrentEspSelection() {
+        applyEspMasterState(espSwitch?.isChecked == true && espOverlayView != null)
     }
 
-    val espTeamSwitch = bubbleView.findViewById<Switch>(R.id.esp_team_switch)
-    espTeamSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawTeam = checked }
+    listOf(espBoxSwitch, espSkeletonSwitch, espLineSwitch, espTeamSwitch,
+        espNameSwitch, espDistanceSwitch, espIgnoreKnockedSwitch).forEach { featureSwitch ->
+        featureSwitch?.setOnCheckedChangeListener { _, _ -> applyCurrentEspSelection() }
     }
 
-    val espNameSwitch = bubbleView.findViewById<Switch>(R.id.esp_name_switch)
-    espNameSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawName = checked }
+    fun bindEspV2Switch(
+        featureSwitch: Switch?,
+        preferenceKey: String
+    ) {
+        val saved = prefs.getBoolean(preferenceKey, false)
+        featureSwitch?.isChecked = saved
+        featureSwitch?.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean(preferenceKey, checked).apply()
+            applyCurrentEspSelection()
+        }
     }
 
-    val espDistanceSwitch = bubbleView.findViewById<Switch>(R.id.esp_distance_switch)
-    espDistanceSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawDistance = checked }
-    }
+    bindEspV2Switch(espGlowSwitch, "pref_esp_glow")
+    bindEspV2Switch(espCornerSwitch, "pref_esp_corner")
+    bindEspV2Switch(espFullBoxSwitch, "pref_esp_fullbox")
+    bindEspV2Switch(esp3dBoxSwitch, "pref_esp_3d_box")
+    bindEspV2Switch(espClosestGlowSwitch, "pref_esp_closest_glow")
+    bindEspV2Switch(espMinimapSwitch, "pref_esp_minimap")
+    bindEspV2Switch(espHealthSwitch, "pref_esp_health")
+    bindEspV2Switch(espWeaponSwitch, "pref_esp_weapon")
 
-    val espWeaponSwitch = bubbleView.findViewById<Switch>(R.id.esp_weapon_switch)
-    espWeaponSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked -> espOverlayView?.drawWeapon = checked }
-    }
-
-    val espIgnoreKnockedSwitch = bubbleView.findViewById<Switch>(R.id.esp_ignore_knocked_switch)
-    espIgnoreKnockedSwitch?.apply {
-        isChecked = false
-        setOnCheckedChangeListener { _, checked -> espOverlayView?.ignoreKnocked = checked }
-    }
-
-    // ESP Count: muestra el contador de enemigos arriba al centro.
-    val espCountSwitch = bubbleView.findViewById<Switch>(R.id.esp_count_switch)
-    val savedCount = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S201), false)
-    espCountSwitch?.isChecked = savedCount
     espCountSwitch?.setOnCheckedChangeListener { _, checked ->
         prefs.edit().putBoolean(NativeBridge.getNativeString(NativeBridge.S201), checked).apply()
-        espOverlayView?.showCount = checked
+        applyCurrentEspSelection()
+    }
+
+    // ESP Master es la única puerta de entrada al conjunto ESP. Apagarlo no
+    // borra las selecciones: sólo las deshabilita y detiene su lectura/dibujado.
+    espSwitch?.apply {
+        isChecked = false
+        setOnCheckedChangeListener { _, checked ->
+            if (suppressEspMasterListener) return@setOnCheckedChangeListener
+            if (checked) startEspOverlay()
+            val active = isChecked && espOverlayView != null
+            updateEspMasterControls(active)
+            applyEspMasterState(active)
+            if (!active) {
+                val neededByAnotherFeature =
+                    bubbleView.findViewById<Switch>(R.id.aim_visible_switch)?.isChecked == true ||
+                    bubbleView.findViewById<Switch>(R.id.chams_player_switch)?.isChecked == true ||
+                    bubbleView.findViewById<Switch>(R.id.chams_weapon_switch)?.isChecked == true
+                if (!neededByAnotherFeature) stopEspOverlay()
+            }
+        }
+    }
+    updateEspMasterControls(false)
+    applyEspMasterState(false)
+
+    // ==========================================
+    // SUB-TABS VISUALES: [ ESP | ESP V2 | CHAMS ]
+    // ==========================================
+    fun selectVisualSubtab(index: Int) {
+        selectedVisualSubtab = index.coerceIn(0, 2)
+        val buttons = arrayOf(btnSubtabEsp, btnSubtabEspV2, btnSubtabChams)
+        buttons.forEachIndexed { buttonIndex, button ->
+            button?.setBackgroundResource(
+                if (buttonIndex == selectedVisualSubtab) R.drawable.shape_tab_active
+                else android.R.color.transparent
+            )
+            button?.setTextColor(
+                Color.parseColor(if (buttonIndex == selectedVisualSubtab) "#00E5FF" else "#8A9BA8")
+            )
+        }
+        espSection?.visibility = if (selectedVisualSubtab == 0) View.VISIBLE else View.GONE
+        espV2Section?.visibility = if (selectedVisualSubtab == 1) View.VISIBLE else View.GONE
+        chamsSection?.visibility = if (selectedVisualSubtab == 2) View.VISIBLE else View.GONE
+    }
+
+    btnSubtabEsp?.setOnClickListener { selectVisualSubtab(0) }
+    btnSubtabEspV2?.setOnClickListener { selectVisualSubtab(1) }
+    btnSubtabChams?.setOnClickListener { selectVisualSubtab(2) }
+
+    // ==========================================
+    // CONFIGURACIÓN DE CHAMS (PERSONAJE & ARMAS)
+    // ==========================================
+    val chamsPlayerSwitch = bubbleView.findViewById<Switch>(R.id.chams_player_switch)
+    val chamsPlayerGlowSwitch = bubbleView.findViewById<Switch>(R.id.chams_player_glow_switch)
+    val chamsPlayerWireframeSwitch = bubbleView.findViewById<Switch>(R.id.chams_player_wireframe_switch)
+    val chamsWeaponSwitch = bubbleView.findViewById<Switch>(R.id.chams_weapon_switch)
+    val chamsThroughWallSwitch = bubbleView.findViewById<Switch>(R.id.chams_through_wall_switch)
+    val chamsRgbSwitch = bubbleView.findViewById<Switch>(R.id.chams_rgb_switch)
+    val chamsStatus = bubbleView.findViewById<TextView>(R.id.chams_status)
+    val chamsColorSeekbar = bubbleView.findViewById<SeekBar>(R.id.chams_color_seekbar)
+    val chamsModeStatus = bubbleView.findViewById<TextView>(R.id.chams_mode_status)
+    val chamsModeSeekbar = bubbleView.findViewById<SeekBar>(R.id.chams_mode_seekbar)
+
+    val chamsModeNames = arrayOf("Modo: Sólido Intenso", "Modo: Resplandor / Glow", "Modo: Malla / Wireframe", "Modo: Transparente")
+
+    val savedChamsColor = prefs.getInt("pref_chams_color", 1).coerceIn(0, 7)
+    chamsColorSeekbar?.progress = savedChamsColor
+    chamsStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S165)}${espColorNames[savedChamsColor]}"
+    chamsStatus?.setTextColor(espColorValues[savedChamsColor])
+    espOverlayView?.chamsColor = espColorValues[savedChamsColor]
+
+    val savedChamsMode = prefs.getInt("pref_chams_mode", 0).coerceIn(0, 3)
+    chamsModeSeekbar?.progress = savedChamsMode
+    chamsModeStatus?.text = chamsModeNames[savedChamsMode]
+    espOverlayView?.chamsMode = savedChamsMode
+
+    val savedChamsRgb = prefs.getBoolean("pref_chams_rgb", false)
+    chamsRgbSwitch?.isChecked = savedChamsRgb
+    espOverlayView?.chamsRgb = savedChamsRgb
+
+    fun ensureOverlayRunning() {
+        if (espOverlayView == null) {
+            startEspOverlay()
+        } else {
+            espOverlayView?.chamsPlayer = chamsPlayerSwitch?.isChecked ?: false
+            espOverlayView?.chamsWeapon = chamsWeaponSwitch?.isChecked ?: false
+            espOverlayView?.chamsPlayerGlow = chamsPlayerGlowSwitch?.isChecked ?: false
+            espOverlayView?.chamsPlayerWireframe = chamsPlayerWireframeSwitch?.isChecked ?: false
+            espOverlayView?.chamsThroughWalls = chamsThroughWallSwitch?.isChecked ?: true
+            espOverlayView?.chamsRgb = chamsRgbSwitch?.isChecked ?: false
+            val cIdx = prefs.getInt("pref_chams_color", 1).coerceIn(0, 7)
+            espOverlayView?.chamsColor = espColorValues[cIdx]
+            espOverlayView?.chamsMode = prefs.getInt("pref_chams_mode", 0).coerceIn(0, 3)
+        }
+    }
+
+    chamsPlayerSwitch?.setOnCheckedChangeListener { _, checked ->
+        if (checked) {
+            ensureOverlayRunning()
+        }
+        espOverlayView?.chamsPlayer = checked
+    }
+
+    chamsPlayerGlowSwitch?.setOnCheckedChangeListener { _, checked ->
+        espOverlayView?.chamsPlayerGlow = checked
+    }
+
+    chamsPlayerWireframeSwitch?.setOnCheckedChangeListener { _, checked ->
+        espOverlayView?.chamsPlayerWireframe = checked
+    }
+
+    chamsWeaponSwitch?.setOnCheckedChangeListener { _, checked ->
+        if (checked) {
+            ensureOverlayRunning()
+        }
+        espOverlayView?.chamsWeapon = checked
+    }
+
+    chamsThroughWallSwitch?.setOnCheckedChangeListener { _, checked ->
+        espOverlayView?.chamsThroughWalls = checked
+    }
+
+    chamsRgbSwitch?.setOnCheckedChangeListener { _, checked ->
+        prefs.edit().putBoolean("pref_chams_rgb", checked).apply()
+        espOverlayView?.chamsRgb = checked
+    }
+
+    chamsColorSeekbar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            val idx = progress.coerceIn(0, 7)
+            if (fromUser) {
+                prefs.edit().putInt("pref_chams_color", idx).apply()
+            }
+            chamsStatus?.text = "${NativeBridge.getNativeString(NativeBridge.S165)}${espColorNames[idx]}"
+            chamsStatus?.setTextColor(espColorValues[idx])
+            espOverlayView?.chamsColor = espColorValues[idx]
+        }
+        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+    })
+
+    chamsModeSeekbar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            val idx = progress.coerceIn(0, 3)
+            if (fromUser) {
+                prefs.edit().putInt("pref_chams_mode", idx).apply()
+            }
+            chamsModeStatus?.text = chamsModeNames[idx]
+            espOverlayView?.chamsMode = idx
+        }
+        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+    })
+
+    // Enlaza un switch persistente con un controlador nativo. Las búsquedas de PID y
+    // libil2cpp se ejecutan fuera del hilo de UI y el switch se revierte si no hay acceso.
+    fun bindNativeFeatureSwitch(
+        featureSwitch: Switch?,
+        preferenceKey: String,
+        label: String,
+        setter: (Boolean) -> Boolean,
+        beforeChange: (Boolean) -> Unit = {}
+    ) {
+        if (featureSwitch == null) return
+        var suppressListener = false
+        var requestId = 0
+
+        fun applyFeature(enabled: Boolean, announce: Boolean) {
+            val currentRequest = ++requestId
+            Thread {
+                val applied = try {
+                    setter(enabled)
+                } catch (_: Throwable) {
+                    false
+                }
+                runOnUiThread {
+                    if (currentRequest != requestId) return@runOnUiThread
+                    if (enabled && !applied) {
+                        suppressListener = true
+                        featureSwitch.isChecked = false
+                        suppressListener = false
+                        prefs.edit().putBoolean(preferenceKey, false).apply()
+                        Toast.makeText(
+                            this@BubbleService,
+                            "$label: no se encontró la memoria del juego",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else if (announce) {
+                        Toast.makeText(
+                            this@BubbleService,
+                            if (enabled) "$label: Activado" else "$label: Desactivado",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }.start()
+        }
+
+        val saved = prefs.getBoolean(preferenceKey, false)
+        featureSwitch.isChecked = saved
+        featureSwitch.setOnCheckedChangeListener { _, checked ->
+            if (suppressListener) return@setOnCheckedChangeListener
+            beforeChange(checked)
+            prefs.edit().putBoolean(preferenceKey, checked).apply()
+            applyFeature(checked, true)
+        }
+        if (saved) applyFeature(true, false)
+    }
+
+    // ==========================================
+    // MENÚ DE COMBATE / AIM (CASCO TÁCTICO)
+    // ==========================================
+    val silentAimSwitch = bubbleView.findViewById<Switch>(R.id.silent_aim_switch)
+    val aimbotSwitch = bubbleView.findViewById<Switch>(R.id.aimbot_switch)
+    val noReloadSwitch = bubbleView.findViewById<Switch>(R.id.no_reload_switch)
+    val aimVisibleSwitch = bubbleView.findViewById<Switch>(R.id.aim_visible_switch)
+    val aimbotTargetSpinner = bubbleView.findViewById<Spinner>(R.id.aimbot_target_spinner)
+    val aimVisibleFovSeekbar = bubbleView.findViewById<SeekBar>(R.id.aim_visible_fov_seekbar)
+    val aimVisibleFovStatus = bubbleView.findViewById<TextView>(R.id.aim_visible_fov_status)
+
+    val aimbotTargets = arrayOf("Head", "Neck", "Root", "Hip", "Foot")
+    val targetAdapter = object : ArrayAdapter<String>(
+        this@BubbleService,
+        android.R.layout.simple_spinner_item,
+        aimbotTargets
+    ) {
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            return super.getView(position, convertView, parent).also { view ->
+                (view as? TextView)?.apply {
+                    setTextColor(Color.WHITE)
+                    textSize = 10f
+                }
+            }
+        }
+
+        override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
+            return super.getDropDownView(position, convertView, parent).also { view ->
+                (view as? TextView)?.apply {
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#16242D"))
+                    textSize = 11f
+                    setPadding(18, 12, 18, 12)
+                }
+            }
+        }
+    }.apply {
+        setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+    }
+    val savedAimbotTarget = prefs.getInt("pref_aimbot_target", 0).coerceIn(0, 4)
+    aimbotTargetSpinner?.adapter = targetAdapter
+    aimbotTargetSpinner?.setSelection(savedAimbotTarget, false)
+    NativeBridge.setAimbotTarget(savedAimbotTarget)
+    aimbotTargetSpinner?.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+        override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+            val selected = position.coerceIn(0, 4)
+            prefs.edit().putInt("pref_aimbot_target", selected).apply()
+            NativeBridge.setAimbotTarget(selected)
+            (view as? TextView)?.setTextColor(Color.WHITE)
+        }
+
+        override fun onNothingSelected(parent: AdapterView<*>?) {}
+    }
+
+    val savedAimVisibleFov = prefs.getInt("pref_aim_visible_fov", 200).coerceIn(50, 500)
+    aimVisibleFovSeekbar?.progress = savedAimVisibleFov - 50
+    aimVisibleFovStatus?.text = "Aim Visible FOV: $savedAimVisibleFov px"
+    NativeBridge.setAimVisibleFov(savedAimVisibleFov)
+    espOverlayView?.aimVisibleFovRadius = savedAimVisibleFov.toFloat()
+    aimVisibleFovSeekbar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            val fov = (progress + 50).coerceIn(50, 500)
+            aimVisibleFovStatus?.text = "Aim Visible FOV: $fov px"
+            NativeBridge.setAimVisibleFov(fov)
+            espOverlayView?.aimVisibleFovRadius = fov.toFloat()
+            if (fromUser) prefs.edit().putInt("pref_aim_visible_fov", fov).apply()
+        }
+        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+    })
+
+    bindNativeFeatureSwitch(
+        silentAimSwitch,
+        "pref_silent_aim",
+        "Silent Aim",
+        NativeBridge::setSilentAim
+    )
+
+    bindNativeFeatureSwitch(
+        noReloadSwitch,
+        "pref_no_reload",
+        "NoReload",
+        NativeBridge::setNoReload
+    )
+
+    // Aimbot ya no toca la VPN ni agrega retardo UDP. La versión anterior elevaba
+    // el ping porque este switch estaba conectado por error al filtro de paquetes.
+    NativeBridge.setSelectiveUdpDelay(false, 1)
+    isAimbotPacketDelayActive = false
+    if (prefs.getBoolean("pref_aimbot_switch", false) &&
+        prefs.getBoolean("pref_aim_visible", false)) {
+        prefs.edit().putBoolean("pref_aimbot_switch", false).apply()
+    }
+    bindNativeFeatureSwitch(
+        aimbotSwitch,
+        "pref_aimbot_switch",
+        "Aimbot",
+        NativeBridge::setCameraAimbot
+    ) { enabled ->
+        if (enabled && aimVisibleSwitch?.isChecked == true) {
+            aimVisibleSwitch.isChecked = false
+        }
+    }
+
+    val savedAimVisible = prefs.getBoolean("pref_aim_visible", false)
+    aimVisibleSwitch?.isChecked = savedAimVisible
+    aimVisibleSwitch?.setOnCheckedChangeListener { _, checked ->
+        if (aimVisibleSwitchBusy) return@setOnCheckedChangeListener
+        prefs.edit().putBoolean("pref_aim_visible", checked).apply()
+        if (checked) {
+            if (aimbotSwitch?.isChecked == true) aimbotSwitch.isChecked = false
+            ensureOverlayRunning()
+            espOverlayView?.drawAimVisibleFov = true
+            Thread {
+                val started = NativeBridge.setAimVisible(true)
+                runOnUiThread {
+                    if (started) {
+                        Toast.makeText(this@BubbleService, "Aim Visible: Activado", Toast.LENGTH_SHORT).show()
+                    } else {
+                        aimVisibleSwitchBusy = true
+                        aimVisibleSwitch?.isChecked = false
+                        aimVisibleSwitchBusy = false
+                        prefs.edit().putBoolean("pref_aim_visible", false).apply()
+                        espOverlayView?.drawAimVisibleFov = false
+                        Toast.makeText(this@BubbleService, "Aim Visible: no se encontró la memoria del juego", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }.start()
+        } else {
+            NativeBridge.setAimVisible(false)
+            espOverlayView?.drawAimVisibleFov = false
+            Toast.makeText(this@BubbleService, "Aim Visible: Desactivado", Toast.LENGTH_SHORT).show()
+        }
+    }
+    if (savedAimVisible) {
+        ensureOverlayRunning()
+        espOverlayView?.drawAimVisibleFov = true
+        Thread {
+            if (!NativeBridge.setAimVisible(true)) {
+                runOnUiThread {
+                    aimVisibleSwitchBusy = true
+                    aimVisibleSwitch?.isChecked = false
+                    aimVisibleSwitchBusy = false
+                    prefs.edit().putBoolean("pref_aim_visible", false).apply()
+                    espOverlayView?.drawAimVisibleFov = false
+                }
+            }
+        }.start()
+    }
+
+    // ==========================================
+    // MENÚ DE MOVIMIENTO / VUELO (AVIÓN)
+    // ==========================================
+    val flyHackSwitch = bubbleView.findViewById<Switch>(R.id.fly_hack_switch)
+    val ghostHackSwitch = bubbleView.findViewById<Switch>(R.id.ghost_hack_switch)
+    val enemyPullSwitch = bubbleView.findViewById<Switch>(R.id.enemy_pull_switch)
+    val teleportDropSwitch = bubbleView.findViewById<Switch>(R.id.teleport_drop_switch)
+
+    bindNativeFeatureSwitch(
+        flyHackSwitch,
+        "pref_fly_hack",
+        "Fly Hack",
+        NativeBridge::setFlyHack
+    )
+
+    val savedGhostHack = prefs.getBoolean("pref_ghost_hack", false)
+    ghostHackSwitch?.isChecked = savedGhostHack
+    if (savedGhostHack) {
+        showGhostFloatingSwitch()
+    }
+    ghostHackSwitch?.setOnCheckedChangeListener { _, checked ->
+        prefs.edit().putBoolean("pref_ghost_hack", checked).apply()
+        if (checked) {
+            showGhostFloatingSwitch()
+            Toast.makeText(this@BubbleService, "Ghost Hack activado (Switch flotante en pantalla)", Toast.LENGTH_SHORT).show()
+        } else {
+            hideGhostFloatingSwitch()
+            Toast.makeText(this@BubbleService, "Ghost Hack desactivado", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val savedTeleportDropBubble = prefs.getBoolean("pref_teleport_drop", false)
+    teleportDropSwitch?.visibility = View.VISIBLE
+    teleportDropSwitch?.isChecked = savedTeleportDropBubble
+    if (savedTeleportDropBubble) showTeleportDropFloatingControl()
+    teleportDropSwitch?.setOnCheckedChangeListener { _, checked ->
+        prefs.edit().putBoolean("pref_teleport_drop", checked).apply()
+        if (checked) {
+            showTeleportDropFloatingControl()
+            Toast.makeText(
+                this@BubbleService,
+                "Teleport Drop Root: control flotante listo",
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            hideTeleportDropFloatingControl(replayCaptured = true)
+            Toast.makeText(
+                this@BubbleService,
+                "Teleport Drop Root: desactivado",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    // Este switch únicamente muestra el selector flotante. Enemy Pull permanece
+    // nativamente apagado hasta que el usuario elige una de sus cuatro direcciones.
+    var suppressEnemyPullSwitch = false
+    val savedEnemyPullBubble = prefs.getBoolean("pref_enemy_pull", false)
+    enemyPullSwitch?.isChecked = savedEnemyPullBubble
+    if (savedEnemyPullBubble && enemyPullFloatingView == null) {
+        enemyPullDirection = 0
+        NativeBridge.setEnemyPullDirection(0)
+        NativeBridge.setEnemyPull(false)
+        if (!showEnemyPullFloatingControl()) {
+            prefs.edit().putBoolean("pref_enemy_pull", false).apply()
+            enemyPullSwitch?.isChecked = false
+        }
+    }
+    enemyPullSwitch?.setOnCheckedChangeListener { _, checked ->
+        if (suppressEnemyPullSwitch) return@setOnCheckedChangeListener
+        prefs.edit().putBoolean("pref_enemy_pull", checked).apply()
+        if (checked) {
+            enemyPullDirection = 0
+            NativeBridge.setEnemyPullDirection(0)
+            NativeBridge.setEnemyPull(false)
+            if (showEnemyPullFloatingControl()) {
+                Toast.makeText(
+                    this@BubbleService,
+                    "Enemy Pull: selecciona una dirección",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                suppressEnemyPullSwitch = true
+                enemyPullSwitch.isChecked = false
+                suppressEnemyPullSwitch = false
+                prefs.edit().putBoolean("pref_enemy_pull", false).apply()
+            }
+        } else {
+            hideEnemyPullFloatingControl()
+            Toast.makeText(this@BubbleService, "Enemy Pull: Desactivado", Toast.LENGTH_SHORT).show()
+        }
     }
 
     // 3. MOVIMIENTO DE LA BURBUJA (tu código existente)
@@ -816,166 +1530,34 @@ private fun setupMenu() {
     }
 }
 
-// RESTRICCIÓN ANTI-BAN para los switches del cráneo (Aimbot / Sniper Scope / Sniper Switch).
-// Mecanismo de doble confirmación: un solo tap se revierte y avisa; hay que tocar el switch
-// de nuevo dentro de 3s para activar de verdad. Evita activaciones accidentales que dan ban.
-private fun setupSkullSwitch(switch: Switch?, onActivate: (Boolean) -> Unit) {
-    if (switch == null) return
-    val CONFIRM_WINDOW_MS = 3000L
-    var armed = false
-    var reverting = false
-    val disarmRunnable = Runnable { armed = false }
+// Adaptación Android del filtro WinDivert recibido: retrasa únicamente UDP saliente
+// con payload de 50..150 bytes. El túnel VPN ya está limitado al paquete del juego.
+private fun setAimbotPacketDelay(active: Boolean) {
+    if (isAimbotPacketDelayActive == active) return
 
-    // Estado de partida arranca en OFF
-    switch.isChecked = false
-    switch.setOnCheckedChangeListener { _, checked ->
-        if (reverting) {
-            reverting = false
-            return@setOnCheckedChangeListener
-        }
-        if (!checked) {
-            // Apagado: siempre permitido (desactivar no da ban)
-            handler.removeCallbacks(disarmRunnable)
-            armed = false
-            onActivate(false)
-        } else {
-            // Encendido: requiere confirmación con un segundo tap dentro de la ventana
-            if (armed) {
-                handler.removeCallbacks(disarmRunnable)
-                armed = false
-                switch.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S169), Toast.LENGTH_SHORT).show()
-                onActivate(true)
+    NativeBridge.setSelectiveUdpDelay(active, 1)
+    isAimbotPacketDelayActive = active
+
+    if (active) {
+        // No reiniciar un túnel que ya está siendo usado por Freeze.
+        if (!AntigravityFirewall.isTunnelRunning && !LagController.fakeLagActivo) {
+            val prefs = getSharedPreferences(
+                NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+                Context.MODE_PRIVATE
+            )
+            val selectedPackage = targetPackage ?: if (prefs.getBoolean("use_ff_max", false)) {
+                NativeBridge.getNativeString(NativeBridge.S98)
             } else {
-                armed = true
-                handler.postDelayed(disarmRunnable, CONFIRM_WINDOW_MS)
-                // Reverto a OFF: el primer tap NUNCA activa, solo arma la confirmación
-                reverting = true
-                switch.isChecked = false
-                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S170), Toast.LENGTH_SHORT).show()
+                NativeBridge.getNativeString(NativeBridge.S99)
             }
+            val vpnIntent = Intent(this, AntigravityFirewall::class.java).apply {
+                putExtra(NativeBridge.getNativeString(NativeBridge.S92), selectedPackage)
+            }
+            startService(vpnIntent)
         }
+    } else {
+        maybeStopSharedVpn()
     }
-}
-
-// Activa el aimbot: busca el PID, confirma que la memoria es legible y lo aplica.
-private fun toggleAimbot() {
-    val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
-    statusText?.text = NativeBridge.getNativeString(NativeBridge.S171)
-    Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S171), Toast.LENGTH_SHORT).show()
-
-    Thread {
-        val pid = NativeBridge.findGamePid()
-        if (pid <= 0) {
-            failAimbot(NativeBridge.getNativeString(NativeBridge.S172), "pid<=0")
-            return@Thread
-        }
-        if (!NativeBridge.isGameMemoryReady(pid)) {
-            val diag = NativeBridge.getGameMemoryDiagnostics(pid)
-            failAimbot(NativeBridge.getNativeString(NativeBridge.S172), diag)
-            return@Thread
-        }
-
-        NativeBridge.startAimbot()
-        runOnUiThread {
-            val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
-            statusText?.text = "${NativeBridge.getNativeString(NativeBridge.S173)}$pid"
-            Toast.makeText(this@BubbleService, "${NativeBridge.getNativeString(NativeBridge.S174)}$pid)", Toast.LENGTH_SHORT).show()
-        }
-    }.start()
-}
-
-private fun failAimbot(message: String, detail: String = "") {
-    runOnUiThread {
-        val statusText = bubbleView.findViewById<TextView>(R.id.status_text)
-        statusText?.text = message
-        if (detail.isNotEmpty()) {
-            Toast.makeText(this@BubbleService, "$message\n\n$detail", Toast.LENGTH_LONG).show()
-        } else {
-            Toast.makeText(this@BubbleService, message, Toast.LENGTH_SHORT).show()
-        }
-        setSwitchSilently(false)
-    }
-}
-
-// Cambia el switch sin volver a disparar el listener
-private fun setSwitchSilently(checked: Boolean) {
-    val switch = bubbleView.findViewById<Switch>(R.id.recoil_switch) ?: return
-    aimbotSwitchBusy = true
-    switch.isChecked = checked
-    aimbotSwitchBusy = false
-}
-
-private fun setSniperSwitchSilently(checked: Boolean) {
-    val switch = bubbleView.findViewById<Switch>(R.id.sniper_switch_switch) ?: return
-    sniperSwitchBusy = true
-    switch.isChecked = checked
-    sniperSwitchBusy = false
-}
-
-// Activa el aim-assist de sniper: busca PID y memoria, configura modo y arranca.
-private fun toggleSniperScope() {
-    val statusText = bubbleView.findViewById<TextView>(R.id.sniper_scope_status)
-    statusText?.text = NativeBridge.getNativeString(NativeBridge.S171)
-    Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S171), Toast.LENGTH_SHORT).show()
-
-    Thread {
-        val pid = NativeBridge.findGamePid()
-        if (pid <= 0) {
-            runOnUiThread {
-                statusText?.text = NativeBridge.getNativeString(NativeBridge.S175)
-                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S176), Toast.LENGTH_LONG).show()
-                setSniperScopeSilently(false)
-            }
-            return@Thread
-        }
-        if (!NativeBridge.isGameMemoryReady(pid)) {
-            runOnUiThread {
-                statusText?.text = NativeBridge.getNativeString(NativeBridge.S177)
-                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S178), Toast.LENGTH_LONG).show()
-                setSniperScopeSilently(false)
-            }
-            return@Thread
-        }
-
-        val mode = if (bubbleView.findViewById<Switch>(R.id.sniper_body_switch).isChecked) 1 else 0
-        NativeBridge.setSniperMode(mode)
-        NativeBridge.setSniperScope(true)
-        runOnUiThread {
-            statusText?.text = if (mode == 1) NativeBridge.getNativeString(NativeBridge.S159) else NativeBridge.getNativeString(NativeBridge.S160)
-            Toast.makeText(this@BubbleService, "${NativeBridge.getNativeString(NativeBridge.S179)}$pid)", Toast.LENGTH_SHORT).show()
-        }
-    }.start()
-}
-
-private fun setSniperScopeSilently(checked: Boolean) {
-    val switch = bubbleView.findViewById<Switch>(R.id.sniper_scope_switch) ?: return
-    sniperScopeSwitchBusy = true
-    switch.isChecked = checked
-    sniperScopeSwitchBusy = false
-}
-
-// Aplica el patch de la mira (patrones de SniperSwitch.cs)
-private fun toggleSniperSwitch() {
-    val statusText = bubbleView.findViewById<TextView>(R.id.sniper_switch_status)
-    statusText?.text = NativeBridge.getNativeString(NativeBridge.S171)
-    Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S171), Toast.LENGTH_SHORT).show()
-
-    Thread {
-        val ok = NativeBridge.sniperSwitchApply()
-        if (ok) {
-            runOnUiThread {
-                statusText?.text = NativeBridge.getNativeString(NativeBridge.S180)
-                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S181), Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            runOnUiThread {
-                statusText?.text = NativeBridge.getNativeString(NativeBridge.S182)
-                Toast.makeText(this@BubbleService, NativeBridge.getNativeString(NativeBridge.S183), Toast.LENGTH_LONG).show()
-                setSniperSwitchSilently(false)
-            }
-        }
-    }.start()
 }
 
 private fun runOnUiThread(action: () -> Unit) {
@@ -1024,21 +1606,47 @@ private fun startEspOverlay() {
     if (espOverlayView != null) return
     val overlay = EspOverlayView(this)
     val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
+    val espMasterEnabled = bubbleView.findViewById<Switch>(R.id.esp_switch)?.isChecked == true
+    overlay.espMasterEnabled = espMasterEnabled
     val colorIdx = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S197), 1).coerceIn(0, 7)
     overlay.lineColor = espColorValues[colorIdx]
+    overlay.boxColor = espColorValues[prefs.getInt("pref_esp_box_color", 2).coerceIn(0, 7)]
+    overlay.glowColor = espColorValues[prefs.getInt("pref_esp_glow_color", 3).coerceIn(0, 7)]
+    overlay.cornerColor = espColorValues[prefs.getInt("pref_esp_corner_color", 7).coerceIn(0, 7)]
+    overlay.fullBoxColor = espColorValues[prefs.getInt("pref_esp_fullbox_color", 4).coerceIn(0, 7)]
     overlay.rgbMode = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S198), false)
     overlay.lineOrigin = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S199), 0).coerceIn(0, 2)
     overlay.lineWidth = prefs.getInt(NativeBridge.getNativeString(NativeBridge.S200), 3).coerceIn(1, 10).toFloat()
-    overlay.showCount = prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S201), false)
-    overlay.drawBox = bubbleView.findViewById<Switch>(R.id.esp_box_switch)?.isChecked ?: false
-    overlay.drawSkeleton = bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)?.isChecked ?: false
-    overlay.drawLines = bubbleView.findViewById<Switch>(R.id.esp_line_switch)?.isChecked ?: false
-    overlay.drawHealth = bubbleView.findViewById<Switch>(R.id.esp_health_switch)?.isChecked ?: false
-    overlay.drawTeam = bubbleView.findViewById<Switch>(R.id.esp_team_switch)?.isChecked ?: false
-    overlay.drawName = bubbleView.findViewById<Switch>(R.id.esp_name_switch)?.isChecked ?: false
-    overlay.drawDistance = bubbleView.findViewById<Switch>(R.id.esp_distance_switch)?.isChecked ?: false
-    overlay.drawWeapon = bubbleView.findViewById<Switch>(R.id.esp_weapon_switch)?.isChecked ?: false
-    overlay.ignoreKnocked = bubbleView.findViewById<Switch>(R.id.esp_ignore_knocked_switch)?.isChecked ?: false
+    overlay.showCount = espMasterEnabled && prefs.getBoolean(NativeBridge.getNativeString(NativeBridge.S201), false)
+    overlay.drawBox = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_box_switch)?.isChecked == true
+    overlay.drawSkeleton = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_skeleton_switch)?.isChecked == true
+    overlay.drawLines = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_line_switch)?.isChecked == true
+    overlay.drawGlow = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_glow_switch)?.isChecked == true
+    overlay.drawCornerBox = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_corner_switch)?.isChecked == true
+    overlay.drawFullBox = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_fullbox_switch)?.isChecked == true
+    overlay.draw3dBox = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_3d_box_switch)?.isChecked == true
+    overlay.drawClosestGlowLine = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_closest_glow_switch)?.isChecked == true
+    overlay.showMinimap = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_minimap_switch)?.isChecked == true
+    overlay.drawHealth = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_health_switch)?.isChecked == true
+    overlay.drawWeapon = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_weapon_switch)?.isChecked == true
+    overlay.drawTeam = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_team_switch)?.isChecked == true
+    overlay.drawName = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_name_switch)?.isChecked == true
+    overlay.drawDistance = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_distance_switch)?.isChecked == true
+    overlay.ignoreKnocked = espMasterEnabled && bubbleView.findViewById<Switch>(R.id.esp_ignore_knocked_switch)?.isChecked == true
+
+    // Inicializar configuración de Chams
+    overlay.chamsPlayer = bubbleView.findViewById<Switch>(R.id.chams_player_switch)?.isChecked ?: false
+    overlay.chamsPlayerGlow = bubbleView.findViewById<Switch>(R.id.chams_player_glow_switch)?.isChecked ?: false
+    overlay.chamsPlayerWireframe = bubbleView.findViewById<Switch>(R.id.chams_player_wireframe_switch)?.isChecked ?: false
+    overlay.chamsWeapon = bubbleView.findViewById<Switch>(R.id.chams_weapon_switch)?.isChecked ?: false
+    overlay.chamsThroughWalls = bubbleView.findViewById<Switch>(R.id.chams_through_wall_switch)?.isChecked ?: true
+    val chamsColorIdx = prefs.getInt("pref_chams_color", 1).coerceIn(0, 7)
+    overlay.chamsColor = espColorValues[chamsColorIdx]
+    overlay.chamsMode = prefs.getInt("pref_chams_mode", 0).coerceIn(0, 3)
+    overlay.chamsRgb = prefs.getBoolean("pref_chams_rgb", false)
+    overlay.drawAimVisibleFov = bubbleView.findViewById<Switch>(R.id.aim_visible_switch)?.isChecked ?: false
+    overlay.aimVisibleFovRadius = prefs.getInt("pref_aim_visible_fov", 200)
+        .coerceIn(50, 500).toFloat()
     val overlayParams =
             WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -1070,17 +1678,13 @@ private fun stopEspOverlay() {
 
 private fun setEspSwitchSilently(checked: Boolean) {
     val switch = bubbleView.findViewById<Switch>(R.id.esp_switch) ?: return
-    switch.setOnCheckedChangeListener(null)
+    suppressEspMasterListener = true
     switch.isChecked = checked
-    val espSwitch = switch
-    // religar el listener
-    espSwitch.setOnCheckedChangeListener { _, isChecked ->
-        if (isChecked) startEspOverlay() else stopEspOverlay()
-    }
+    suppressEspMasterListener = false
 }
 
     private fun expandBubbleMenu() {
-        if (isMenuExpanded) return
+        if (isMenuExpanded || !canUseAdvancedFeatures()) return
         isMenuExpanded = true
         recoilMenu.visibility = View.VISIBLE
         bubbleFaceOverlay.visibility = View.GONE
@@ -1147,7 +1751,9 @@ private fun setEspSwitchSilently(checked: Boolean) {
                         initialY = params.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
-                        handler.postDelayed(longClickRunnable, 3000L)
+                        if (LicenseEntitlements.hasPaidFeatures(this)) {
+                            handler.postDelayed(longClickRunnable, 3000L)
+                        }
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -1265,12 +1871,14 @@ private fun setEspSwitchSilently(checked: Boolean) {
                 // Forzar límite máximo de desincronización de 800ms en C++ para que Free Fire registre el daño y el ping no suba a 999ms
                 NativeBridge.setNativeMaxDesyncMs(800L)
 
-                // Iniciar la VPN dinámicamente si no estuviera corriendo
-                val vpnIntent =
-                        Intent(this, AntigravityFirewall::class.java).apply {
-                            putExtra(NativeBridge.getNativeString(NativeBridge.S92), targetPackage ?: NativeBridge.getNativeString(NativeBridge.S98))
-                        }
-                startService(vpnIntent)
+                // Reutilizar el túnel si Ghost no-root ya lo mantiene abierto.
+                if (!AntigravityFirewall.isTunnelRunning) {
+                    val vpnIntent =
+                            Intent(this, AntigravityFirewall::class.java).apply {
+                                putExtra(NativeBridge.getNativeString(NativeBridge.S92), targetPackage ?: NativeBridge.getNativeString(NativeBridge.S98))
+                            }
+                    startService(vpnIntent)
+                }
                 LagController.toggleFakeLag(true, false)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1295,10 +1903,8 @@ private fun setEspSwitchSilently(checked: Boolean) {
             try {
                 LagController.toggleFakeLag(false, false)
 
-                // Detener la VPN de inmediato para volver al ruteo directo y restaurar el ping normal
-                val vpnIntent =
-                        Intent(this, AntigravityFirewall::class.java).apply { action = NativeBridge.getNativeString(NativeBridge.S91) }
-                startService(vpnIntent)
+                // Ghost no-root conserva su propia ruta aunque Fake Lag se apague.
+                maybeStopSharedVpn()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -1350,6 +1956,14 @@ private fun setEspSwitchSilently(checked: Boolean) {
 
     override fun onDestroy() {
         super.onDestroy()
+        NativeBridge.setSelectiveUdpDelay(false, 1)
+        NativeBridge.setAimVisible(false)
+        NativeBridge.setSilentAim(false)
+        NativeBridge.setEnemyPull(false)
+        NativeBridge.setFlyHack(false)
+        NativeBridge.setNoReload(false)
+        NativeBridge.setCameraAimbot(false)
+        isAimbotPacketDelayActive = false
         handler.removeCallbacks(longClickRunnable)
         // Limpieza de iptables si estaban activos en LagController
         try {
@@ -1369,6 +1983,10 @@ private fun setEspSwitchSilently(checked: Boolean) {
 
         // Limpieza de Overlays para evitar que queden pegados en pantalla
         stopEspOverlay()
+        hideGhostFloatingSwitch()
+        hideTeleportDropFloatingControl(replayCaptured = false)
+        hideEnemyPullFloatingControl()
+        NativeBridge.shutdownMemoryAccess()
         if (::bubbleView.isInitialized && bubbleView.parent != null) {
             try { windowManager.removeView(bubbleView) } catch (e: Exception) {}
         }
@@ -1485,6 +2103,730 @@ private fun setEspSwitchSilently(checked: Boolean) {
             return true // Asumimos conectado para evitar crasheos catastróficos por políticas del
             // OS
         }
+    }
+
+    private fun showGhostFloatingSwitch() {
+        if (ghostFloatingView != null || !canUseAdvancedFeatures()) return
+        try {
+            val inflater = LayoutInflater.from(this)
+            val view = inflater.inflate(R.layout.floating_ghost_layout, null)
+            val ghostParams = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = 100
+                y = 300
+            }
+
+            var gInitialX = 0
+            var gInitialY = 0
+            var gTouchX = 0f
+            var gTouchY = 0f
+            var isClick = false
+            var operationBusy = false
+
+            val tvStatus = view.findViewById<TextView>(R.id.tv_ghost_floating_status)
+            val ivIcon = view.findViewById<ImageView>(R.id.iv_ghost_floating_icon)
+
+            fun updateGhostUi(active: Boolean) {
+                isGhostActive = active
+                if (active) {
+                    tvStatus?.text = "ON"
+                    tvStatus?.setTextColor(Color.parseColor("#39FF14"))
+                    ivIcon?.setColorFilter(Color.parseColor("#00E5FF"), android.graphics.PorterDuff.Mode.SRC_IN)
+                } else {
+                    tvStatus?.text = "OFF"
+                    tvStatus?.setTextColor(Color.parseColor("#FF3B30"))
+                    ivIcon?.setColorFilter(Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
+                }
+            }
+
+            updateGhostUi(isGhostActive)
+
+            view.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        gInitialX = ghostParams.x
+                        gInitialY = ghostParams.y
+                        gTouchX = event.rawX
+                        gTouchY = event.rawY
+                        isClick = true
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - gTouchX).toInt()
+                        val dy = (event.rawY - gTouchY).toInt()
+                        if (abs(dx) > 10 || abs(dy) > 10) {
+                            isClick = false
+                        }
+                        ghostParams.x = gInitialX + dx
+                        ghostParams.y = gInitialY + dy
+                        try {
+                            windowManager.updateViewLayout(view, ghostParams)
+                        } catch (e: Exception) {}
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (isClick && !operationBusy) {
+                            if (isGhostActive) {
+                                updateGhostUi(false)
+                                deactivateGhostMode()
+                                Toast.makeText(
+                                    this@BubbleService,
+                                    "Ghost Mode: DESACTIVADO",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                operationBusy = true
+                                tvStatus?.text = "..."
+                                tvStatus?.setTextColor(Color.parseColor("#FFD740"))
+                                activateGhostMode { enabled, rootMode ->
+                                    operationBusy = false
+                                    updateGhostUi(enabled)
+                                    Toast.makeText(
+                                        this@BubbleService,
+                                        if (enabled) {
+                                            "Ghost Mode: ACTIVADO (${if (rootMode) "ROOT" else "NO-ROOT"})"
+                                        } else {
+                                            "Ghost Mode: no se pudo iniciar"
+                                        },
+                                        if (enabled) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+
+            windowManager.addView(view, ghostParams)
+            ghostFloatingView = view
+            ghostFloatingParams = ghostParams
+        } catch (e: Exception) {
+            Log.e("BubbleService", "Error mostrando switch flotante de Ghost", e)
+        }
+    }
+
+    private fun hideGhostFloatingSwitch() {
+        deactivateGhostMode()
+        ghostFloatingView?.let { view ->
+            try {
+                windowManager.removeView(view)
+            } catch (e: Exception) {}
+        }
+        ghostFloatingView = null
+        ghostFloatingParams = null
+    }
+
+    /** Activa Ghost por una ruta propia según el modo seleccionado en ajustes. */
+    private fun activateGhostMode(onComplete: (Boolean, Boolean) -> Unit) {
+        if (!canUseAdvancedFeatures()) {
+            onComplete(false, false)
+            return
+        }
+        val prefs = getSharedPreferences(
+            NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+            Context.MODE_PRIVATE
+        )
+        val useRoot = prefs.getBoolean("use_root", false)
+        val selectedPackage = targetPackage ?: if (prefs.getBoolean("use_ff_max", false)) {
+            NativeBridge.getNativeString(NativeBridge.S98)
+        } else {
+            NativeBridge.getNativeString(NativeBridge.S99)
+        }
+        val generation = ++ghostOperationGeneration
+
+        Thread {
+            val enabled = try {
+                if (useRoot) {
+                    GhostController.enableRoot(this@BubbleService, selectedPackage)
+                } else {
+                    if (!GhostController.enableNoRoot(this@BubbleService, selectedPackage)) {
+                        return@Thread
+                    }
+                    if (!AntigravityFirewall.isTunnelRunning) {
+                        startService(Intent(this@BubbleService, AntigravityFirewall::class.java).apply {
+                            putExtra(NativeBridge.getNativeString(NativeBridge.S92), selectedPackage)
+                        })
+                        // No mostrar ON hasta que Android entregue realmente el TUN.
+                        var attempts = 0
+                        while (!AntigravityFirewall.isTunnelRunning && attempts < 30) {
+                            Thread.sleep(50)
+                            attempts++
+                        }
+                    }
+                    AntigravityFirewall.isTunnelRunning.also { ready ->
+                        if (!ready) GhostController.disableNoRoot()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("BubbleService", "No se pudo activar Ghost", e)
+                false
+            }
+
+            runOnUiThread {
+                if (generation != ghostOperationGeneration || ghostFloatingView == null) {
+                    // La burbuja se cerró durante la operación: no dejar reglas huérfanas.
+                    Thread {
+                        if (useRoot) {
+                            GhostController.disableRoot(this@BubbleService, selectedPackage)
+                        } else {
+                            GhostController.disableNoRoot()
+                        }
+                    }.start()
+                    return@runOnUiThread
+                }
+                isGhostActive = enabled
+                ghostUsesRoot = enabled && useRoot
+                ghostTargetPackage = if (enabled) selectedPackage else null
+                onComplete(enabled, useRoot)
+            }
+        }.start()
+    }
+
+    /** Apaga solo Ghost. Nunca modifica gLagActive ni la cadena FREEZY_FAKELAG. */
+    private fun deactivateGhostMode() {
+        ++ghostOperationGeneration
+        val wasActive = isGhostActive || GhostController.active
+        val usedRoot = ghostUsesRoot || GhostController.usingRoot
+        val packageToClean = ghostTargetPackage ?: targetPackage ?: run {
+            val prefs = getSharedPreferences(
+                NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+                Context.MODE_PRIVATE
+            )
+            if (prefs.getBoolean("use_ff_max", false)) {
+                NativeBridge.getNativeString(NativeBridge.S98)
+            } else {
+                NativeBridge.getNativeString(NativeBridge.S99)
+            }
+        }
+
+        isGhostActive = false
+        ghostUsesRoot = false
+        ghostTargetPackage = null
+        if (!wasActive) {
+            val currentRootMode = getSharedPreferences(
+                NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+                Context.MODE_PRIVATE
+            ).getBoolean("use_root", false)
+            if (!currentRootMode) {
+                try { AntigravityFirewall.setGhostActive(false) } catch (_: Throwable) {}
+            }
+            return
+        }
+
+        if (usedRoot) {
+            Thread {
+                GhostController.disableRoot(this@BubbleService, packageToClean)
+            }.start()
+        } else {
+            try {
+                GhostController.disableNoRoot()
+                maybeStopSharedVpn()
+            } catch (e: Exception) {
+                Log.e("BubbleService", "No se pudo apagar Ghost no-root", e)
+            }
+        }
+    }
+
+    /** Estado NoRoot de Teleport Drop sin propagar fallos de JNI a la UI. */
+    private fun nativeTeleportDropState(): Int = try {
+        AntigravityFirewall.getTeleportDropState().coerceIn(0, 2)
+    } catch (_: Throwable) {
+        0
+    }
+
+    private fun teleportDropState(): Int {
+        return if (teleportDropUsesRoot || RootTeleportDropController.active) {
+            if (RootTeleportDropController.active) 1 else 0
+        } else {
+            nativeTeleportDropState()
+        }
+    }
+
+    /** Cierra el VPN únicamente cuando ninguna función no-root lo necesita. */
+    private fun maybeStopSharedVpn() {
+        val ghostNeedsVpn = isGhostActive && !ghostUsesRoot
+        if (!isFreezing && !LagController.fakeLagActivo && !ghostNeedsVpn &&
+            !isAimbotPacketDelayActive && nativeTeleportDropState() == 0 &&
+            AntigravityFirewall.isTunnelRunning) {
+            try {
+                startService(Intent(this, AntigravityFirewall::class.java).apply {
+                    action = NativeBridge.getNativeString(NativeBridge.S91)
+                })
+            } catch (e: Exception) {
+                Log.e("BubbleService", "No se pudo cerrar el VPN compartido", e)
+            }
+        }
+    }
+
+    private fun selectedGamePackage(): String {
+        val prefs = getSharedPreferences(
+            NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+            Context.MODE_PRIVATE
+        )
+        return targetPackage ?: if (prefs.getBoolean("use_ff_max", false)) {
+            NativeBridge.getNativeString(NativeBridge.S98)
+        } else {
+            NativeBridge.getNativeString(NativeBridge.S99)
+        }
+    }
+
+    private fun currentCompatibility(): GameCompatibility.Report {
+        return GameCompatibility.inspect(this, selectedGamePackage())
+    }
+
+    private fun canUseAdvancedFeatures(): Boolean {
+        return LicenseEntitlements.hasPaidFeatures(this) &&
+            currentCompatibility().supportsAdvancedFeatures
+    }
+
+    private fun startTeleportDropCapture(onComplete: (Boolean) -> Unit) {
+        val accessPrefs = getSharedPreferences(
+            NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+            Context.MODE_PRIVATE
+        )
+        if (!canUseAdvancedFeatures()) {
+            onComplete(false)
+            return
+        }
+        val generation = ++teleportDropOperationGeneration
+        val selectedPackage = selectedGamePackage()
+        val useRoot = accessPrefs.getBoolean("use_root", false)
+        Thread {
+            val ready = try {
+                if (useRoot) {
+                    RootTeleportDropController.enable(this@BubbleService, selectedPackage)
+                } else {
+                    if (!AntigravityFirewall.isTunnelRunning) {
+                    startService(Intent(this@BubbleService, AntigravityFirewall::class.java).apply {
+                        putExtra(NativeBridge.getNativeString(NativeBridge.S92), selectedPackage)
+                    })
+                    var attempts = 0
+                    while (!AntigravityFirewall.isTunnelRunning && attempts < 30) {
+                        Thread.sleep(50)
+                        attempts++
+                    }
+                    }
+                    AntigravityFirewall.isTunnelRunning.also { tunnelReady ->
+                        if (tunnelReady) AntigravityFirewall.setTeleportDropActive(true)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("BubbleService", "No se pudo preparar Teleport Drop", e)
+                false
+            }
+
+            if (generation != teleportDropOperationGeneration) {
+                if (ready) {
+                    if (useRoot) RootTeleportDropController.disable()
+                    else try { AntigravityFirewall.cancelTeleportDrop() } catch (_: Throwable) {}
+                }
+                return@Thread
+            }
+            runOnUiThread {
+                if (generation == teleportDropOperationGeneration) {
+                    teleportDropUsesRoot = ready && useRoot
+                    onComplete(ready)
+                }
+            }
+        }.start()
+    }
+
+    private fun beginTeleportDropReplay(updateUi: ((Int) -> Unit)? = null) {
+        val generation = ++teleportDropOperationGeneration
+        if (teleportDropUsesRoot || RootTeleportDropController.active) {
+            Thread {
+                RootTeleportDropController.disable()
+                runOnUiThread {
+                    if (generation != teleportDropOperationGeneration) return@runOnUiThread
+                    teleportDropUsesRoot = false
+                    updateUi?.invoke(0)
+                }
+            }.start()
+            return
+        }
+        try {
+            AntigravityFirewall.setTeleportDropActive(false)
+        } catch (_: Throwable) {}
+        updateUi?.invoke(teleportDropState())
+
+        val monitor = object : Runnable {
+            override fun run() {
+                if (generation != teleportDropOperationGeneration) return
+                val state = teleportDropState()
+                updateUi?.invoke(state)
+                if (state == 2) {
+                    handler.postDelayed(this, 80)
+                } else {
+                    maybeStopSharedVpn()
+                }
+            }
+        }
+        handler.post(monitor)
+    }
+
+    private fun showTeleportDropFloatingControl() {
+        val accessPrefs = getSharedPreferences(
+            NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+            Context.MODE_PRIVATE
+        )
+        if (teleportDropFloatingView != null ||
+            !canUseAdvancedFeatures()) return
+        try {
+            val view = LayoutInflater.from(this).inflate(
+                R.layout.floating_teleport_drop_layout,
+                null
+            )
+            val density = resources.displayMetrics.density
+            val prefs = getSharedPreferences(
+                NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+                Context.MODE_PRIVATE
+            )
+            val dropParams = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = prefs.getInt("teleport_drop_bubble_x", (90 * density).toInt())
+                y = prefs.getInt("teleport_drop_bubble_y", (390 * density).toInt())
+            }
+
+            val status = view.findViewById<TextView>(R.id.tv_teleport_drop_status)
+            val icon = view.findViewById<ImageView>(R.id.iv_teleport_drop_icon)
+            var operationBusy = false
+
+            fun updateUi(state: Int) {
+                when (state) {
+                    1 -> {
+                        status.text = "REC"
+                        status.setTextColor(Color.parseColor("#39FF14"))
+                        icon.setColorFilter(
+                            Color.parseColor("#00E5FF"),
+                            android.graphics.PorterDuff.Mode.SRC_IN
+                        )
+                    }
+                    2 -> {
+                        status.text = "SEND"
+                        status.setTextColor(Color.parseColor("#FFD740"))
+                        icon.setColorFilter(
+                            Color.parseColor("#B026FF"),
+                            android.graphics.PorterDuff.Mode.SRC_IN
+                        )
+                    }
+                    else -> {
+                        status.text = "OFF"
+                        status.setTextColor(Color.parseColor("#FF3B30"))
+                        icon.setColorFilter(
+                            Color.parseColor("#8A9BA8"),
+                            android.graphics.PorterDuff.Mode.SRC_IN
+                        )
+                    }
+                }
+            }
+
+            var initialX = 0
+            var initialY = 0
+            var touchX = 0f
+            var touchY = 0f
+            var dragging = false
+            view.setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = dropParams.x
+                        initialY = dropParams.y
+                        touchX = event.rawX
+                        touchY = event.rawY
+                        dragging = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - touchX).toInt()
+                        val dy = (event.rawY - touchY).toInt()
+                        if (abs(dx) > 10 || abs(dy) > 10) dragging = true
+                        if (dragging) {
+                            dropParams.x = initialX + dx
+                            dropParams.y = initialY + dy
+                            try {
+                                windowManager.updateViewLayout(view, dropParams)
+                            } catch (_: Exception) {}
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (dragging) {
+                            prefs.edit()
+                                .putInt("teleport_drop_bubble_x", dropParams.x)
+                                .putInt("teleport_drop_bubble_y", dropParams.y)
+                                .apply()
+                        } else if (!operationBusy) {
+                            when (teleportDropState()) {
+                                0 -> {
+                                    operationBusy = true
+                                    status.text = "..."
+                                    status.setTextColor(Color.parseColor("#FFD740"))
+                                    startTeleportDropCapture { started ->
+                                        operationBusy = false
+                                        updateUi(if (started) 1 else 0)
+                                        Toast.makeText(
+                                            this@BubbleService,
+                                            if (started) {
+                                                if (accessPrefs.getBoolean("use_root", false))
+                                                    "Teleport Drop: reteniendo posición (ROOT)"
+                                                else "Teleport Drop: reteniendo última posición"
+                                            } else "Teleport Drop: no se pudo iniciar",
+                                            if (started) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                                1 -> {
+                                    beginTeleportDropReplay(::updateUi)
+                                    Toast.makeText(
+                                        this@BubbleService,
+                                        if (teleportDropUsesRoot)
+                                            "Teleport Drop Root: posición liberada"
+                                        else "Teleport Drop: liberando última posición",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                2 -> Toast.makeText(
+                                    this@BubbleService,
+                                    "Teleport Drop: enviando datos retenidos",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            view.performClick()
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> true
+                    else -> false
+                }
+            }
+
+            updateUi(teleportDropState())
+            windowManager.addView(view, dropParams)
+            teleportDropFloatingView = view
+            teleportDropFloatingParams = dropParams
+            if (teleportDropState() == 2) {
+                beginTeleportDropReplay(::updateUi)
+            }
+        } catch (e: Exception) {
+            Log.e("BubbleService", "Error mostrando Teleport Drop flotante", e)
+        }
+    }
+
+    private fun hideTeleportDropFloatingControl(replayCaptured: Boolean) {
+        val state = teleportDropState()
+        if (replayCaptured && state in 1..2) {
+            beginTeleportDropReplay()
+        } else {
+            ++teleportDropOperationGeneration
+            if (!replayCaptured) {
+                if (teleportDropUsesRoot || RootTeleportDropController.active) {
+                    Thread { RootTeleportDropController.disable() }.start()
+                    teleportDropUsesRoot = false
+                } else {
+                    try { AntigravityFirewall.cancelTeleportDrop() } catch (_: Throwable) {}
+                }
+            }
+        }
+        teleportDropFloatingView?.let { view ->
+            try { windowManager.removeView(view) } catch (_: Exception) {}
+        }
+        teleportDropFloatingView = null
+        teleportDropFloatingParams = null
+    }
+
+    /**
+     * Burbuja vertical de dirección para Enemy Pull. Cada segmento funciona como
+     * selección exclusiva y también como asa de arrastre cuando el dedo se mueve.
+     */
+    private fun showEnemyPullFloatingControl(): Boolean {
+        if (enemyPullFloatingView != null) return true
+        return try {
+            val view = LayoutInflater.from(this).inflate(R.layout.floating_enemy_pull_layout, null)
+            val density = resources.displayMetrics.density
+            val pullParams = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                val prefs = getSharedPreferences(
+                    NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+                    Context.MODE_PRIVATE
+                )
+                x = prefs.getInt(
+                    "enemy_pull_bubble_x",
+                    (resources.displayMetrics.widthPixels - 76 * density).toInt().coerceAtLeast(0)
+                )
+                y = prefs.getInt("enemy_pull_bubble_y", (260 * density).toInt())
+            }
+
+            val directionViews = arrayOf(
+                view.findViewById<TextView>(R.id.pull_direction_up),
+                view.findViewById<TextView>(R.id.pull_direction_down),
+                view.findViewById<TextView>(R.id.pull_direction_left),
+                view.findViewById<TextView>(R.id.pull_direction_right)
+            )
+            val directionNames = arrayOf("Arriba", "Abajo", "Izquierda", "Derecha")
+
+            fun updateDirectionUi() {
+                directionViews.forEachIndexed { index, directionView ->
+                    val selected = enemyPullDirection == index + 1
+                    directionView.setBackgroundResource(
+                        if (selected) R.drawable.bg_pull_direction_selected
+                        else android.R.color.transparent
+                    )
+                    directionView.setTextColor(
+                        Color.parseColor(if (selected) "#39FF14" else "#8A9BA8")
+                    )
+                }
+            }
+
+            fun selectDirection(direction: Int) {
+                // La dirección ya seleccionada funciona como toggle: un segundo
+                // toque la desmarca y apaga Enemy Pull, dejando la burbuja abierta
+                // para escoger otra dirección después.
+                if (direction == enemyPullDirection) {
+                    ++enemyPullRequestGeneration
+                    enemyPullDirection = 0
+                    NativeBridge.setEnemyPullDirection(0)
+                    NativeBridge.setEnemyPull(false)
+                    updateDirectionUi()
+                    Toast.makeText(
+                        this@BubbleService,
+                        "Enemy Pull: Desactivado",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return
+                }
+                enemyPullDirection = direction
+                NativeBridge.setEnemyPullDirection(direction)
+                updateDirectionUi()
+                val requestGeneration = ++enemyPullRequestGeneration
+                Thread {
+                    val started = try {
+                        NativeBridge.setEnemyPull(true)
+                    } catch (_: Throwable) {
+                        false
+                    }
+                    runOnUiThread {
+                        if (requestGeneration != enemyPullRequestGeneration ||
+                            enemyPullFloatingView !== view) {
+                            if (enemyPullDirection == 0) {
+                                NativeBridge.setEnemyPull(false)
+                            }
+                            return@runOnUiThread
+                        }
+                        if (started) {
+                            Toast.makeText(
+                                this@BubbleService,
+                                "Enemy Pull: ${directionNames[direction - 1]}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            enemyPullDirection = 0
+                            NativeBridge.setEnemyPullDirection(0)
+                            updateDirectionUi()
+                            Toast.makeText(
+                                this@BubbleService,
+                                "Enemy Pull: no se encontró la memoria del juego",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }.start()
+            }
+
+            directionViews.forEachIndexed { index, directionView ->
+                var startWindowX = 0
+                var startWindowY = 0
+                var startTouchX = 0f
+                var startTouchY = 0f
+                var dragging = false
+                directionView.setOnTouchListener { _, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            startWindowX = pullParams.x
+                            startWindowY = pullParams.y
+                            startTouchX = event.rawX
+                            startTouchY = event.rawY
+                            dragging = false
+                            true
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            val dx = (event.rawX - startTouchX).toInt()
+                            val dy = (event.rawY - startTouchY).toInt()
+                            if (abs(dx) > 10 || abs(dy) > 10) dragging = true
+                            if (dragging) {
+                                pullParams.x = startWindowX + dx
+                                pullParams.y = startWindowY + dy
+                                try {
+                                    windowManager.updateViewLayout(view, pullParams)
+                                } catch (_: Exception) {}
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            if (dragging) {
+                                getSharedPreferences(
+                                    NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME),
+                                    Context.MODE_PRIVATE
+                                ).edit()
+                                    .putInt("enemy_pull_bubble_x", pullParams.x)
+                                    .putInt("enemy_pull_bubble_y", pullParams.y)
+                                    .apply()
+                            } else {
+                                selectDirection(index + 1)
+                                directionView.performClick()
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_CANCEL -> true
+                        else -> false
+                    }
+                }
+            }
+
+            updateDirectionUi()
+            windowManager.addView(view, pullParams)
+            enemyPullFloatingView = view
+            enemyPullFloatingParams = pullParams
+            true
+        } catch (e: Exception) {
+            Log.e("BubbleService", "Error mostrando selector flotante de Enemy Pull", e)
+            false
+        }
+    }
+
+    private fun hideEnemyPullFloatingControl() {
+        ++enemyPullRequestGeneration
+        enemyPullDirection = 0
+        NativeBridge.setEnemyPullDirection(0)
+        NativeBridge.setEnemyPull(false)
+        enemyPullFloatingView?.let { view ->
+            try {
+                windowManager.removeView(view)
+            } catch (_: Exception) {}
+        }
+        enemyPullFloatingView = null
+        enemyPullFloatingParams = null
     }
 
     override fun onBind(intent: Intent): IBinder? = null

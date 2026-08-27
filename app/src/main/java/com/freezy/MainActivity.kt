@@ -733,6 +733,8 @@ class MainActivity : AppCompatActivity() {
                     .putBoolean("is_logged_in", false)
                     .remove("activation_date")
                     .remove("expiration_date")
+                    .remove(LicenseEntitlements.STORAGE_KEY)
+                    .remove(LicenseEntitlements.SOURCE_KEY)
                     .remove("secure_endpoint")
                     .apply()
                 stopService(Intent(this@MainActivity, BubbleService::class.java))
@@ -964,6 +966,7 @@ class MainActivity : AppCompatActivity() {
             SecurePrefs.putSecureString(this, "activation_date", createdAt)
             SecurePrefs.putSecureString(this, "expiration_date", expiresAt)
         }
+        LicenseEntitlements.updateFromServer(this, json)
 
         val encryptedPayloadHex = json.optString("encrypted_payload", "")
         val ivHex = json.optString("iv", "")
@@ -1033,11 +1036,38 @@ class MainActivity : AppCompatActivity() {
 
     private fun proceedWithLaunch() {
         val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
+        val useRoot = prefs.getBoolean("use_root", false)
         val useMax = prefs.getBoolean("use_ff_max", false)
         val preferredPkg = if (useMax) NativeBridge.getNativeString(NativeBridge.S98) else NativeBridge.getNativeString(NativeBridge.S99)
         val detectedPkg = detectFreeFire()
 
         targetPackageToLaunch = detectedPkg ?: preferredPkg
+        val compatibility = GameCompatibility.inspect(this, targetPackageToLaunch!!)
+        when {
+            !LicenseEntitlements.hasPaidFeatures(this) -> {
+                Toast.makeText(
+                    this,
+                    "Licencia TRIAL: únicamente Fake Lag está disponible.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            !compatibility.supportsAdvancedFeatures -> {
+                Toast.makeText(this, compatibility.message, Toast.LENGTH_LONG).show()
+            }
+            else -> {
+                Toast.makeText(
+                    this,
+                    "Free Fire 32 bits detectado: opciones avanzadas habilitadas.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+        // Root nunca pasa por VpnService: Fake Lag y Ghost usan sus cadenas
+        // propias de iptables. El permiso VPN pertenece exclusivamente a NoRoot.
+        if (useRoot) {
+            launchGameAndBubble()
+            return
+        }
         val vpnIntent = android.net.VpnService.prepare(this)
         if (vpnIntent != null) {
             startActivityForResult(vpnIntent, 124)
@@ -1421,26 +1451,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isPremiumLicense(): Boolean {
-        val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
-        var isPremiumLicense = false
-        val actDate = SecurePrefs.getSecureString(this, "activation_date")
-        val expDate = SecurePrefs.getSecureString(this, "expiration_date")
-        if (actDate.isNotEmpty() && expDate.isNotEmpty() && actDate != "--" && expDate != "--") {
-            try {
-                val d1 = parseDateTime(actDate)
-                val d2 = parseDateTime(expDate)
-                if (d1 != null && d2 != null) {
-                    val diffMs = d2.time - d1.time
-                    val diffDays = java.util.concurrent.TimeUnit.DAYS.convert(diffMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                    if (diffDays >= 14) { // 14 días de diferencia para abarcar licencias de 15 días
-                        isPremiumLicense = true
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-        return isPremiumLicense
+        return LicenseEntitlements.hasPaidFeatures(this)
     }
 
     // Carga librería nativa para obtener el endpoint ofuscado
@@ -1451,4 +1462,3 @@ class MainActivity : AppCompatActivity() {
     }
     private external fun getSecureEndpoint(): String
 }
-

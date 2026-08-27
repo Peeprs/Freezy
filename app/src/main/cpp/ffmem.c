@@ -17,7 +17,7 @@ static int get_mem_fd(int pid) {
     if (g_mem_fd >= 0) return g_mem_fd;
     char path[64];
     snprintf(path, sizeof(path), "/proc/%d/mem", pid);
-    g_mem_fd = open(path, O_RDONLY);
+    g_mem_fd = open(path, O_RDWR);
     return g_mem_fd;
 }
 
@@ -57,6 +57,42 @@ int main(int argc, char** argv) {
             }
             for (unsigned long long i = 0; i < size; i++) printf("%02x", buf[i]);
             fputc('\n', stdout); fflush(stdout);
+        } else if (line[0] == 'W') {
+            // Comando 'W <addr> <size> <hex>': escritura pequeña y validada.
+            unsigned long long addr = 0, size = 0;
+            int consumed = 0;
+            if (sscanf(line + 1, "%llx %llx %n", &addr, &size, &consumed) != 2 ||
+                size == 0 || size > (MAX_PAYLOAD / 2)) {
+                fputs("ERR\n", stdout); fflush(stdout);
+                continue;
+            }
+
+            char* hex = line + 1 + consumed;
+            static unsigned char buf[MAX_PAYLOAD / 2];
+            int valid = 1;
+            for (unsigned long long i = 0; i < size; i++) {
+                unsigned int byte = 0;
+                if (sscanf(hex + i * 2, "%2x", &byte) != 1) {
+                    valid = 0;
+                    break;
+                }
+                buf[i] = (unsigned char)byte;
+            }
+            if (!valid) {
+                fputs("ERR\n", stdout); fflush(stdout);
+                continue;
+            }
+
+            struct iovec local_iov = { buf, (size_t)size };
+            struct iovec remote_iov = { (void*)(uintptr_t)addr, (size_t)size };
+            ssize_t wrote = syscall(__NR_process_vm_writev, pid, &local_iov, 1, &remote_iov, 1, 0);
+            if (wrote != (ssize_t)size) {
+                int fd = get_mem_fd(pid);
+                if (fd >= 0) wrote = pwrite(fd, buf, (size_t)size, (off_t)addr);
+            }
+
+            fputs(wrote == (ssize_t)size ? "OK\n" : "ERR\n", stdout);
+            fflush(stdout);
         } else if (line[0] == 'B') {
             // Comando 'B <module_name>': Resolver base del módulo sin popen ni su
             char modName[128] = {0};

@@ -20,6 +20,7 @@
 #include <iomanip>
 #include <thread>
 #include <chrono>
+#include <algorithm>
 #include <sys/resource.h>
 
 #define TAG  "FreezyNative"
@@ -201,6 +202,10 @@ static bool epoll_del(int fd) {
 
 // Set from Kotlin: true = drop incoming UDP (lag switch ON)
 extern "C" std::atomic<bool> gLagActive{false};
+// Ghost es una ruta independiente: filtra únicamente UDP saliente y no usa
+// la cola, watchdog ni estado de Fake Lag.
+static std::atomic<bool> gGhostActive{false};
+static std::atomic<uint64_t> gGhostDroppedPackets{0};
 static std::atomic<uint64_t> g_last_keepalive_time{0};
 static std::atomic<uint64_t> g_max_desync_ms{800}; // Configurable dinámicamente por JNI (Paso 7 Watchdog)
 
@@ -421,6 +426,7 @@ struct OutboundPacket {
     sockaddr_storage dst_addr;
     socklen_t dst_addr_len;
     uint64_t timestamp;
+    uint32_t delay_ms;
 };
 
 static const int MAX_OUTBOUND_QUEUE_SIZE = 256;
@@ -432,8 +438,203 @@ static pthread_mutex_t g_outbound_queue_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static std::atomic<uint32_t> g_outbound_jitter_ms{0};
 static std::atomic<int> g_drop_probability{0};
+static std::atomic<bool> g_selective_udp_delay_active{false};
+static std::atomic<uint32_t> g_selective_udp_delay_ms{1};
 
-static void outbound_queue_push(int sock, const uint8_t* payload, int plen, const sockaddr* dst, socklen_t dst_len) {
+/* ── Teleport Drop: captura/replay saliente, independiente de Fake Lag ───── */
+// Teleport no reproduce una ruta completa: conserva únicamente las últimas
+// muestras de cada firma de movimiento. Una cola grande enviaba segundos de
+// estado obsoleto y provocaba rollback/ping alto al desactivarla.
+static constexpr int TELEPORT_QUEUE_CAPACITY = 24;
+static constexpr int TELEPORT_PAYLOAD_CAPACITY = 2048;
+struct TeleportPacket {
+    int sock;
+    uint8_t payload[TELEPORT_PAYLOAD_CAPACITY];
+    int payload_len;
+    sockaddr_storage dst_addr;
+    socklen_t dst_addr_len;
+};
+
+static TeleportPacket g_teleport_capture[TELEPORT_QUEUE_CAPACITY];
+static TeleportPacket g_teleport_replay[TELEPORT_QUEUE_CAPACITY];
+static int g_teleport_capture_head = 0;
+static int g_teleport_capture_count = 0;
+static int g_teleport_replay_head = 0;
+static int g_teleport_replay_count = 0;
+static uint64_t g_teleport_next_release_ms = 0;
+static uint32_t g_teleport_release_interval_ms = 4;
+static pthread_mutex_t g_teleport_mtx = PTHREAD_MUTEX_INITIALIZER;
+// 0 apagado, 1 capturando, 2 reproduciendo.
+static std::atomic<int> g_teleport_drop_state{0};
+
+static inline bool is_teleport_position_port(uint16_t port) {
+    return (port >= 10000 && port <= 10030) ||
+           (port >= 20000 && port <= 20030);
+}
+
+/* ── Clasificador adaptativo de movimiento saliente ─────────────────────── */
+// El payload del juego está cifrado; no se puede leer una coordenada de forma
+// fiable. La señal útil es la cadencia: posición se repite varias veces por
+// segundo con puerto y tamaño estables, mientras disparos/daño son eventos
+// esporádicos. Solo se retiene una firma después de observar esa repetición.
+struct MotionProfile {
+    uint16_t port;
+    uint16_t size_bucket;
+    uint64_t last_seen_ms;
+    uint8_t cadence_score;
+};
+
+static constexpr int MOTION_PROFILE_CAPACITY = 48;
+static MotionProfile g_motion_profiles[MOTION_PROFILE_CAPACITY]{};
+
+static bool observe_likely_position(uint16_t destination_port, int payload_length) {
+    if (!is_teleport_position_port(destination_port) ||
+        payload_length < 50 || payload_length > 200) return false;
+
+    const uint16_t bucket = (uint16_t)((payload_length + 3) & ~3);
+    const uint64_t now = get_now_ms();
+    int free_slot = -1;
+    int oldest_slot = 0;
+    uint64_t oldest_seen = UINT64_MAX;
+
+    for (int i = 0; i < MOTION_PROFILE_CAPACITY; ++i) {
+        MotionProfile& profile = g_motion_profiles[i];
+        if (profile.last_seen_ms == 0 && free_slot < 0) free_slot = i;
+        if (profile.last_seen_ms < oldest_seen) {
+            oldest_seen = profile.last_seen_ms;
+            oldest_slot = i;
+        }
+        if (profile.port != destination_port || profile.size_bucket != bucket) continue;
+
+        const uint64_t gap = now - profile.last_seen_ms;
+        const uint8_t previous_score = profile.cadence_score;
+        if (gap >= 8 && gap <= 180) {
+            profile.cadence_score = (uint8_t)std::min(20, profile.cadence_score + 2);
+        } else if (gap <= 320) {
+            profile.cadence_score = (uint8_t)std::min(20, profile.cadence_score + 1);
+        } else {
+            profile.cadence_score = 1;
+        }
+        profile.last_seen_ms = now;
+        if (previous_score < 6 && profile.cadence_score >= 6) {
+            LOGI("Movement signature learned: dport=%u payload~%u",
+                 destination_port, bucket);
+        }
+        return profile.cadence_score >= 6;
+    }
+
+    MotionProfile& profile = g_motion_profiles[free_slot >= 0 ? free_slot : oldest_slot];
+    profile = {destination_port, bucket, now, 1};
+    return false;
+}
+
+static void clear_teleport_queues_locked() {
+    g_teleport_capture_head = 0;
+    g_teleport_capture_count = 0;
+    g_teleport_replay_head = 0;
+    g_teleport_replay_count = 0;
+    g_teleport_next_release_ms = 0;
+}
+
+static bool capture_teleport_packet(int sock, const uint8_t* payload, int plen,
+                                    const sockaddr* dst, socklen_t dst_len) {
+    if (sock < 0 || payload == nullptr || plen < 25 ||
+        plen > TELEPORT_PAYLOAD_CAPACITY || dst == nullptr ||
+        dst_len > sizeof(sockaddr_storage)) return false;
+
+    pthread_mutex_lock(&g_teleport_mtx);
+    if (g_teleport_drop_state.load() != 1) {
+        pthread_mutex_unlock(&g_teleport_mtx);
+        return false;
+    }
+    // Sustituir la muestra anterior de la misma firma. Al desactivar solo se
+    // envía el estado más reciente, no todo el recorrido acumulado.
+    const int size_bucket = (plen + 3) & ~3;
+    for (int i = 0; i < g_teleport_capture_count; ++i) {
+        int index = (g_teleport_capture_head + i) % TELEPORT_QUEUE_CAPACITY;
+        TeleportPacket& existing = g_teleport_capture[index];
+        if (existing.sock == sock && ((existing.payload_len + 3) & ~3) == size_bucket) {
+            existing.payload_len = plen;
+            memcpy(existing.payload, payload, plen);
+            memcpy(&existing.dst_addr, dst, dst_len);
+            existing.dst_addr_len = dst_len;
+            pthread_mutex_unlock(&g_teleport_mtx);
+            return true;
+        }
+    }
+    if (g_teleport_capture_count >= TELEPORT_QUEUE_CAPACITY) {
+        // Mantener exclusivamente las firmas más recientes.
+        g_teleport_capture_head =
+            (g_teleport_capture_head + 1) % TELEPORT_QUEUE_CAPACITY;
+        --g_teleport_capture_count;
+    }
+    int tail = (g_teleport_capture_head + g_teleport_capture_count) %
+               TELEPORT_QUEUE_CAPACITY;
+    TeleportPacket& packet = g_teleport_capture[tail];
+    packet.sock = sock;
+    packet.payload_len = plen;
+    memcpy(packet.payload, payload, plen);
+    memcpy(&packet.dst_addr, dst, dst_len);
+    packet.dst_addr_len = dst_len;
+    ++g_teleport_capture_count;
+    pthread_mutex_unlock(&g_teleport_mtx);
+    return true;
+}
+
+static void begin_teleport_replay() {
+    pthread_mutex_lock(&g_teleport_mtx);
+    g_teleport_replay_head = 0;
+    g_teleport_replay_count = g_teleport_capture_count;
+    for (int i = 0; i < g_teleport_capture_count; ++i) {
+        int source = (g_teleport_capture_head + i) % TELEPORT_QUEUE_CAPACITY;
+        g_teleport_replay[i] = g_teleport_capture[source];
+    }
+    g_teleport_capture_head = 0;
+    g_teleport_capture_count = 0;
+
+    if (g_teleport_replay_count == 0) {
+        g_teleport_drop_state.store(0);
+    } else {
+        g_teleport_release_interval_ms = 1;
+        g_teleport_next_release_ms = get_now_ms();
+        g_teleport_drop_state.store(2);
+    }
+    pthread_mutex_unlock(&g_teleport_mtx);
+}
+
+static void process_teleport_replay() {
+    if (g_teleport_drop_state.load() != 2) return;
+    pthread_mutex_lock(&g_teleport_mtx);
+    uint64_t now = get_now_ms();
+    int released = 0;
+    while (g_teleport_replay_count > 0 && released < TELEPORT_QUEUE_CAPACITY &&
+           now >= g_teleport_next_release_ms) {
+        TeleportPacket& packet = g_teleport_replay[g_teleport_replay_head];
+        sendto(packet.sock, packet.payload, packet.payload_len, 0,
+               (sockaddr*)&packet.dst_addr, packet.dst_addr_len);
+        g_teleport_replay_head =
+            (g_teleport_replay_head + 1) % TELEPORT_QUEUE_CAPACITY;
+        --g_teleport_replay_count;
+        ++released;
+        g_teleport_next_release_ms += g_teleport_release_interval_ms;
+    }
+    if (g_teleport_replay_count == 0) {
+        clear_teleport_queues_locked();
+        g_teleport_drop_state.store(0);
+    }
+    pthread_mutex_unlock(&g_teleport_mtx);
+}
+
+static void cancel_teleport_drop() {
+    pthread_mutex_lock(&g_teleport_mtx);
+    clear_teleport_queues_locked();
+    g_teleport_drop_state.store(0);
+    pthread_mutex_unlock(&g_teleport_mtx);
+}
+
+static void outbound_queue_push(int sock, const uint8_t* payload, int plen,
+                                const sockaddr* dst, socklen_t dst_len,
+                                uint32_t delay_ms) {
     if (plen > 65536) return;
     pthread_mutex_lock(&g_outbound_queue_mtx);
     if (g_outbound_queue_count >= MAX_OUTBOUND_QUEUE_SIZE) {
@@ -450,6 +651,7 @@ static void outbound_queue_push(int sock, const uint8_t* payload, int plen, cons
     memcpy(&g_outbound_queue[idx].dst_addr, dst, dst_len);
     g_outbound_queue[idx].dst_addr_len = dst_len;
     g_outbound_queue[idx].timestamp = get_now_ms();
+    g_outbound_queue[idx].delay_ms = delay_ms;
     
     g_outbound_queue_tail = (g_outbound_queue_tail + 1) % MAX_OUTBOUND_QUEUE_SIZE;
     g_outbound_queue_count++;
@@ -459,11 +661,10 @@ static void outbound_queue_push(int sock, const uint8_t* payload, int plen, cons
 static void process_outbound_queue() {
     pthread_mutex_lock(&g_outbound_queue_mtx);
     uint64_t now = get_now_ms();
-    uint32_t jitter = g_outbound_jitter_ms.load();
     while (g_outbound_queue_count > 0) {
         int idx = g_outbound_queue_head;
         OutboundPacket& pkt = g_outbound_queue[idx];
-        if (now - pkt.timestamp >= jitter) {
+        if (now - pkt.timestamp >= pkt.delay_ms) {
             sendto(pkt.sock, pkt.payload, pkt.payload_len, 0, (sockaddr*)&pkt.dst_addr, pkt.dst_addr_len);
             g_outbound_queue_head = (g_outbound_queue_head + 1) % MAX_OUTBOUND_QUEUE_SIZE;
             g_outbound_queue_count--;
@@ -510,6 +711,12 @@ static bool should_probabilistic_drop() {
 /* Helper para identificar puertos de servidores del juego (Free Fire) */
 static inline bool is_game_port(uint16_t port) {
     return (port >= 7000 && port <= 25000);
+}
+
+static inline bool should_ghost_drop(bool likely_position) {
+    // Ghost retiene únicamente la firma repetitiva de posición ya aprendida.
+    // ACK, daño, disparos y eventos de tamaño/cadencia distintos siguen pasando.
+    return gGhostActive.load() && likely_position;
 }
 
 /* ── Get or create a protected socket for a given game source port ──────── */
@@ -940,9 +1147,10 @@ void* engine_thread(void*) {
         int timeout_ms = 100;
         pthread_mutex_lock(&g_outbound_queue_mtx);
         if (g_outbound_queue_count > 0) {
-            timeout_ms = 10;
+            timeout_ms = 1;
         }
         pthread_mutex_unlock(&g_outbound_queue_mtx);
+        if (g_teleport_drop_state.load() == 2) timeout_ms = 1;
 
         int nfds = epoll_wait(g_epoll_fd, events, MAX_EVENTS, timeout_ms);
         if (nfds < 0) {
@@ -951,10 +1159,9 @@ void* engine_thread(void*) {
             break;
         }
 
-        // Process outbound jitter queue (Paso 12)
-        if (g_outbound_jitter_ms.load() > 0) {
-            process_outbound_queue();
-        }
+        // Procesar cualquier paquete con retardo (jitter general o filtro selectivo).
+        process_outbound_queue();
+        process_teleport_replay();
 
         // Safety timeout flush check for delayed packets (Requirement 12)
         // Safety timeout flush check for delayed packets (Paso 7: Watchdog Dinámico)
@@ -1065,10 +1272,34 @@ void* engine_thread(void*) {
                                         dst.sin_family      = AF_INET;
                                         dst.sin_addr.s_addr = iph->daddr;
                                         dst.sin_port        = udph->dport;
+
+                                        bool likelyPosition =
+                                            observe_likely_position(dport, plen);
+                                        int teleportState = g_teleport_drop_state.load();
+                                        if (likelyPosition) {
+                                            if (teleportState == 1 &&
+                                                capture_teleport_packet(
+                                                    sock, payload, plen,
+                                                    (sockaddr*)&dst, sizeof(dst))) {
+                                                continue;
+                                            }
+                                            if (teleportState == 2) {
+                                                // Preservar el orden mientras sale la ruta retenida.
+                                                continue;
+                                            }
+                                        }
+                                        if (should_ghost_drop(likelyPosition)) {
+                                            gGhostDroppedPackets.fetch_add(
+                                                1, std::memory_order_relaxed);
+                                            continue;
+                                        }
                                         
-                                        uint32_t jitter = g_outbound_jitter_ms.load();
-                                        if (is_game && jitter > 0) {
-                                            outbound_queue_push(sock, payload, plen, (sockaddr*)&dst, sizeof(dst));
+                                        uint32_t delay_ms = is_game ? g_outbound_jitter_ms.load() : 0;
+                                        if (g_selective_udp_delay_active.load() && plen >= 50 && plen <= 150) {
+                                            delay_ms = std::max(delay_ms, g_selective_udp_delay_ms.load());
+                                        }
+                                        if (delay_ms > 0) {
+                                            outbound_queue_push(sock, payload, plen, (sockaddr*)&dst, sizeof(dst), delay_ms);
                                         } else {
                                             sendto(sock, payload, plen, 0,
                                                    (sockaddr*)&dst, sizeof(dst));
@@ -1102,6 +1333,7 @@ void* engine_thread(void*) {
                                         sendto(sock, payload, plen, 0, (sockaddr*)&dst, sizeof(dst));
                                     }
                                 } else if (plen > 0 && plen <= n - 48) {
+                                    uint16_t dport = ntohs(udph->dport);
                                     int sock = get_or_create_flow(
                                         true,
                                         ip6h->saddr, udph->sport,
@@ -1111,11 +1343,34 @@ void* engine_thread(void*) {
                                         dst.sin6_family = AF_INET6;
                                         memcpy(&dst.sin6_addr, ip6h->daddr, 16);
                                         dst.sin6_port = udph->dport;
+
+                                        bool likelyPosition =
+                                            observe_likely_position(dport, plen);
+                                        int teleportState = g_teleport_drop_state.load();
+                                        if (likelyPosition) {
+                                            if (teleportState == 1 &&
+                                                capture_teleport_packet(
+                                                    sock, payload, plen,
+                                                    (sockaddr*)&dst, sizeof(dst))) {
+                                                continue;
+                                            }
+                                            if (teleportState == 2) {
+                                                continue;
+                                            }
+                                        }
+                                        if (should_ghost_drop(likelyPosition)) {
+                                            gGhostDroppedPackets.fetch_add(
+                                                1, std::memory_order_relaxed);
+                                            continue;
+                                        }
                                         
-                                        uint32_t jitter = g_outbound_jitter_ms.load();
-                                        bool is_game = is_game_port(ntohs(udph->dport));
-                                        if (is_game && jitter > 0) {
-                                            outbound_queue_push(sock, payload, plen, (sockaddr*)&dst, sizeof(dst));
+                                        bool is_game = is_game_port(dport);
+                                        uint32_t delay_ms = is_game ? g_outbound_jitter_ms.load() : 0;
+                                        if (g_selective_udp_delay_active.load() && plen >= 50 && plen <= 150) {
+                                            delay_ms = std::max(delay_ms, g_selective_udp_delay_ms.load());
+                                        }
+                                        if (delay_ms > 0) {
+                                            outbound_queue_push(sock, payload, plen, (sockaddr*)&dst, sizeof(dst), delay_ms);
                                         } else {
                                             sendto(sock, payload, plen, 0,
                                                    (sockaddr*)&dst, sizeof(dst));
@@ -1160,7 +1415,12 @@ void* engine_thread(void*) {
                             // Tráfico UDP ajeno al juego (por ejemplo DNS) se enruta al instante sin retraso.
                             uint16_t srv_port = g_flows[j].srv_port;
                             bool is_game = is_game_port(ntohs(srv_port));
-                            bool drop_packet = gLagActive.load() && is_game;
+                            // Ghost/Teleport son modos salientes: nunca deben
+                            // detener las actualizaciones entrantes de enemigos.
+                            const bool outboundPositionMode =
+                                gGhostActive.load() || g_teleport_drop_state.load() != 0;
+                            bool drop_packet = gLagActive.load() && is_game &&
+                                               !outboundPositionMode;
 
                             if (drop_packet) {
                                 // 1. Descarte Probabilístico Realista (Evitar detección abrupta)
@@ -1323,7 +1583,8 @@ Java_com_freezy_AntigravityFirewall_startNativeEngine(
 
     if (pipe(g_pipe) < 0) { LOGE("pipe() failed"); return; }
     g_tun_fd = fd;
-    gLagActive = false;
+    // Conservar los estados solicitados mientras Android termina de crear o
+    // recrear el TUN; reiniciarlos aquí producía una carrera al activar modos.
     g_running  = true;
 
     pthread_attr_t attr;
@@ -1339,6 +1600,7 @@ Java_com_freezy_AntigravityFirewall_stopNativeEngine(
         JNIEnv* env, jobject /*thiz*/) {
     if (!g_running) return;
     g_running = false;
+    cancel_teleport_drop();
     g_tun_fd  = -1;
     // Paso 1: Solo cerrar el extremo de escritura y notificar al hilo
     if (g_pipe[1] > 0) { 
@@ -1362,6 +1624,43 @@ Java_com_freezy_AntigravityFirewall_setLagActive(
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_setGhostActive(
+        JNIEnv* /*env*/, jclass /*cls*/, jboolean active) {
+    gGhostActive.store((bool)active);
+    if (active) gGhostDroppedPackets.store(0, std::memory_order_relaxed);
+    LOGI("Ghost outbound filter: %s (adaptive movement signature)",
+         (bool)active ? "ON" : "OFF");
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_setTeleportDropActive(
+        JNIEnv* /*env*/, jclass /*cls*/, jboolean active) {
+    if (active) {
+        pthread_mutex_lock(&g_teleport_mtx);
+        clear_teleport_queues_locked();
+        g_teleport_drop_state.store(1);
+        pthread_mutex_unlock(&g_teleport_mtx);
+        LOGI("Teleport Drop: CAPTURE");
+    } else if (g_teleport_drop_state.load() == 1) {
+        begin_teleport_replay();
+        LOGI("Teleport Drop: REPLAY");
+    }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_freezy_AntigravityFirewall_getTeleportDropState(
+        JNIEnv* /*env*/, jclass /*cls*/) {
+    return (jint)g_teleport_drop_state.load();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_cancelTeleportDrop(
+        JNIEnv* /*env*/, jclass /*cls*/) {
+    cancel_teleport_drop();
+    LOGI("Teleport Drop: CANCELLED");
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_freezy_NativeBridge_setNativeMaxDesyncMs(
         JNIEnv* /*env*/, jclass /*cls*/, jlong ms) {
     g_max_desync_ms.store((uint64_t)ms);
@@ -1380,6 +1679,21 @@ Java_com_freezy_NativeBridge_setNativeDropProbability(
         JNIEnv* /*env*/, jclass /*cls*/, jint pct) {
     g_drop_probability.store(pct);
     LOGI("Native packet drop probability updated to: %d%%", pct);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_NativeBridge_setSelectiveUdpDelay(
+        JNIEnv* /*env*/, jclass /*cls*/, jboolean active, jint delay_ms) {
+    uint32_t safe_delay_ms = (uint32_t)std::max(0, std::min((int)delay_ms, 1000));
+    g_selective_udp_delay_ms.store(safe_delay_ms);
+    g_selective_udp_delay_active.store((bool)active);
+    LOGI("Selective outbound UDP delay: %s (%u ms, payload 50..150)",
+         (bool)active ? "ON" : "OFF", safe_delay_ms);
+
+    // Al apagar, enviar inmediatamente cualquier datagrama retenido.
+    if (!active) {
+        clear_outbound_queue();
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL

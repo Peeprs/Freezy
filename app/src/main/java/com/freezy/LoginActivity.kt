@@ -369,6 +369,7 @@ class LoginActivity : AppCompatActivity() {
                                 SecurePrefs.putSecureString(this@LoginActivity, "saved_key", key)
                                 SecurePrefs.putSecureString(this@LoginActivity, "activation_date", activationDate)
                                 SecurePrefs.putSecureString(this@LoginActivity, "expiration_date", expirationDate)
+                                LicenseEntitlements.updateFromServer(this@LoginActivity, jsonObject)
                                 if (sessionToken.isNotEmpty()) {
                                     SecurePrefs.putSecureString(this@LoginActivity, "session_token", sessionToken)
                                 }
@@ -649,6 +650,7 @@ class LoginActivity : AppCompatActivity() {
                                 SecurePrefs.putSecureString(this@LoginActivity, "activation_date", createdAt)
                                 SecurePrefs.putSecureString(this@LoginActivity, "expiration_date", expiresAt)
                             }
+                            LicenseEntitlements.updateFromServer(this@LoginActivity, jsonObject)
                             val encryptedPayloadHex = jsonObject.optString("encrypted_payload", "")
                             val ivHex = jsonObject.optString("iv", "")
                             if (encryptedPayloadHex.isNotEmpty() && ivHex.isNotEmpty()) {

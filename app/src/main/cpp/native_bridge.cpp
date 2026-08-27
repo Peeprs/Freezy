@@ -16,9 +16,13 @@
 #include <cstring>
 #include <cerrno>
 #include <algorithm>
+#include <array>
+#include <limits>
 #include <mutex>
 #include <unordered_map>
 #include <dirent.h>
+#include <sys/wait.h>
+#include <signal.h>
 
 #define LOG_TAG "NativeBridge"
 #ifdef NDEBUG
@@ -46,9 +50,24 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 // ==============================================================================================
 
 static std::atomic<int> g_game_pid{-1};
-static std::atomic<bool> g_aimbot_active{true};
+static std::atomic<bool> g_aimbot_active{false};
+static std::atomic<bool> g_camera_aim_active{false};
 static std::atomic<bool> g_aimbot_running{false};
 static std::thread g_aimbot_thread;
+// 0 Head, 1 Neck, 2 Root, 3 Hip, 4 Foot.
+static std::atomic<int> g_aim_target{0};
+static std::atomic<int> g_aim_visible_fov{200};
+
+// Controlador compartido para las funciones que escriben posición/dirección.
+// Un solo hilo evita que Fly y Enemy Pull creen bucles concurrentes.
+static std::atomic<bool> g_silent_aim_active{false};
+static std::atomic<bool> g_enemy_pull_active{false};
+// 0 Ninguna, 1 Arriba, 2 Abajo, 3 Izquierda, 4 Derecha.
+static std::atomic<int> g_enemy_pull_direction{0};
+static std::atomic<bool> g_fly_active{false};
+static std::atomic<bool> g_no_reload_active{false};
+static std::atomic<bool> g_feature_thread_running{false};
+static std::thread g_feature_thread;
 
 // Sniper Scope (aim-assist) estado
 static std::atomic<bool> g_sniper_active{false};
@@ -59,7 +78,7 @@ static std::atomic<int> g_screen_w{1080};
 static std::atomic<int> g_screen_h{1920};
 static const float SNIPER_FOV_PX = 200.0f;
 static const float SNIPER_MAX_DIST = 800.0f;
-static const float AIM_DEADZONE_PX = 6.0f;   // no re-apuntar si ya está dentro de este radio
+static const float AIM_DEADZONE_PX = 1.5f;   // precisión final cerca del centro
 
 // Caché de la base de libil2cpp.so por PID (evita su -c cat en cada iteración del loop)
 static std::atomic<int> g_base_pid{-1};
@@ -78,6 +97,30 @@ static std::mutex g_io_mutex;
 static FILE* g_io_in = nullptr;    // stdout del helper (lectura)
 static FILE* g_io_out = nullptr;   // stdin del helper (escritura)
 static int g_io_pid = -1;
+static pid_t g_io_child_pid = -1;
+static std::atomic<int> g_helper_tried_pid{0};
+
+static void closeRootMemIOLocked() {
+    // Cerrar stdin primero entrega EOF a ffmem y permite que `su` termine limpio.
+    if (g_io_out) { fclose(g_io_out); g_io_out = nullptr; }
+    if (g_io_in) { fclose(g_io_in); g_io_in = nullptr; }
+    g_io_pid = -1;
+
+    if (g_io_child_pid > 0) {
+        int status = 0;
+        pid_t result = 0;
+        for (int i = 0; i < 10; i++) {
+            result = waitpid(g_io_child_pid, &status, WNOHANG);
+            if (result == g_io_child_pid || result == -1) break;
+            usleep(10000);
+        }
+        if (result == 0) {
+            kill(g_io_child_pid, SIGTERM);
+            waitpid(g_io_child_pid, &status, 0);
+        }
+        g_io_child_pid = -1;
+    }
+}
 
 bool ensureHelperSpawned(int pid);
 
@@ -85,11 +128,10 @@ bool rootMemIOSpawn(int pid) {
     std::lock_guard<std::mutex> lock(g_io_mutex);
     if (g_io_in && g_io_out && g_io_pid == pid) return true;
 
-    if (g_io_in) { fclose(g_io_in); g_io_in = nullptr; }
-    if (g_io_out) { fclose(g_io_out); g_io_out = nullptr; }
-    g_io_pid = -1;
+    closeRootMemIOLocked();
 
     if (g_helper_path.empty() || pid <= 0) return false;
+    g_helper_tried_pid = pid;
 
     int in_pipe[2], out_pipe[2];
     if (pipe(in_pipe) != 0 || pipe(out_pipe) != 0) return false;
@@ -114,10 +156,11 @@ bool rootMemIOSpawn(int pid) {
     g_io_out = fdopen(in_pipe[1], "w");
     g_io_in = fdopen(out_pipe[0], "r");
     if (!g_io_in || !g_io_out) {
-        if (g_io_in) { fclose(g_io_in); g_io_in = nullptr; }
-        if (g_io_out) { fclose(g_io_out); g_io_out = nullptr; }
+        g_io_child_pid = child;
+        closeRootMemIOLocked();
         return false;
     }
+    g_io_child_pid = child;
     g_io_pid = pid;
     LOGI("[FREEZY] Helper ffmem lanzado (PID %d)", pid);
     return true;
@@ -130,22 +173,14 @@ bool rootMemIOReadDirect(int pid, long address, void* buffer, size_t size) {
     if (!g_io_out || !g_io_in || pid != g_io_pid) return false;
 
     if (fprintf(g_io_out, "R %llx %zx\n", (unsigned long long)address, size) < 0) {
-        if (g_io_in) fclose(g_io_in);
-        if (g_io_out) fclose(g_io_out);
-        g_io_in = nullptr;
-        g_io_out = nullptr;
-        g_io_pid = -1;
+        closeRootMemIOLocked();
         return false;
     }
     fflush(g_io_out);
 
     std::string hex(1 + size * 2 + 8, '\0');
     if (fgets(hex.data(), (int)hex.size(), g_io_in) == nullptr) {
-        if (g_io_in) fclose(g_io_in);
-        if (g_io_out) fclose(g_io_out);
-        g_io_in = nullptr;
-        g_io_out = nullptr;
-        g_io_pid = -1;
+        closeRootMemIOLocked();
         return false;
     }
     if (hex.compare(0, 3, "ERR") == 0) return false;
@@ -156,6 +191,33 @@ bool rootMemIOReadDirect(int pid, long address, void* buffer, size_t size) {
         buf[i] = (uint8_t)byte;
     }
     return true;
+}
+
+// Escribe mediante el helper persistente. El protocolo hexadecimal evita abrir un
+// proceso `su` por cada frame y mantiene serializadas las operaciones de memoria.
+bool rootMemIOWriteDirect(int pid, long address, const void* buffer, size_t size) {
+    if (pid != g_io_pid || !g_io_in || !g_io_out || !buffer || size == 0 || size > 4096) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(g_io_mutex);
+    if (!g_io_out || !g_io_in || pid != g_io_pid) return false;
+
+    static const char HEX[] = "0123456789abcdef";
+    const uint8_t* bytes = static_cast<const uint8_t*>(buffer);
+    std::string command;
+    command.reserve(32 + size * 2);
+    char header[64];
+    snprintf(header, sizeof(header), "W %llx %zx ", (unsigned long long)address, size);
+    command += header;
+    for (size_t i = 0; i < size; i++) {
+        command.push_back(HEX[bytes[i] >> 4]);
+        command.push_back(HEX[bytes[i] & 0x0F]);
+    }
+    command.push_back('\n');
+
+    if (fputs(command.c_str(), g_io_out) < 0 || fflush(g_io_out) != 0) return false;
+    char response[16] = {0};
+    return fgets(response, sizeof(response), g_io_in) != nullptr && strncmp(response, "OK", 2) == 0;
 }
 
 // Lee múltiples regiones de memoria en 1 sola syscall al kernel (Batch I/O Vectorial)
@@ -176,22 +238,14 @@ bool rootMemIOReadVectorDirect(int pid, const long* addresses, const size_t* siz
     cmd += '\n';
 
     if (fputs(cmd.c_str(), g_io_out) < 0) {
-        if (g_io_in) fclose(g_io_in);
-        if (g_io_out) fclose(g_io_out);
-        g_io_in = nullptr;
-        g_io_out = nullptr;
-        g_io_pid = -1;
+        closeRootMemIOLocked();
         return false;
     }
     fflush(g_io_out);
 
     std::string hex(1 + totalBytes * 2 + 16, '\0');
     if (fgets(hex.data(), (int)hex.size(), g_io_in) == nullptr) {
-        if (g_io_in) fclose(g_io_in);
-        if (g_io_out) fclose(g_io_out);
-        g_io_in = nullptr;
-        g_io_out = nullptr;
-        g_io_pid = -1;
+        closeRootMemIOLocked();
         return false;
     }
     if (hex.compare(0, 3, "ERR") == 0) return false;
@@ -219,22 +273,14 @@ bool rootMemIOGetModuleBase(int pid, const char* modName, long& outBase, int& ou
     if (!g_io_out || !g_io_in || pid != g_io_pid) return false;
 
     if (fprintf(g_io_out, "B %s\n", modName) < 0) {
-        if (g_io_in) fclose(g_io_in);
-        if (g_io_out) fclose(g_io_out);
-        g_io_in = nullptr;
-        g_io_out = nullptr;
-        g_io_pid = -1;
+        closeRootMemIOLocked();
         return false;
     }
     fflush(g_io_out);
 
     char resp[128] = {0};
     if (fgets(resp, sizeof(resp), g_io_in) == nullptr) {
-        if (g_io_in) fclose(g_io_in);
-        if (g_io_out) fclose(g_io_out);
-        g_io_in = nullptr;
-        g_io_out = nullptr;
-        g_io_pid = -1;
+        closeRootMemIOLocked();
         return false;
     }
     if (strncmp(resp, "ERR", 3) == 0) return false;
@@ -287,6 +333,17 @@ const long OFF_AIM_ROTATION = 0x400;
 const long OFF_COLLIDER = 0x4A4;
 const long OFF_LOCKED_AIMING_COLLIDER = 0x54;
 
+// Silent Aim. Valores confirmados en el archivo Offsets recibido.
+const long OFF_IS_FIRING = 0x540;              // Offsets.sAim1
+const long OFF_IS_FIRING_ALT = 0x4E0;          // Offsets.IS_FIRING (mismo archivo)
+const long OFF_SILENT_WEAPON = 0x978;          // Offsets.sAim2
+const long OFF_WEAPON_START_POSITION = 0x38;   // Offsets.sAim3
+const long OFF_WEAPON_AIM_DIRECTION = 0x2C;    // Offsets.sAim4
+
+// FastReload / NoReload: localPlayer + PlayerAttributes -> +NoReload.
+const long OFF_PLAYER_ATTRIBUTES = 0x4BC;
+const long OFF_NO_RELOAD = 0x99;
+
 // Huesos (Bones enum)
 const long OFF_BONE_HEAD = 0x458;
 const long OFF_BONE_NECK = 0x460;
@@ -303,6 +360,16 @@ const long OFF_BONE_LEFT_ANKLE = 0x474;
 const long OFF_BONE_RIGHT_ANKLE = 0x478;
 const long OFF_BONE_LEFT_FOOT = 0x47C;
 const long OFF_BONE_RIGHT_FOOT = 0x480;
+
+static long getSelectedAimBoneOffset() {
+    switch (g_aim_target.load()) {
+        case 1: return OFF_BONE_NECK;
+        case 2: return OFF_BONE_ROOT;
+        case 3: return OFF_BONE_HIP;
+        case 4: return OFF_BONE_RIGHT_FOOT;
+        default: return OFF_BONE_HEAD;
+    }
+}
 
 // Orden de huesos del esqueleto (índice = posición en el array "skel" del snapshot)
 const long SKELETON_BONES[14] = {
@@ -353,8 +420,13 @@ bool readGameMemoryRoot(int pid, long address, void* buffer, size_t size) {
     return read == size;
 }
 
-// Intentar lanzar el helper persistente una sola vez por PID (evita spam de su).
-static std::atomic<int> g_helper_tried_pid{0};
+static bool processStillExists(int pid) {
+    if (pid <= 0) return false;
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d", pid);
+    return access(path, F_OK) == 0;
+}
+
 bool ensureHelperSpawned(int pid) {
     if (pid <= 0) return false;
     if (g_helper_path.empty()) return false;
@@ -381,13 +453,21 @@ bool readGameMemory(int pid, long address, void* buffer, size_t size) {
     
     if (result == static_cast<ssize_t>(size)) return true;
     
-    // 3) Fallback con root (popen dd)
-    return readGameMemoryRoot(pid, address, buffer, size);
+    // No lanzar `su -c dd` por cada lectura: si el helper fue denegado esto
+    // generaba cientos de procesos/avisos por segundo. El error se propaga limpio.
+    return false;
 }
 
 bool writeGameMemory(int pid, long address, const void* buffer, size_t size) {
-    // Modo 100% Solo Lectura: Escritura deshabilitada para seguridad anti-ban.
-    return false;
+    if (pid <= 0 || address <= 0 || !buffer || size == 0) return false;
+
+    ensureHelperSpawned(pid);
+    if (rootMemIOWriteDirect(pid, address, buffer, size)) return true;
+
+    struct iovec local_iov = { const_cast<void*>(buffer), size };
+    struct iovec remote_iov = { reinterpret_cast<void*>(address), size };
+    ssize_t result = syscall(__NR_process_vm_writev, pid, &local_iov, 1, &remote_iov, 1, 0);
+    return result == static_cast<ssize_t>(size);
 }
 
 // ==============================================================================================
@@ -575,7 +655,11 @@ inline bool isPlausiblePtr(long p) {
     if (g_ptr_width.load() == 4) {
         return u >= 0x10000 && u <= 0xFFFFFFFFU && (u & 3) == 0;
     }
+#if UINTPTR_MAX > 0xFFFFFFFFU
     return u >= 0x10000 && u < 0x7fffffffffffULL && (u & 7) == 0;
+#else
+    return false;
+#endif
 }
 
 bool readPtr(int pid, long addr, long& out) {
@@ -590,6 +674,25 @@ bool readPtr(int pid, long addr, long& out) {
 
 bool readU8(int pid, long addr, uint8_t& out) {
     return readGameMemory(pid, addr, &out, 1);
+}
+
+// El offset principal corresponde al bool usado por el botón de disparo. El
+// alternativo solo se consulta si el principal no puede leerse o no contiene
+// un valor bool válido; hacer OR entre ambos podía dejar el Aimbot enganchado
+// permanentemente cuando uno de los offsets pertenecía a otra build.
+static bool readLocalFiringState(int pid, long localPlayer, bool& isFiring) {
+    isFiring = false;
+    uint8_t value = 0;
+    if (readU8(pid, localPlayer + OFF_IS_FIRING, value) && value <= 1) {
+        isFiring = value != 0;
+        return true;
+    }
+    value = 0;
+    if (readU8(pid, localPlayer + OFF_IS_FIRING_ALT, value) && value <= 1) {
+        isFiring = value != 0;
+        return true;
+    }
+    return false;
 }
 bool readI32(int pid, long addr, int& out) {
     return readGameMemory(pid, addr, &out, 4);
@@ -620,6 +723,8 @@ bool resolveGamePointers(int pid, GamePointers& gp) {
     gp.base = getGameBase(pid);
     if (gp.base == 0) { LOGD("[FREEZY] chain: falló getGameBase"); return false; }
 
+    bool is64 = (g_ptr_width.load() == 8);
+
     if (!readPtr(pid, gp.base + OFF_INIT_BASE, gp.facade) || !isPlausiblePtr(gp.facade)) {
         LOGD("[FREEZY] chain: falló baseGameFacade (base+0x%llx) = 0x%llx",
              (unsigned long long)OFF_INIT_BASE, (unsigned long long)gp.facade);
@@ -630,27 +735,32 @@ bool resolveGamePointers(int pid, GamePointers& gp) {
         LOGD("[FREEZY] chain: falló gameFacade (*baseGameFacade)");
         return false;
     }
-    if (!readPtr(pid, gameFacade + OFF_STATIC_CLASS, gp.staticFacade) || !isPlausiblePtr(gp.staticFacade)) {
-        LOGD("[FREEZY] chain: falló staticFacade (gameFacade+0x%llx)", (unsigned long long)OFF_STATIC_CLASS);
-        return false;
+
+    long offStatic = is64 ? 0xB8 : OFF_STATIC_CLASS;
+    if (!readPtr(pid, gameFacade + offStatic, gp.staticFacade) || !isPlausiblePtr(gp.staticFacade)) {
+        if (!readPtr(pid, gameFacade + OFF_STATIC_CLASS, gp.staticFacade) || !isPlausiblePtr(gp.staticFacade)) {
+            LOGD("[FREEZY] chain: falló staticFacade");
+            return false;
+        }
     }
+
     if (!readPtr(pid, gp.staticFacade, gp.currentGame) || !isPlausiblePtr(gp.currentGame)) {
         LOGD("[FREEZY] chain: falló currentGame (staticFacade+0x0)");
         return false;
     }
-    if (!readPtr(pid, gp.currentGame + OFF_CURRENT_MATCH, gp.currentMatch)) {
-        LOGD("[FREEZY] chain: falló lectura currentMatch (currentGame+0x%llx)", (unsigned long long)OFF_CURRENT_MATCH);
-        return false;
+
+    long offMatch = is64 ? 0x90 : OFF_CURRENT_MATCH;
+    if (!readPtr(pid, gp.currentGame + offMatch, gp.currentMatch) || !isPlausiblePtr(gp.currentMatch)) {
+        readPtr(pid, gp.currentGame + OFF_CURRENT_MATCH, gp.currentMatch);
     }
-    if (!isPlausiblePtr(gp.currentMatch)) {
-        LOGD("[FREEZY] chain: currentMatch=0x%llx (¿estás en partida?)",
-             (unsigned long long)gp.currentMatch);
-        return false;
+
+    if (isPlausiblePtr(gp.currentMatch)) {
+        long offLocal = is64 ? 0x120 : OFF_LOCAL_PLAYER;
+        if (!readPtr(pid, gp.currentMatch + offLocal, gp.localPlayer) || !isPlausiblePtr(gp.localPlayer)) {
+            readPtr(pid, gp.currentMatch + OFF_LOCAL_PLAYER, gp.localPlayer);
+        }
     }
-    if (!readPtr(pid, gp.currentMatch + OFF_LOCAL_PLAYER, gp.localPlayer) || !isPlausiblePtr(gp.localPlayer)) {
-        LOGD("[FREEZY] chain: falló localPlayer (currentMatch+0x%llx)", (unsigned long long)OFF_LOCAL_PLAYER);
-        return false;
-    }
+
     gp.valid = true;
     return true;
 }
@@ -857,9 +967,19 @@ bool ensureHierarchy(int pid, long matrix) {
     return refreshHierSnapLocked(pid, matrix, frame);
 }
 
-// Lee los 14 punteros de hueso de una entidad en UNA llamada (bloque contiguo 0x458..0x4A4).
+// Lee los 14 punteros de hueso de una entidad en UNA llamada.
 // Fallback a lecturas individuales si el bloque falla.
 bool readBonePtrBlock(int pid, long entity, long out[14]) {
+    bool is64 = (g_ptr_width.load() == 8);
+    if (is64) {
+        for (int i = 0; i < 14; i++) {
+            long bone = 0;
+            readPtr(pid, entity + SKELETON_BONES[i], bone);
+            out[i] = bone;
+        }
+        return true;
+    }
+
     uint8_t raw[0x60];
     memset(raw, 0, sizeof(raw));
     bool ok = readGameMemory(pid, entity + 0x458, raw, sizeof(raw));
@@ -911,53 +1031,234 @@ bool getBonePosFromPtr(int pid, long bone, float* outPos) {
     return getTransformPosition(pid, transform, outPos);
 }
 
+// Resuelve muchas cadenas bone -> transform -> transformObj -> matrix/index usando el
+// comando vectorial del helper. Si un lote contiene un puntero que dejó de ser válido,
+// únicamente ese lote cae al resolvedor individual; el snapshot completo sigue siendo útil.
+static void batchReadPointers(int pid, const std::vector<long>& addresses,
+                              std::vector<long>& values, std::vector<uint8_t>& valid) {
+    const int ptrWidth = g_ptr_width.load() == 8 ? 8 : 4;
+    values.assign(addresses.size(), 0);
+    valid.assign(addresses.size(), 0);
+
+    for (size_t start = 0; start < addresses.size(); start += 64) {
+        const int count = (int)std::min<size_t>(64, addresses.size() - start);
+        long batchAddresses[64] = {0};
+        size_t batchSizes[64] = {0};
+        void* batchBuffers[64] = {nullptr};
+        std::array<std::array<uint8_t, 8>, 64> raw{};
+        for (int i = 0; i < count; ++i) {
+            batchAddresses[i] = addresses[start + i];
+            batchSizes[i] = (size_t)ptrWidth;
+            batchBuffers[i] = raw[i].data();
+        }
+        if (!rootMemIOReadVectorDirect(pid, batchAddresses, batchSizes, batchBuffers, count)) continue;
+        for (int i = 0; i < count; ++i) {
+            long value = 0;
+            if (ptrWidth == 4) {
+                uint32_t value32 = 0;
+                memcpy(&value32, raw[i].data(), sizeof(value32));
+                value = (long)value32;
+            } else {
+                uint64_t value64 = 0;
+                memcpy(&value64, raw[i].data(), sizeof(value64));
+                value = (long)value64;
+            }
+            if (isPlausiblePtr(value)) {
+                values[start + i] = value;
+                valid[start + i] = 1;
+            }
+        }
+    }
+}
+
+static void resolveBonePositionsBatch(int pid, const std::vector<long>& bones,
+                                      std::vector<std::array<float, 3>>& positions,
+                                      std::vector<uint8_t>& resolved) {
+    const size_t count = bones.size();
+    positions.assign(count, {0.0f, 0.0f, 0.0f});
+    resolved.assign(count, 0);
+    if (count == 0) return;
+
+    std::vector<long> phaseAddresses;
+    std::vector<size_t> phaseToBone;
+    phaseAddresses.reserve(count);
+    phaseToBone.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        if (!isPlausiblePtr(bones[i])) continue;
+        phaseAddresses.push_back(bones[i] + 0x8);
+        phaseToBone.push_back(i);
+    }
+
+    std::vector<long> phaseValues;
+    std::vector<uint8_t> phaseValid;
+    batchReadPointers(pid, phaseAddresses, phaseValues, phaseValid);
+    std::vector<long> transforms(count, 0);
+    for (size_t i = 0; i < phaseAddresses.size(); ++i) {
+        if (phaseValid[i]) transforms[phaseToBone[i]] = phaseValues[i];
+    }
+
+    phaseAddresses.clear();
+    phaseToBone.clear();
+    for (size_t i = 0; i < count; ++i) {
+        if (!isPlausiblePtr(transforms[i])) continue;
+        phaseAddresses.push_back(transforms[i] + 0x8);
+        phaseToBone.push_back(i);
+    }
+    batchReadPointers(pid, phaseAddresses, phaseValues, phaseValid);
+    std::vector<long> transformObjects(count, 0);
+    for (size_t i = 0; i < phaseAddresses.size(); ++i) {
+        if (phaseValid[i]) transformObjects[phaseToBone[i]] = phaseValues[i];
+    }
+
+    const bool is64 = g_ptr_width.load() == 8;
+    std::vector<long> matrices(count, 0);
+    std::vector<uint32_t> indices(count, 0);
+    phaseToBone.clear();
+    for (size_t i = 0; i < count; ++i) {
+        if (isPlausiblePtr(transformObjects[i])) phaseToBone.push_back(i);
+    }
+    for (size_t start = 0; start < phaseToBone.size(); start += 64) {
+        const int batchCount = (int)std::min<size_t>(64, phaseToBone.size() - start);
+        long batchAddresses[64] = {0};
+        size_t batchSizes[64] = {0};
+        void* batchBuffers[64] = {nullptr};
+        std::array<std::array<uint8_t, 12>, 64> raw{};
+        for (int i = 0; i < batchCount; ++i) {
+            const size_t boneIndex = phaseToBone[start + i];
+            batchAddresses[i] = transformObjects[boneIndex] + 0x20;
+            batchSizes[i] = is64 ? 12u : 8u;
+            batchBuffers[i] = raw[i].data();
+        }
+        if (!rootMemIOReadVectorDirect(pid, batchAddresses, batchSizes, batchBuffers, batchCount)) continue;
+        for (int i = 0; i < batchCount; ++i) {
+            const size_t boneIndex = phaseToBone[start + i];
+            if (is64) {
+                uint64_t matrix64 = 0;
+                memcpy(&matrix64, raw[i].data(), 8);
+                matrices[boneIndex] = (long)matrix64;
+                memcpy(&indices[boneIndex], raw[i].data() + 8, 4);
+            } else {
+                uint32_t matrix32 = 0;
+                memcpy(&matrix32, raw[i].data(), 4);
+                matrices[boneIndex] = (long)matrix32;
+                memcpy(&indices[boneIndex], raw[i].data() + 4, 4);
+            }
+        }
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        float pos[3] = {0, 0, 0};
+        if (isPlausiblePtr(matrices[i]) && ensureHierarchy(pid, matrices[i]) &&
+            resolvePosFromHier(pid, matrices[i], indices[i], pos)) {
+            positions[i] = {pos[0], pos[1], pos[2]};
+            resolved[i] = 1;
+            continue;
+        }
+        // Una entidad puede desaparecer entre las tres fases. El fallback evita que
+        // una región inválida elimine a los demás jugadores del snapshot.
+        if (getBonePosFromPtr(pid, bones[i], pos)) {
+            positions[i] = {pos[0], pos[1], pos[2]};
+            resolved[i] = 1;
+        }
+    }
+}
+
 // Posición mundial de un hueso por índice (0..13).
-// Lee los punteros FRESCOS por hueso (bone->transform->transformObj->matrix/index), igual que
-// el método directo que funciona, y usa el snapshot de jerarquía solo para resolver la cadena
-// de ancestros en memoria (elimina ~18 lecturas por hueso sin cambiar el resultado).
 bool getBonePosFast(int pid, long entity, int boneIdx, float* outPos) {
     long bones[14];
     readBonePtrBlock(pid, entity, bones);
     return getBonePosFromPtr(pid, bones[boneIdx], outPos);
 }
 
-// Diccionario de entidades (port de Data.GetEntities del dump de referencia).
-// Lectura por entrada (2 reads por entry) — método probado y seguro documentado en PROGRESS.md.
+// Diccionario de entidades (compatible 64-bit y 32-bit).
 std::vector<long> getEntities(int pid, long currentGame) {
     std::vector<long> out;
+    if (pid <= 0 || currentGame <= 0) return out;
+
+    bool is64 = (g_ptr_width.load() == 8);
+
     long dict = 0;
-    if (!readPtr(pid, currentGame + OFF_DICT_ENTITIES, dict) || !isPlausiblePtr(dict)) return out;
+    long offDict = is64 ? 0xC0 : OFF_DICT_ENTITIES; // 0xC0 en MatchGame (64-bit) o 0x68 (32-bit)
+    if (!readPtr(pid, currentGame + offDict, dict) || !isPlausiblePtr(dict)) {
+        if (!readPtr(pid, currentGame + OFF_DICT_ENTITIES, dict) || !isPlausiblePtr(dict)) return out;
+    }
+
+    long offCount = is64 ? 0x20 : OFF_DICT_COUNT;
+    long offEntries = is64 ? 0x18 : OFF_DICT_ENTRIES_PTR;
+    long offStart = is64 ? 0x20 : OFF_DICT_START;
+    long offEntity = is64 ? 0x10 : OFF_ENTRY_ENTITY;
+    long entryStride = is64 ? 0x18 : 0x10;
 
     int count = 0;
-    if (!readI32(pid, dict + OFF_DICT_COUNT, count)) return out;
+    if (!readI32(pid, dict + offCount, count)) return out;
     if (count < 1 || count > 1000) return out;
 
     long entries = 0;
-    if (!readPtr(pid, dict + OFF_DICT_ENTRIES_PTR, entries) || !isPlausiblePtr(entries)) return out;
+    if (!readPtr(pid, dict + offEntries, entries) || !isPlausiblePtr(entries)) return out;
 
-    long start = entries + OFF_DICT_START;
+    const long start = entries + offStart;
+    out.reserve((size_t)std::min(count, 128));
 
-    for (int i = 0; i < count; i++) {
-        long entry = start + (long)i * 0x10;
-        int hash = 0;
-        if (!readI32(pid, entry + OFF_ENTRY_HASH, hash)) continue;
-        if (hash < 0) continue;
-        long entity = 0;
-        if (!readPtr(pid, entry + OFF_ENTRY_ENTITY, entity)) continue;
-        if (entity == 0 || !isPlausiblePtr(entity)) continue;
-        out.push_back(entity);
+    // Las entradas son contiguas. Leerlas por páginas elimina dos viajes al helper
+    // por cada hueco del Dictionary y mantiene cada solicitud por debajo de 16 KiB.
+    const int entriesPerChunk = std::max(1, 16384 / (int)entryStride);
+    for (int first = 0; first < count; first += entriesPerChunk) {
+        const int chunkCount = std::min(entriesPerChunk, count - first);
+        std::vector<uint8_t> raw((size_t)chunkCount * (size_t)entryStride);
+        if (!readGameMemory(pid, start + (long)first * entryStride, raw.data(), raw.size())) {
+            // Fallback conservador para diccionarios que cambian durante la lectura.
+            for (int j = 0; j < chunkCount; ++j) {
+                const long entry = start + (long)(first + j) * entryStride;
+                int hash = -1;
+                long entity = 0;
+                if (!readI32(pid, entry + OFF_ENTRY_HASH, hash) || hash < 0) continue;
+                if (!readPtr(pid, entry + offEntity, entity) || !isPlausiblePtr(entity)) continue;
+                out.push_back(entity);
+            }
+            continue;
+        }
+        for (int j = 0; j < chunkCount; ++j) {
+            const uint8_t* entry = raw.data() + (size_t)j * (size_t)entryStride;
+            int hash = -1;
+            memcpy(&hash, entry + OFF_ENTRY_HASH, sizeof(hash));
+            if (hash < 0) continue;
+            long entity = 0;
+            if (is64) {
+                uint64_t entity64 = 0;
+                memcpy(&entity64, entry + offEntity, 8);
+                entity = (long)entity64;
+            } else {
+                uint32_t entity32 = 0;
+                memcpy(&entity32, entry + offEntity, 4);
+                entity = (long)entity32;
+            }
+            if (isPlausiblePtr(entity)) out.push_back(entity);
+        }
     }
     return out;
 }
 
 // Matriz de vista (localPlayer -> FollowCamera -> Camera -> CameraBase -> ViewMatrix).
 bool getViewMatrix(int pid, long localPlayer, float* m) {
+    bool is64 = (g_ptr_width.load() == 8);
     long followCamera = 0;
-    if (!readPtr(pid, localPlayer + OFF_FOLLOW_CAMERA, followCamera) || !isPlausiblePtr(followCamera)) return false;
+    long offFollow = is64 ? 0x770 : OFF_FOLLOW_CAMERA;
+    if (!readPtr(pid, localPlayer + offFollow, followCamera) || !isPlausiblePtr(followCamera)) {
+        if (!readPtr(pid, localPlayer + OFF_FOLLOW_CAMERA, followCamera) || !isPlausiblePtr(followCamera)) return false;
+    }
+
     long camera = 0;
-    if (!readPtr(pid, followCamera + OFF_CAMERA, camera) || !isPlausiblePtr(camera)) return false;
+    long offCam = is64 ? 0x30 : OFF_CAMERA;
+    if (!readPtr(pid, followCamera + offCam, camera) || !isPlausiblePtr(camera)) {
+        if (!readPtr(pid, followCamera + OFF_CAMERA, camera) || !isPlausiblePtr(camera)) return false;
+    }
+
     long cameraBase = 0;
-    if (!readPtr(pid, camera + OFF_CAMERA_BASE, cameraBase) || !isPlausiblePtr(cameraBase)) return false;
+    long offCamBase = is64 ? 0x10 : OFF_CAMERA_BASE;
+    if (!readPtr(pid, camera + offCamBase, cameraBase) || !isPlausiblePtr(cameraBase)) {
+        if (!readPtr(pid, camera + OFF_CAMERA_BASE, cameraBase) || !isPlausiblePtr(cameraBase)) return false;
+    }
+
     return readGameMemory(pid, cameraBase + OFF_VIEW_MATRIX, m, 64);
 }
 
@@ -1062,8 +1363,19 @@ void quatSlerp(const float* a, const float* b, float t, float* out) {
     }
 }
 
+bool normalizeQuaternion(float* q) {
+    float length = sqrtf(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+    if (!std::isfinite(length) || length < 0.0001f) return false;
+    q[0] /= length;
+    q[1] /= length;
+    q[2] /= length;
+    q[3] /= length;
+    return true;
+}
+
 // Quaternion LookRotation hacia un punto (port de SniperScope.cs).
-void aimAt(int pid, long localPlayer, const float* myPos, const float* targetPos) {
+void aimAt(int pid, long localPlayer, const float* myPos, const float* targetPos,
+           float smoothing) {
     float fwd[3] = { targetPos[0]-myPos[0], targetPos[1]-myPos[1], targetPos[2]-myPos[2] };
     float up[3] = { 0, 1, 0 };
 
@@ -1129,9 +1441,13 @@ void aimAt(int pid, long localPlayer, const float* myPos, const float* targetPos
     // evitar el "snap" brusco que fija la cámara (port del aim assist de la referencia).
     {
         float cur[4] = {0, 0, 0, 1};
-        readGameMemory(pid, localPlayer + OFF_AIM_ROTATION, cur, 16);
-        quatSlerp(cur, q, 0.35f, q);
+        if (readGameMemory(pid, localPlayer + OFF_AIM_ROTATION, cur, 16) &&
+            normalizeQuaternion(cur)) {
+            quatSlerp(cur, q, std::max(0.01f, std::min(1.0f, smoothing)), q);
+        }
     }
+
+    if (!normalizeQuaternion(q)) return;
 
     writeGameMemory(pid, localPlayer + OFF_AIM_ROTATION, q, 16);
 }
@@ -1143,30 +1459,65 @@ void aimAt(int pid, long localPlayer, const float* myPos, const float* targetPos
 void aimbotThreadFunction() {
     LOGI("[FREEZY] Aimbot thread iniciado");
     int failStreak = 0;
+    int resolvedPid = -1;
+    long lockedAimTarget = 0;
+    long challengerAimTarget = 0;
+    auto challengerAimSince = std::chrono::steady_clock::time_point{};
+    auto lockedAimLastSeen = std::chrono::steady_clock::time_point{};
+    auto lastAimSample = std::chrono::steady_clock::time_point{};
+    float lastRawAimPoint[3] = {0, 0, 0};
+    float filteredAimPoint[3] = {0, 0, 0};
+    bool haveFilteredAimPoint = false;
+    int lastAimTargetMode = -1;
     GamePointers gp;
     float viewMatrix[16] = {0};
+    auto lastPointerRefresh = std::chrono::steady_clock::time_point{};
 
-    while (g_aimbot_running) {
+    // Hilo único de larga vida. Los modos se pausan mediante sus flags atómicos;
+    // así un OFF/ON rápido nunca crea dos escritores concurrentes.
+    while (true) {
         int pid = g_game_pid.load();
         if (pid <= 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             continue;
         }
 
+        if (pid != resolvedPid) {
+            gp = GamePointers{};
+            resolvedPid = pid;
+            lockedAimTarget = 0;
+            challengerAimTarget = 0;
+            haveFilteredAimPoint = false;
+        }
+
         bool aimActive = g_aimbot_active.load();
+        bool cameraAimActive = g_camera_aim_active.load();
         bool sniperActive = g_sniper_active.load();
-        if (!aimActive && !sniperActive) {
+        int aimTarget = g_aim_target.load();
+        if (!aimActive && !cameraAimActive && !sniperActive) {
             failStreak = 0;
+            lockedAimTarget = 0;
+            challengerAimTarget = 0;
+            haveFilteredAimPoint = false;
+            lastAimTargetMode = -1;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
-        if (!gp.valid || gp.localPlayer == 0) {
-            if (!resolveGamePointers(pid, gp)) {
+        auto now = std::chrono::steady_clock::now();
+        bool refreshPointers = !gp.valid || gp.localPlayer == 0 ||
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - lastPointerRefresh).count() >= 1000;
+        if (refreshPointers) {
+            GamePointers fresh;
+            if (!resolveGamePointers(pid, fresh) || !isPlausiblePtr(fresh.localPlayer)) {
+                gp = GamePointers{};
                 failStreak++;
                 std::this_thread::sleep_for(std::chrono::milliseconds(failStreak > 5 ? 300 : 100));
                 continue;
             }
+            gp = fresh;
+            lastPointerRefresh = now;
             failStreak = 0;
             LOGI("[FREEZY] Cadena resuelta: facade=0x%llx game=0x%llx match=0x%llx local=0x%llx",
                  (unsigned long long)gp.facade, (unsigned long long)gp.currentGame,
@@ -1174,6 +1525,24 @@ void aimbotThreadFunction() {
         }
 
         long localPlayer = gp.localPlayer;
+
+        // El Aimbot de cámara solamente toma control mientras el juego confirma
+        // que el botón de disparo está presionado. Aim Visible y Sniper conservan
+        // su comportamiento independiente.
+        bool cameraAimEngaged = cameraAimActive;
+        if (cameraAimActive) {
+            bool isFiring = false;
+            cameraAimEngaged = readLocalFiringState(pid, localPlayer, isFiring) && isFiring;
+            if (!cameraAimEngaged && !aimActive && !sniperActive) {
+                lockedAimTarget = 0;
+                challengerAimTarget = 0;
+                haveFilteredAimPoint = false;
+                lastAimTargetMode = -1;
+                failStreak = 0;
+                std::this_thread::sleep_for(std::chrono::milliseconds(4));
+                continue;
+            }
+        }
 
         if (!getViewMatrix(pid, localPlayer, viewMatrix)) {
             failStreak++;
@@ -1190,38 +1559,76 @@ void aimbotThreadFunction() {
         }
 
         bool holdingSniper = isHoldingSniper(pid, localPlayer);
-        if (sniperActive && !holdingSniper) {
+        if (sniperActive && !aimActive && !cameraAimEngaged && !holdingSniper) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
 
         std::vector<long> entities = getEntities(pid, gp.currentGame);
 
-        float bestDist = SNIPER_FOV_PX;
+        // Aim Visible conserva un movimiento suave y su propio FOV configurable.
+        // Aimbot es el modo de fijación rápida/precisa y usa un radio mayor.
+        float activeFov = sniperActive ? SNIPER_FOV_PX : 0.0f;
+        if (aimActive) activeFov = std::max(activeFov, (float)g_aim_visible_fov.load());
+        if (cameraAimEngaged) activeFov = std::max(activeFov, 400.0f);
+
+        float bestDist = activeFov;
+        float bestScore = activeFov;
         long bestTarget = 0;
         float bestBonePos[3] = {0, 0, 0};
-        long bestCollider = 0;
+        uint32_t bestCollider = 0;
+        long lockedCandidate = 0;
+        float lockedCandidateCrossDist = 0.0f;
+        float lockedCandidateWorldDist = 0.0f;
+        float lockedCandidateBonePos[3] = {0, 0, 0};
+        uint32_t lockedCandidateCollider = 0;
+        long nearestAlternative = 0;
+        float nearestAlternativeCrossDist = 0.0f;
+        float nearestAlternativeWorldDist = std::numeric_limits<float>::max();
+        float nearestAlternativeBonePos[3] = {0, 0, 0};
+        uint32_t nearestAlternativeCollider = 0;
+        bool deliberateTargetSwitch = false;
+        bool lockedTargetDefinitelyInvalid = false;
 
         for (long e : entities) {
             if (e == localPlayer) continue;
+            bool isLockedTarget = (e == lockedAimTarget);
 
             uint8_t isDead = 0;
-            if (readU8(pid, e + OFF_PLAYER_IS_DEAD, isDead) && isDead) continue;
+            if (readU8(pid, e + OFF_PLAYER_IS_DEAD, isDead) && isDead) {
+                if (isLockedTarget) lockedTargetDefinitelyInvalid = true;
+                continue;
+            }
 
             int team = getTeamStatus(pid, e);
-            if (team == 1) continue;          // compañero
+            if (team == 1) {
+                if (isLockedTarget) lockedTargetDefinitelyInvalid = true;
+                continue;
+            }
             if (team != 2) continue;          // desconocido -> no es objetivo
 
-            if (g_sniper_ignore_knocked.load() && isKnocked(pid, e)) continue;
+            if ((aimActive || cameraAimEngaged || g_sniper_ignore_knocked.load()) && isKnocked(pid, e)) {
+                if (isLockedTarget) lockedTargetDefinitelyInvalid = true;
+                continue;
+            }
             if (g_sniper_ignore_bots.load()) {
                 uint8_t isBot = 0;
                 if (readU8(pid, e + OFF_IS_CLIENT_BOT, isBot) && isBot) continue;
             }
 
             // Posición del objetivo (cabeza o cuerpo según modo)
-            long boneOffset = (g_sniper_mode.load() == 1) ? OFF_BONE_HIP : OFF_BONE_HEAD;
+            long boneOffset = (aimActive || cameraAimEngaged)
+                ? getSelectedAimBoneOffset()
+                : ((g_sniper_mode.load() == 1) ? OFF_BONE_HIP : OFF_BONE_HEAD);
             float bonePos[3] = {0, 0, 0};
-            if (!getBonePosition(pid, e, boneOffset, bonePos)) continue;
+            bool haveBone = getBonePosition(pid, e, boneOffset, bonePos);
+            // Algunos modelos no crean RightFoot. Foot conserva el objetivo elegido,
+            // pero cae en LeftFoot/RightAnkle en vez de perderlo y saltar a otro enemigo.
+            if (!haveBone && aimTarget == 4 && (aimActive || cameraAimEngaged)) {
+                haveBone = getBonePosition(pid, e, OFF_BONE_LEFT_FOOT, bonePos) ||
+                           getBonePosition(pid, e, OFF_BONE_RIGHT_ANKLE, bonePos);
+            }
+            if (!haveBone) continue;
             if (bonePos[0] == 0 && bonePos[1] == 0 && bonePos[2] == 0) continue;
 
             float dx = bonePos[0] - myPos[0];
@@ -1235,38 +1642,607 @@ void aimbotThreadFunction() {
             float cdx = sx - g_screen_w.load() / 2.0f;
             float cdy = sy - g_screen_h.load() / 2.0f;
             float crossDist = sqrtf(cdx*cdx + cdy*cdy);
-            if (crossDist > SNIPER_FOV_PX) continue;
+            // Histéresis: el objetivo ya fijado puede alejarse un 35% adicional
+            // antes de liberarse. Evita el rebote en el borde del FOV.
+            float lockFovMultiplier = aimActive ? 1.50f : 1.25f;
+            float allowedFov = isLockedTarget ? activeFov * lockFovMultiplier : activeFov;
+            if (crossDist > allowedFov) continue;
 
-            if (crossDist < bestDist) {
+            uint32_t candidateCollider = 0;
+            if (aimActive && !cameraAimEngaged && aimTarget == 0) {
+                readGameMemory(pid, e + OFF_COLLIDER, &candidateCollider,
+                               sizeof(candidateCollider));
+            }
+
+            // La adquisición inicial sigue favoreciendo al enemigo más próximo a
+            // la mira. El lock se decide después del recorrido para poder compararlo
+            // también con la distancia real de los demás enemigos.
+            float selectionScore = crossDist;
+            if (selectionScore < bestScore) {
+                bestScore = selectionScore;
                 bestDist = crossDist;
                 bestTarget = e;
                 bestBonePos[0] = bonePos[0];
                 bestBonePos[1] = bonePos[1];
                 bestBonePos[2] = bonePos[2];
-                bestCollider = 0;
-                readPtr(pid, e + OFF_COLLIDER, bestCollider);
+                bestCollider = candidateCollider;
+            }
+
+            if (isLockedTarget) {
+                lockedCandidate = e;
+                lockedCandidateCrossDist = crossDist;
+                lockedCandidateWorldDist = dist;
+                memcpy(lockedCandidateBonePos, bonePos, sizeof(lockedCandidateBonePos));
+                lockedCandidateCollider = candidateCollider;
+            } else if (crossDist <= activeFov && dist < nearestAlternativeWorldDist) {
+                nearestAlternative = e;
+                nearestAlternativeCrossDist = crossDist;
+                nearestAlternativeWorldDist = dist;
+                memcpy(nearestAlternativeBonePos, bonePos,
+                       sizeof(nearestAlternativeBonePos));
+                nearestAlternativeCollider = candidateCollider;
+            }
+        }
+
+        if (lockedCandidate != 0) {
+            // Por defecto se conserva el lock para que dos jugadores juntos no hagan
+            // rebotar la cámara. Camera Aimbot sí puede cambiarlo si aparece un rival
+            // claramente más cercano: 60% de la distancia cambia de inmediato;
+            // una ventaja menor debe mantenerse 70 ms para confirmar el reemplazo.
+            bestTarget = lockedCandidate;
+            bestDist = lockedCandidateCrossDist;
+            memcpy(bestBonePos, lockedCandidateBonePos, sizeof(bestBonePos));
+            bestCollider = lockedCandidateCollider;
+
+            bool switchImmediately = cameraAimEngaged && nearestAlternative != 0 &&
+                nearestAlternativeWorldDist <= lockedCandidateWorldDist * 0.60f;
+            bool confirmCloser = cameraAimEngaged && nearestAlternative != 0 &&
+                nearestAlternativeWorldDist <= lockedCandidateWorldDist * 0.78f &&
+                nearestAlternativeCrossDist <= activeFov * 0.90f;
+
+            if (switchImmediately) {
+                challengerAimTarget = 0;
+                deliberateTargetSwitch = true;
+                bestTarget = nearestAlternative;
+                bestDist = nearestAlternativeCrossDist;
+                memcpy(bestBonePos, nearestAlternativeBonePos, sizeof(bestBonePos));
+                bestCollider = nearestAlternativeCollider;
+            } else if (confirmCloser) {
+                if (challengerAimTarget != nearestAlternative) {
+                    challengerAimTarget = nearestAlternative;
+                    challengerAimSince = now;
+                } else if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                               now - challengerAimSince).count() >= 70) {
+                    challengerAimTarget = 0;
+                    deliberateTargetSwitch = true;
+                    bestTarget = nearestAlternative;
+                    bestDist = nearestAlternativeCrossDist;
+                    memcpy(bestBonePos, nearestAlternativeBonePos, sizeof(bestBonePos));
+                    bestCollider = nearestAlternativeCollider;
+                }
+            } else {
+                challengerAimTarget = 0;
+            }
+        } else {
+            challengerAimTarget = 0;
+        }
+
+        bool holdingLockGrace = false;
+        if (lockedAimTarget != 0 && bestTarget != lockedAimTarget &&
+            !deliberateTargetSwitch) {
+            long missingMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - lockedAimLastSeen).count();
+            // Una lectura aislada de bone/avatar/dictionary no cambia de enemigo.
+            // Solo se libera inmediatamente si se confirmó muerte/equipo/knocked.
+            long graceMs = aimActive ? 1500L : 350L;
+            if (!lockedTargetDefinitelyInvalid && missingMs < graceMs) {
+                bestTarget = 0;
+                holdingLockGrace = true;
+            } else {
+                lockedAimTarget = 0;
+                challengerAimTarget = 0;
+                haveFilteredAimPoint = false;
             }
         }
 
         if (bestTarget != 0) {
-            if (bestDist > AIM_DEADZONE_PX) {
-                aimAt(pid, localPlayer, myPos, bestBonePos);
+            bool targetChanged = bestTarget != lockedAimTarget || aimTarget != lastAimTargetMode;
+            lockedAimTarget = bestTarget;
+            lockedAimLastSeen = now;
+            lastAimTargetMode = aimTarget;
+
+            // Filtrado predictivo corto: responde rápido a cambios bruscos sin copiar
+            // cada pequeña oscilación de la animación de cabeza al quaternion de cámara.
+            if (targetChanged || !haveFilteredAimPoint) {
+                memcpy(filteredAimPoint, bestBonePos, sizeof(filteredAimPoint));
+                memcpy(lastRawAimPoint, bestBonePos, sizeof(lastRawAimPoint));
+                lastAimSample = now;
+                haveFilteredAimPoint = true;
+            } else {
+                float dt = std::chrono::duration<float>(now - lastAimSample).count();
+                dt = std::max(0.001f, std::min(0.100f, dt));
+                float velocity[3] = {
+                    (bestBonePos[0] - lastRawAimPoint[0]) / dt,
+                    (bestBonePos[1] - lastRawAimPoint[1]) / dt,
+                    (bestBonePos[2] - lastRawAimPoint[2]) / dt
+                };
+                float velocityLength = sqrtf(velocity[0]*velocity[0] +
+                                             velocity[1]*velocity[1] +
+                                             velocity[2]*velocity[2]);
+                if (std::isfinite(velocityLength) && velocityLength > 28.0f) {
+                    float scale = 28.0f / velocityLength;
+                    velocity[0] *= scale;
+                    velocity[1] *= scale;
+                    velocity[2] *= scale;
+                }
+                float leadSeconds = cameraAimEngaged ? 0.030f : 0.015f;
+                float predicted[3] = {
+                    bestBonePos[0] + velocity[0] * leadSeconds,
+                    bestBonePos[1] + velocity[1] * leadSeconds,
+                    bestBonePos[2] + velocity[2] * leadSeconds
+                };
+                float pointBlend = cameraAimEngaged ? 0.68f : 0.42f;
+                for (int i = 0; i < 3; i++) {
+                    filteredAimPoint[i] += (predicted[i] - filteredAimPoint[i]) * pointBlend;
+                    lastRawAimPoint[i] = bestBonePos[i];
+                }
+                lastAimSample = now;
             }
-            if (bestCollider != 0) {
-                uint32_t collider32 = (uint32_t)bestCollider;
-                writeGameMemory(pid, bestTarget + OFF_LOCKED_AIMING_COLLIDER, &collider32, 4);
+
+            if ((sniperActive || cameraAimEngaged || aimActive) &&
+                bestDist > AIM_DEADZONE_PX) {
+                float distanceRatio = activeFov > 1.0f
+                    ? std::max(0.0f, std::min(1.0f, bestDist / activeFov))
+                    : 0.0f;
+                // Lejos: adquisición casi inmediata. Cerca: menor ganancia para
+                // eliminar temblor mientras el juego y el usuario mueven la cámara.
+                float smoothing = cameraAimEngaged
+                    ? (0.38f + 0.56f * sqrtf(distanceRatio))
+                    : (0.14f + 0.24f * distanceRatio);
+                aimAt(pid, localPlayer, myPos, filteredAimPoint, smoothing);
+            }
+            if (aimActive && !cameraAimEngaged && aimTarget == 0 && bestCollider != 0) {
+                // Una escritura por ciclo basta; repetirla once veces cada 8 ms
+                // saturaba el helper de memoria y podía producir tirones severos.
+                writeGameMemory(pid, bestTarget + OFF_LOCKED_AIMING_COLLIDER,
+                                &bestCollider, sizeof(bestCollider));
             }
             failStreak = 0;
-            LOGD("[FREEZY] Apuntando a 0x%llx (dist pantalla: %.1f)",
-                 (unsigned long long)bestTarget, bestDist);
-        } else {
+        } else if (!holdingLockGrace) {
+            lockedAimTarget = 0;
+            challengerAimTarget = 0;
+            haveFilteredAimPoint = false;
             failStreak++;
+        } else {
+            failStreak = 0;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(failStreak > 5 ? 100 : 20));
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            failStreak > 5 ? 100 : (cameraAimEngaged ? 4 : (aimActive ? 6 : 20))));
     }
 
-    LOGI("[FREEZY] Aimbot thread finalizado");
+}
+
+// ==============================================================================================
+// [SILENT AIM / ENEMY PULL / FLY / TELEPORT]
+// ==============================================================================================
+
+static bool normalizeVector3(float* v) {
+    float length = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (!std::isfinite(length) || length < 0.0001f) return false;
+    v[0] /= length;
+    v[1] /= length;
+    v[2] /= length;
+    return true;
+}
+
+static bool isFiniteVector3(const float* v) {
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+static bool getTransformPositionStorage(int pid, long transform, long& positionAddress,
+                                        float* position) {
+    positionAddress = 0;
+    long transformObject = 0;
+    if (!readPtr(pid, transform + 0x8, transformObject) ||
+        !isPlausiblePtr(transformObject)) return false;
+
+    uint32_t transformIndex = 0;
+    long hierarchy = 0, matrixList = 0;
+    if (!readU32(pid, transformObject + 0x24, transformIndex) || transformIndex > 4096) return false;
+    if (!readPtr(pid, transformObject + 0x20, hierarchy) || !isPlausiblePtr(hierarchy)) return false;
+    if (!readPtr(pid, hierarchy + 0x18, matrixList) || !isPlausiblePtr(matrixList)) return false;
+
+    positionAddress = matrixList + (long)transformIndex * 0x30;
+    return readGameMemory(pid, positionAddress, position, 12) && isFiniteVector3(position);
+}
+
+// Obtiene la entrada real de posición del Transform Root. El valor de +0x20 es
+// el objeto de jerarquía, NO una matriz de posición; escribir hierarchy+0x80
+// corrompe rotación/escala y producía personajes anchos, altos o completamente 2D.
+static bool getRootPositionStorage(int pid, long player, long& positionAddress, float* position) {
+    positionAddress = 0;
+    long root = 0, transform = 0;
+    if (!readPtr(pid, player + OFF_BONE_ROOT, root) || !isPlausiblePtr(root)) return false;
+    if (!readPtr(pid, root + 0x8, transform) || !isPlausiblePtr(transform)) return false;
+    return getTransformPositionStorage(pid, transform, positionAddress, position);
+}
+
+// Parche FlyHook recibido por el usuario. Son instrucciones ARM32; antes de
+// escribir se exige que los 8 bytes coincidan exactamente con ON u OFF.
+static bool applyFlyPhysicsPatch(int pid, bool enabled) {
+    if (g_ptr_width.load() != 4) return false;
+    long unityBase = 0;
+    int unityPointerWidth = 4;
+    if (!rootMemIOGetModuleBase(pid, "libunity.so", unityBase, unityPointerWidth) ||
+        unityBase <= 0 || unityPointerWidth != 4) return false;
+
+    static const uint8_t PATCH_ON[8]  = {0xAC, 0xC5, 0xA9, 0x3F, 0x00, 0x10, 0xA0, 0xE1};
+    static const uint8_t PATCH_OFF[8] = {0xAC, 0xC5, 0x27, 0x37, 0x00, 0x10, 0xA0, 0xE1};
+    const long address = unityBase + 0x64DA5C;
+    uint8_t current[8] = {0};
+    if (!readGameMemory(pid, address, current, sizeof(current))) return false;
+    if (enabled && memcmp(current, PATCH_ON, sizeof(current)) == 0) return true;
+    if (!enabled && memcmp(current, PATCH_OFF, sizeof(current)) == 0) return true;
+    const uint8_t* expected = enabled ? PATCH_OFF : PATCH_ON;
+    const uint8_t* replacement = enabled ? PATCH_ON : PATCH_OFF;
+    if (memcmp(current, expected, sizeof(current)) != 0) {
+        LOGW("[FREEZY] FlyHook omitido: bytes/RVA no corresponden a esta versión");
+        return false;
+    }
+    return writeGameMemory(pid, address, replacement, sizeof(current));
+}
+
+static bool getLocalCameraPosition(int pid, long localPlayer, float* position) {
+    long cameraTransform = 0;
+    return readPtr(pid, localPlayer + OFF_MAIN_CAMERA_TRANSFORM, cameraTransform) &&
+           isPlausiblePtr(cameraTransform) &&
+           getTransformPosition(pid, cameraTransform, position) &&
+           isFiniteVector3(position);
+}
+
+// Selecciona el enemigo visible más cercano al centro de pantalla. Un límite <= 0
+// deshabilita la restricción correspondiente (Silent Aim usa así todo el viewport).
+static bool findClosestFeatureTarget(int pid, const GamePointers& gp, const float* viewMatrix,
+                                     const float* localPosition, float maxWorldDistance,
+                                     float maxFov, long boneOffset, long& target,
+                                     float* targetPosition) {
+    target = 0;
+    float bestScreenDistance = maxFov > 0.0f ? maxFov : 1.0e9f;
+    int width = g_screen_w.load();
+    int height = g_screen_h.load();
+
+    for (long entity : getEntities(pid, gp.currentGame)) {
+        if (entity == gp.localPlayer) continue;
+
+        uint8_t dead = 0;
+        if (readU8(pid, entity + OFF_PLAYER_IS_DEAD, dead) && dead) continue;
+        if (getTeamStatus(pid, entity) != 2 || isKnocked(pid, entity)) continue;
+
+        float bonePosition[3] = {0, 0, 0};
+        bool haveBone = getBonePosition(pid, entity, boneOffset, bonePosition);
+        if (!haveBone && boneOffset == OFF_BONE_RIGHT_FOOT) {
+            haveBone = getBonePosition(pid, entity, OFF_BONE_LEFT_FOOT, bonePosition) ||
+                       getBonePosition(pid, entity, OFF_BONE_RIGHT_ANKLE, bonePosition);
+        }
+        if (!haveBone || !isFiniteVector3(bonePosition)) continue;
+
+        float dx = bonePosition[0] - localPosition[0];
+        float dy = bonePosition[1] - localPosition[1];
+        float dz = bonePosition[2] - localPosition[2];
+        float worldDistance = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (maxWorldDistance > 0.0f && worldDistance > maxWorldDistance) continue;
+
+        float sx = 0.0f, sy = 0.0f;
+        if (!worldToScreen(viewMatrix, bonePosition, width, height, sx, sy)) continue;
+        if (sx < 1.0f || sy < 1.0f || sx > width || sy > height) continue;
+
+        float screenDx = sx - width / 2.0f;
+        float screenDy = sy - height / 2.0f;
+        float screenDistance = sqrtf(screenDx * screenDx + screenDy * screenDy);
+        if (screenDistance < bestScreenDistance) {
+            bestScreenDistance = screenDistance;
+            target = entity;
+            memcpy(targetPosition, bonePosition, 12);
+        }
+    }
+    return target != 0;
+}
+
+static bool prepareFeatureAccess(int& pid) {
+    pid = g_game_pid.load();
+    if (pid > 0 && !processStillExists(pid)) {
+        std::lock_guard<std::mutex> lock(g_io_mutex);
+        closeRootMemIOLocked();
+        g_game_pid = -1;
+        g_base_pid = -1;
+        g_game_base = 0;
+        g_helper_tried_pid = 0;
+        pid = -1;
+    }
+    if (pid <= 0) {
+        pid = findGamePidNative();
+        if (pid > 0) g_game_pid = pid;
+    }
+    if (pid <= 0 || getGameBase(pid) == 0) return false;
+    ensureHelperSpawned(pid);
+    return true;
+}
+
+static void restorePulledEnemy(int pid, long& target, std::array<float, 3>& appliedOffset,
+                               bool& haveTarget) {
+    if (target != 0 && haveTarget) {
+        long positionAddress = 0;
+        float current[3] = {0, 0, 0};
+        if (getRootPositionStorage(pid, target, positionAddress, current)) {
+            // Retirar solo nuestro último desplazamiento conserva el movimiento
+            // natural que el juego haya aplicado desde el frame anterior.
+            current[0] -= appliedOffset[0];
+            current[1] -= appliedOffset[1];
+            current[2] -= appliedOffset[2];
+            writeGameMemory(pid, positionAddress, current, 12);
+        }
+    }
+    target = 0;
+    appliedOffset = {0.0f, 0.0f, 0.0f};
+    haveTarget = false;
+}
+
+static bool applyNoReloadState(int pid, long localPlayer, bool enabled) {
+    long attributes = 0;
+    if (!readPtr(pid, localPlayer + OFF_PLAYER_ATTRIBUTES, attributes) ||
+        !isPlausiblePtr(attributes)) return false;
+    uint8_t value = enabled ? 1 : 0;
+    return writeGameMemory(pid, attributes + OFF_NO_RELOAD, &value, sizeof(value));
+}
+
+static void featureThreadFunction() {
+    LOGI("[FREEZY] Controlador de funciones iniciado");
+    int resolvedPid = -1;
+    GamePointers gp;
+    long pulledTarget = 0;
+    std::array<float, 3> appliedPullOffset{0.0f, 0.0f, 0.0f};
+    bool havePulledTarget = false;
+    int pulledReadFailures = 0;
+    float flyBaseHeight = 0.0f;
+    float flyTargetHeight = 0.0f;
+    bool flyHeightInitialized = false;
+    bool flyWasActive = false;
+    bool flyPatchApplied = false;
+    bool noReloadWasActive = false;
+    auto lastPointerRefresh = std::chrono::steady_clock::time_point{};
+
+    while (true) {
+        bool silentActive = g_silent_aim_active.load();
+        bool pullActive = g_enemy_pull_active.load();
+        int pullDirection = g_enemy_pull_direction.load();
+        bool flyActive = g_fly_active.load();
+        bool noReloadActive = g_no_reload_active.load();
+
+        int pid = g_game_pid.load();
+        if (pid <= 0 || (!silentActive && !pullActive && !flyActive && !noReloadActive)) {
+            if ((!pullActive || pullDirection == 0) && havePulledTarget && pid > 0) {
+                restorePulledEnemy(pid, pulledTarget, appliedPullOffset, havePulledTarget);
+            }
+            if (noReloadWasActive && pid > 0 && gp.valid && isPlausiblePtr(gp.localPlayer)) {
+                applyNoReloadState(pid, gp.localPlayer, false);
+                noReloadWasActive = false;
+            }
+            if (!flyActive) {
+                if (flyPatchApplied && pid > 0) applyFlyPhysicsPatch(pid, false);
+                flyPatchApplied = false;
+                flyHeightInitialized = false;
+                flyWasActive = false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        if (pid != resolvedPid) {
+            if (havePulledTarget && resolvedPid > 0) {
+                restorePulledEnemy(resolvedPid, pulledTarget, appliedPullOffset,
+                                   havePulledTarget);
+            }
+            gp = GamePointers{};
+            resolvedPid = pid;
+            pulledReadFailures = 0;
+            flyHeightInitialized = false;
+            flyPatchApplied = false;
+        }
+        auto now = std::chrono::steady_clock::now();
+        bool refreshPointers = !gp.valid || !isPlausiblePtr(gp.localPlayer) ||
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - lastPointerRefresh).count() >= 1000;
+        if (refreshPointers) {
+            GamePointers fresh;
+            if (!resolveGamePointers(pid, fresh) || !isPlausiblePtr(fresh.localPlayer)) {
+                gp = GamePointers{};
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+            gp = fresh;
+            lastPointerRefresh = now;
+        }
+
+        float viewMatrix[16] = {0};
+        float cameraPosition[3] = {0, 0, 0};
+        bool haveView = getViewMatrix(pid, gp.localPlayer, viewMatrix);
+        bool haveCameraPosition = getLocalCameraPosition(pid, gp.localPlayer, cameraPosition);
+
+        // Mantener la dirección lista continuamente evita depender de un único offset
+        // IsFiring (el archivo recibido contiene 0x540 y 0x4E0 para builds distintos).
+        if (silentActive && haveView && haveCameraPosition) {
+            long target = 0;
+            float targetPosition[3] = {0, 0, 0};
+            int aimTarget = g_aim_target.load();
+            if (findClosestFeatureTarget(pid, gp, viewMatrix, cameraPosition,
+                                         0.0f, 0.0f, getSelectedAimBoneOffset(),
+                                         target, targetPosition)) {
+                long weapon = 0;
+                if (readPtr(pid, gp.localPlayer + OFF_SILENT_WEAPON, weapon) && isPlausiblePtr(weapon)) {
+                    float startPosition[3] = {0, 0, 0};
+                    if (readGameMemory(pid, weapon + OFF_WEAPON_START_POSITION,
+                                       startPosition, 12) && isFiniteVector3(startPosition)) {
+                        if (aimTarget == 0) targetPosition[1] += 0.1f;
+                        float direction[3] = {
+                            targetPosition[0] - startPosition[0],
+                            targetPosition[1] - startPosition[1],
+                            targetPosition[2] - startPosition[2]
+                        };
+                        writeGameMemory(pid, weapon + OFF_WEAPON_AIM_DIRECTION, direction, 12);
+                    }
+                }
+            }
+        }
+
+        // Enemy Pull fija una sola entidad cercana al centro (300 px). La dirección
+        // es exclusiva y el jugador local nunca se modifica.
+        if (pullActive && pullDirection != 0 && haveView && haveCameraPosition) {
+            if (pulledTarget != 0) {
+                uint8_t dead = 0;
+                bool confirmedDead = readU8(pid, pulledTarget + OFF_PLAYER_IS_DEAD, dead) && dead;
+                int team = getTeamStatus(pid, pulledTarget);
+                if (confirmedDead) {
+                    // No escribir sobre una entidad destruida o reciclada.
+                    pulledTarget = 0;
+                    appliedPullOffset = {0.0f, 0.0f, 0.0f};
+                    havePulledTarget = false;
+                    pulledReadFailures = 0;
+                } else if (team == 1 || isKnocked(pid, pulledTarget)) {
+                    restorePulledEnemy(pid, pulledTarget, appliedPullOffset, havePulledTarget);
+                    pulledReadFailures = 0;
+                }
+            }
+
+            if (pulledTarget == 0) {
+                float selectedHead[3] = {0, 0, 0};
+                long selected = 0;
+                if (findClosestFeatureTarget(pid, gp, viewMatrix, cameraPosition,
+                                             800.0f, 300.0f, OFF_BONE_HEAD,
+                                             selected, selectedHead)) {
+                    long positionAddress = 0;
+                    float current[3] = {0, 0, 0};
+                    if (getRootPositionStorage(pid, selected, positionAddress, current)) {
+                        pulledTarget = selected;
+                        appliedPullOffset = {0.0f, 0.0f, 0.0f};
+                        havePulledTarget = true;
+                        pulledReadFailures = 0;
+                    }
+                }
+            }
+
+            if (pulledTarget != 0 && havePulledTarget) {
+                long positionAddress = 0;
+                float current[3] = {0, 0, 0};
+                if (getRootPositionStorage(pid, pulledTarget, positionAddress, current)) {
+                    float basePosition[3] = {
+                        current[0] - appliedPullOffset[0],
+                        current[1] - appliedPullOffset[1],
+                        current[2] - appliedPullOffset[2]
+                    };
+                    float desiredOffset[3] = {0.0f, 0.0f, 0.0f};
+                    constexpr float pullDistance = 3.0f;
+                    if (pullDirection == 1) {
+                        desiredOffset[1] = pullDistance;
+                    } else if (pullDirection == 2) {
+                        desiredOffset[1] = -pullDistance;
+                    } else {
+                        float forward[3] = {-viewMatrix[8], 0.0f, -viewMatrix[10]};
+                        if (normalizeVector3(forward)) {
+                            // forward x up produce el eje derecho horizontal de cámara.
+                            float right[3] = {-forward[2], 0.0f, forward[0]};
+                            float sign = pullDirection == 3 ? -1.0f : 1.0f;
+                            desiredOffset[0] = right[0] * pullDistance * sign;
+                            desiredOffset[2] = right[2] * pullDistance * sign;
+                        }
+                    }
+                    float destination[3] = {
+                        basePosition[0] + desiredOffset[0],
+                        basePosition[1] + desiredOffset[1],
+                        basePosition[2] + desiredOffset[2]
+                    };
+                    if (writeGameMemory(pid, positionAddress, destination, 12)) {
+                        appliedPullOffset = {
+                            desiredOffset[0], desiredOffset[1], desiredOffset[2]
+                        };
+                        pulledReadFailures = 0;
+                    } else {
+                        ++pulledReadFailures;
+                    }
+                } else {
+                    ++pulledReadFailures;
+                }
+
+                // Varias lecturas fallidas consecutivas indican una entidad ya reciclada.
+                // Liberarla evita conservar punteros obsoletos entre cambios de partida.
+                if (pulledReadFailures >= 5) {
+                    pulledTarget = 0;
+                    appliedPullOffset = {0.0f, 0.0f, 0.0f};
+                    havePulledTarget = false;
+                    pulledReadFailures = 0;
+                }
+            }
+        } else if (havePulledTarget) {
+            restorePulledEnemy(pid, pulledTarget, appliedPullOffset, havePulledTarget);
+            pulledReadFailures = 0;
+        }
+
+        if (flyActive) {
+            // El dump actual identifica Player+0x10A8 como LastLockFireFinishTime (float),
+            // no como MovementComponent. Fly usa por ello el Root real: asciende hasta
+            // 6 metros y conserva X/Z frescos para que el joystick siga moviendo al jugador.
+            if (!flyWasActive) flyPatchApplied = applyFlyPhysicsPatch(pid, true);
+            long positionAddress = 0;
+            float position[3] = {0, 0, 0};
+            if (getRootPositionStorage(pid, gp.localPlayer, positionAddress, position)) {
+                if (!flyHeightInitialized || !flyWasActive) {
+                    flyBaseHeight = position[1];
+                    flyTargetHeight = position[1];
+                    flyHeightInitialized = true;
+                }
+                flyTargetHeight = std::min(flyBaseHeight + 6.0f, flyTargetHeight + 0.012f);
+                float verticalDelta = flyTargetHeight - position[1];
+                position[1] = flyTargetHeight;
+                writeGameMemory(pid, positionAddress, position, 12);
+
+                // Respaldo para builds donde la cámara no sigue el Root escrito.
+                long cameraTransform = 0;
+                if (fabsf(verticalDelta) < 1.0f &&
+                    readPtr(pid, gp.localPlayer + OFF_MAIN_CAMERA_TRANSFORM, cameraTransform) &&
+                    isPlausiblePtr(cameraTransform)) {
+                    long cameraAddress = 0;
+                    float cameraLocal[3] = {0, 0, 0};
+                    if (getTransformPositionStorage(pid, cameraTransform, cameraAddress, cameraLocal)) {
+                        cameraLocal[1] += verticalDelta;
+                        writeGameMemory(pid, cameraAddress, cameraLocal, 12);
+                    }
+                }
+            }
+            flyWasActive = true;
+        } else {
+            if (flyPatchApplied) applyFlyPhysicsPatch(pid, false);
+            flyPatchApplied = false;
+            flyHeightInitialized = false;
+            flyWasActive = false;
+        }
+
+        if (noReloadActive) {
+            applyNoReloadState(pid, gp.localPlayer, true);
+            noReloadWasActive = true;
+        } else if (noReloadWasActive) {
+            applyNoReloadState(pid, gp.localPlayer, false);
+            noReloadWasActive = false;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(6));
+    }
+}
+
+static void ensureFeatureThread() {
+    if (!g_feature_thread_running.exchange(true)) {
+        g_feature_thread = std::thread(featureThreadFunction);
+        g_feature_thread.detach();
+    }
 }
 
 // Diagnóstico paso a paso de la cadena, para ajustar offsets por build/arch.
@@ -1488,6 +2464,14 @@ Java_com_freezy_NativeBridge_findGamePid(JNIEnv* env, jclass clazz) {
         g_game_pid = pid;
         LOGI("[FREEZY] PID guardado: %d", pid);
     } else {
+        {
+            std::lock_guard<std::mutex> lock(g_io_mutex);
+            closeRootMemIOLocked();
+        }
+        g_game_pid = -1;
+        g_base_pid = -1;
+        g_game_base = 0;
+        g_helper_tried_pid = 0;
         LOGE("[FREEZY] No se encontró el juego");
     }
     return pid;
@@ -1685,6 +2669,131 @@ Java_com_freezy_NativeBridge_getGameMemoryDiagnostics(JNIEnv* env, jclass clazz,
     return env->NewStringUTF(ss.str().c_str());
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_freezy_NativeBridge_setAimVisible(JNIEnv* env, jclass clazz, jboolean active) {
+    if (!active) {
+        g_aimbot_active = false;
+        LOGI("[FREEZY] Aim Visible: OFF");
+        return JNI_TRUE;
+    }
+
+    int pid = g_game_pid.load();
+    if (pid <= 0) {
+        pid = findGamePidNative();
+        if (pid > 0) g_game_pid = pid;
+    }
+    if (pid <= 0 || getGameBase(pid) == 0) {
+        LOGE("[FREEZY] Aim Visible: proceso o libil2cpp no disponible");
+        return JNI_FALSE;
+    }
+
+    ensureHelperSpawned(pid);
+    // Aim Visible y Aimbot escriben la misma rotación; el último modo activado
+    // toma control, sin requerir que el otro esté encendido.
+    g_camera_aim_active = false;
+    g_aimbot_active = true;
+    if (!g_aimbot_running.exchange(true)) {
+        g_aimbot_thread = std::thread(aimbotThreadFunction);
+        g_aimbot_thread.detach();
+    }
+    LOGI("[FREEZY] Aim Visible: ON (PID %d, FOV %.0f, distancia %.0f)",
+         pid, SNIPER_FOV_PX, SNIPER_MAX_DIST);
+    return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_NativeBridge_setAimbotTarget(JNIEnv*, jclass, jint target) {
+    g_aim_target = std::max(0, std::min(4, (int)target));
+    LOGI("[FREEZY] Aimbot Target: %d", g_aim_target.load());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_NativeBridge_setAimVisibleFov(JNIEnv*, jclass, jint pixels) {
+    g_aim_visible_fov = std::max(50, std::min(500, (int)pixels));
+    LOGI("[FREEZY] Aim Visible FOV: %d px", g_aim_visible_fov.load());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_freezy_NativeBridge_setCameraAimbot(JNIEnv*, jclass, jboolean active) {
+    if (active != JNI_TRUE) {
+        g_camera_aim_active = false;
+        return JNI_TRUE;
+    }
+    int pid = -1;
+    if (!prepareFeatureAccess(pid)) return JNI_FALSE;
+    g_aimbot_active = false;
+    g_camera_aim_active = true;
+    if (!g_aimbot_running.exchange(true)) {
+        g_aimbot_thread = std::thread(aimbotThreadFunction);
+        g_aimbot_thread.detach();
+    }
+    LOGI("[FREEZY] Camera Aimbot: ON (PID %d)", pid);
+    return JNI_TRUE;
+}
+
+static jboolean setLoopFeature(std::atomic<bool>& feature, bool active, const char* name) {
+    if (!active) {
+        feature = false;
+        LOGI("[FREEZY] %s: OFF", name);
+        return JNI_TRUE;
+    }
+
+    int pid = -1;
+    if (!prepareFeatureAccess(pid)) {
+        LOGE("[FREEZY] %s: proceso o libil2cpp no disponible", name);
+        return JNI_FALSE;
+    }
+    feature = true;
+    ensureFeatureThread();
+    LOGI("[FREEZY] %s: ON (PID %d)", name, pid);
+    return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_freezy_NativeBridge_setSilentAim(JNIEnv*, jclass, jboolean active) {
+    return setLoopFeature(g_silent_aim_active, active == JNI_TRUE, "Silent Aim");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_freezy_NativeBridge_setEnemyPull(JNIEnv*, jclass, jboolean active) {
+    return setLoopFeature(g_enemy_pull_active, active == JNI_TRUE, "Enemy Pull 360");
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_NativeBridge_setEnemyPullDirection(JNIEnv*, jclass, jint direction) {
+    g_enemy_pull_direction = std::max(0, std::min(4, (int)direction));
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_freezy_NativeBridge_setFlyHack(JNIEnv*, jclass, jboolean active) {
+    return setLoopFeature(g_fly_active, active == JNI_TRUE, "Fly Hack");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_freezy_NativeBridge_setNoReload(JNIEnv*, jclass, jboolean active) {
+    return setLoopFeature(g_no_reload_active, active == JNI_TRUE, "NoReload");
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_NativeBridge_shutdownMemoryAccess(JNIEnv*, jclass) {
+    g_aimbot_active = false;
+    g_camera_aim_active = false;
+    g_silent_aim_active = false;
+    g_enemy_pull_active = false;
+    g_enemy_pull_direction = 0;
+    g_fly_active = false;
+    g_no_reload_active = false;
+    g_sniper_active = false;
+
+    std::lock_guard<std::mutex> lock(g_io_mutex);
+    closeRootMemIOLocked();
+    g_game_pid = -1;
+    g_base_pid = -1;
+    g_game_base = 0;
+    g_helper_tried_pid = 0;
+    LOGI("[FREEZY] Acceso de memoria cerrado y PID invalidado");
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_freezy_NativeBridge_startAimbot(JNIEnv* env, jclass clazz) {
     // Deshabilitado por seguridad anti-ban
@@ -1694,7 +2803,6 @@ Java_com_freezy_NativeBridge_startAimbot(JNIEnv* env, jclass clazz) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_freezy_NativeBridge_stopAimbot(JNIEnv* env, jclass clazz) {
     LOGI("[FREEZY] stopAimbot() llamado");
-    g_aimbot_running = false;
     g_aimbot_active = false;
 }
 
@@ -2049,13 +3157,141 @@ void readPlayerNamePacked(int pid, long entity, float* outNameFloats, float& out
     }
 }
 
+// Metadatos que cambian mucho más lento que la posición. Mantenerlos fuera de la ruta
+// de 50 Hz evita releer nombres/equipo/arma en cada actualización cercana.
+struct EspEntityMeta {
+    int pid = -1;
+    int team = -1;
+    int health = 200;
+    short weapon = 0;
+    float isBot = 0.0f;
+    float name[6] = {0, 0, 0, 0, 0, 0};
+    int64_t teamAt = 0;
+    int64_t healthAt = 0;
+    int64_t weaponAt = 0;
+    int64_t nameAt = 0;
+    int64_t lastSeenAt = 0;
+};
+
+static std::mutex g_esp_meta_mutex;
+static std::unordered_map<long, EspEntityMeta> g_esp_meta;
+
+static int64_t espNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static int getCachedTeamStatus(int pid, long entity, int64_t now) {
+    {
+        std::lock_guard<std::mutex> lock(g_esp_meta_mutex);
+        auto it = g_esp_meta.find(entity);
+        if (it != g_esp_meta.end() && it->second.pid == pid &&
+            now - it->second.teamAt <= 250 && it->second.team > 0) {
+            it->second.lastSeenAt = now;
+            return it->second.team;
+        }
+    }
+    const int team = getTeamStatus(pid, entity);
+    {
+        std::lock_guard<std::mutex> lock(g_esp_meta_mutex);
+        EspEntityMeta& meta = g_esp_meta[entity];
+        if (meta.pid != pid) meta = EspEntityMeta{};
+        meta.pid = pid;
+        meta.team = team;
+        meta.teamAt = now;
+        meta.lastSeenAt = now;
+    }
+    return team;
+}
+
+static int getCachedHealth(int pid, long entity, int64_t now) {
+    {
+        std::lock_guard<std::mutex> lock(g_esp_meta_mutex);
+        auto it = g_esp_meta.find(entity);
+        if (it != g_esp_meta.end() && it->second.pid == pid && now - it->second.healthAt <= 100) {
+            it->second.lastSeenAt = now;
+            return it->second.health;
+        }
+    }
+    const int health = getPlayerHealth(pid, entity);
+    std::lock_guard<std::mutex> lock(g_esp_meta_mutex);
+    EspEntityMeta& meta = g_esp_meta[entity];
+    if (meta.pid != pid) meta = EspEntityMeta{};
+    meta.pid = pid;
+    meta.health = health;
+    meta.healthAt = now;
+    meta.lastSeenAt = now;
+    return health;
+}
+
+static short getCachedWeapon(int pid, long entity, int64_t now) {
+    {
+        std::lock_guard<std::mutex> lock(g_esp_meta_mutex);
+        auto it = g_esp_meta.find(entity);
+        if (it != g_esp_meta.end() && it->second.pid == pid && now - it->second.weaponAt <= 300) {
+            it->second.lastSeenAt = now;
+            return it->second.weapon;
+        }
+    }
+    const short weapon = getPlayerWeaponId(pid, entity);
+    std::lock_guard<std::mutex> lock(g_esp_meta_mutex);
+    EspEntityMeta& meta = g_esp_meta[entity];
+    if (meta.pid != pid) meta = EspEntityMeta{};
+    meta.pid = pid;
+    meta.weapon = weapon;
+    meta.weaponAt = now;
+    meta.lastSeenAt = now;
+    return weapon;
+}
+
+static void getCachedName(int pid, long entity, int64_t now, float* name, float& isBot) {
+    {
+        std::lock_guard<std::mutex> lock(g_esp_meta_mutex);
+        auto it = g_esp_meta.find(entity);
+        if (it != g_esp_meta.end() && it->second.pid == pid && now - it->second.nameAt <= 2000) {
+            memcpy(name, it->second.name, sizeof(it->second.name));
+            isBot = it->second.isBot;
+            it->second.lastSeenAt = now;
+            return;
+        }
+    }
+    readPlayerNamePacked(pid, entity, name, isBot);
+    std::lock_guard<std::mutex> lock(g_esp_meta_mutex);
+    EspEntityMeta& meta = g_esp_meta[entity];
+    if (meta.pid != pid) meta = EspEntityMeta{};
+    meta.pid = pid;
+    memcpy(meta.name, name, sizeof(meta.name));
+    meta.isBot = isBot;
+    meta.nameAt = now;
+    meta.lastSeenAt = now;
+}
+
+static void pruneEspMetadata(int pid, int64_t now) {
+    std::lock_guard<std::mutex> lock(g_esp_meta_mutex);
+    if (g_esp_meta.size() < 96) return;
+    for (auto it = g_esp_meta.begin(); it != g_esp_meta.end();) {
+        if (it->second.pid != pid || now - it->second.lastSeenAt > 5000) {
+            it = g_esp_meta.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 struct EspCandidate {
     long entity;
     float dist;
     bool knocked;
     int team;
     long bones[14];
+    float head[3];
 };
+
+static std::mutex g_radar_cache_mutex;
+static std::array<float, 64 * 4> g_radar_cache{};
+static int g_radar_cache_pid = -1;
+static int g_radar_cache_count = 0;
+static std::chrono::steady_clock::time_point g_radar_cache_time{};
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jint pid, jfloatArray outData, jint flags) {
@@ -2063,6 +3299,11 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
 
     GamePointers gp;
     if (!resolveGamePointers(pid, gp)) return 0;
+
+    // La cámara pertenece al snapshot completo, no a una entidad. Antes se recorría
+    // FollowCamera -> Camera -> CameraBase una vez por enemigo mostrado.
+    float vm[16] = {0};
+    if (!getViewMatrix(pid, gp.localPlayer, vm)) return 0;
 
     float myPos[3] = {0, 0, 0};
     {
@@ -2088,11 +3329,16 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
     bool reqWeapon = (flags & 64) != 0;
     bool reqTeam = (flags & 128) != 0;
     bool reqIgnoreKnocked = (flags & 256) != 0;
+    bool reqRadar = (flags & 512) != 0;
+    // Box, Skeleton, vida y etiquetas necesitan la geometría corporal para colocar
+    // correctamente sus elementos. Line, Count y Radar sólo requieren Head.
+    bool reqBodyGeometry = (flags & (1 | 2 | 8 | 16 | 32 | 64 | 128)) != 0;
+    const int64_t snapshotNow = espNowMs();
 
-    std::vector<EspCandidate> candidates;
-    candidates.reserve(ents.size());
+    std::vector<EspCandidate> preliminary;
+    preliminary.reserve(ents.size());
 
-    // 1. PRE-FILTRADO Y CONTEO TOTAL REAL
+    // 1. Estado y punteros. Las posiciones Head se resuelven juntas después.
     for (long e : ents) {
         if (e == gp.localPlayer) continue;
 
@@ -2101,67 +3347,135 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
         if (!readU8(pid, e + OFF_PLAYER_IS_DEAD, isDead) || isDead) continue;
 
         // 2. Equipo
-        int team = getTeamStatus(pid, e);
+        int team = getCachedTeamStatus(pid, e, snapshotNow);
         if (team <= 0) continue;
-        if (!reqTeam && team == 1) continue;
 
         // 3. Knocked
         bool knocked = isKnocked(pid, e);
-        if (reqIgnoreKnocked && knocked) continue;
 
         // 4. Punteros de huesos (1 sola lectura en bloque de 0x60 bytes)
         long bones[14];
         readBonePtrBlock(pid, e, bones);
         if (bones[0] == 0 || !isPlausiblePtr(bones[0])) continue;
 
-        float head[3] = {0, 0, 0};
-        if (!getBonePosFromPtr(pid, bones[0], head)) continue;
-
-        float dist = sqrtf((head[0]-myPos[0])*(head[0]-myPos[0]) +
-                           (head[1]-myPos[1])*(head[1]-myPos[1]) +
-                           (head[2]-myPos[2])*(head[2]-myPos[2]));
-
-        if (dist > ESP_MAX_DIST) continue;
-
-        // Es un enemigo/objetivo valido en rango
-        totalEnemiesInRange++;
-
         EspCandidate cand;
         cand.entity = e;
-        cand.dist = dist;
+        cand.dist = 0.0f;
         cand.knocked = knocked;
         cand.team = team;
         memcpy(cand.bones, bones, sizeof(bones));
+        cand.head[0] = cand.head[1] = cand.head[2] = 0.0f;
+        preliminary.push_back(cand);
+    }
+
+    std::vector<long> headBones;
+    headBones.reserve(preliminary.size());
+    for (const auto& candidate : preliminary) headBones.push_back(candidate.bones[0]);
+    std::vector<std::array<float, 3>> headPositions;
+    std::vector<uint8_t> headResolved;
+    resolveBonePositionsBatch(pid, headBones, headPositions, headResolved);
+
+    const float yaw = -atan2f(vm[8], vm[10]);
+    const float cosYaw = cosf(yaw);
+    const float sinYaw = sinf(yaw);
+    std::array<float, 64 * 4> radarData{};
+    int radarCount = 0;
+
+    std::vector<EspCandidate> candidates;
+    candidates.reserve(preliminary.size());
+    for (size_t i = 0; i < preliminary.size(); ++i) {
+        if (!headResolved[i]) continue;
+        EspCandidate& cand = preliminary[i];
+        cand.head[0] = headPositions[i][0];
+        cand.head[1] = headPositions[i][1];
+        cand.head[2] = headPositions[i][2];
+        const float dx = cand.head[0] - myPos[0];
+        const float dy = cand.head[1] - myPos[1];
+        const float dz = cand.head[2] - myPos[2];
+        cand.dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (!std::isfinite(cand.dist)) continue;
+
+        // El radar comparte exactamente la misma lectura Head/Team/Knocked del ESP.
+        if (reqRadar && radarCount < 64 && cand.dist <= 250.0f) {
+            const int base = radarCount * 4;
+            radarData[base] = dx * cosYaw - dz * sinYaw;
+            radarData[base + 1] = dx * sinYaw + dz * cosYaw;
+            radarData[base + 2] = cand.knocked ? 1.0f : 0.0f;
+            radarData[base + 3] = (float)cand.team;
+            ++radarCount;
+        }
+
+        if (cand.dist > ESP_MAX_DIST) continue;
+        if (!reqTeam && cand.team == 1) continue;
+        if (reqIgnoreKnocked && cand.knocked) continue;
+        ++totalEnemiesInRange;
         candidates.push_back(cand);
     }
 
-    // 2. ORDENAR POR PROXIMIDAD (los 15 mas cercanos tienen maxima prioridad)
-    if (candidates.size() > (size_t)MAX_ENTS) {
-        std::sort(candidates.begin(), candidates.end(), [](const EspCandidate& a, const EspCandidate& b) {
-            return a.dist < b.dist;
-        });
+    if (reqRadar) {
+        std::lock_guard<std::mutex> lock(g_radar_cache_mutex);
+        g_radar_cache = radarData;
+        g_radar_cache_pid = pid;
+        g_radar_cache_count = radarCount;
+        g_radar_cache_time = std::chrono::steady_clock::now();
     }
 
-    // 3. PROCESAMIENTO COMPLETO DE MATRIZ Y PANTALLA SOLO PARA EL TOP 15
-    for (const auto& cand : candidates) {
-        if (shown >= MAX_ENTS) break;
-        long e = cand.entity;
+    // 2. Los más cercanos se proyectan primero. Se filtra Head antes de leer el resto
+    // del cuerpo, por lo que un objetivo fuera de pantalla no consume nueve huesos extra.
+    std::sort(candidates.begin(), candidates.end(), [](const EspCandidate& a, const EspCandidate& b) {
+        return a.dist < b.dist;
+    });
+    std::vector<const EspCandidate*> renderCandidates;
+    std::vector<std::array<float, 2>> headScreen;
+    renderCandidates.reserve(MAX_ENTS);
+    headScreen.reserve(MAX_ENTS);
+    for (const auto& candidate : candidates) {
+        float sx = -1.0f, sy = -1.0f;
+        if (!worldToScreen(vm, candidate.head, screenW, screenH, sx, sy) || sx <= 0 || sy <= 0) continue;
+        renderCandidates.push_back(&candidate);
+        headScreen.push_back({sx, sy});
+        if ((int)renderCandidates.size() >= MAX_ENTS) break;
+    }
 
-        float vm[16];
-        if (!getViewMatrix(pid, gp.localPlayer, vm)) continue;
+    static const int BODY_BONES[] = {1, 2, 3, 4, 5, 8, 9, 12, 13};
+    std::vector<long> bodyBonePtrs;
+    std::vector<std::array<float, 3>> bodyPositions;
+    std::vector<uint8_t> bodyResolved;
+    if (reqBodyGeometry) {
+        bodyBonePtrs.reserve(renderCandidates.size() * 9);
+        for (const EspCandidate* candidate : renderCandidates) {
+            for (int boneIndex : BODY_BONES) bodyBonePtrs.push_back(candidate->bones[boneIndex]);
+        }
+        resolveBonePositionsBatch(pid, bodyBonePtrs, bodyPositions, bodyResolved);
+    }
 
+    // 3. Construir el bloque compacto que consume Kotlin.
+    for (size_t renderIndex = 0; renderIndex < renderCandidates.size(); ++renderIndex) {
+        const EspCandidate& cand = *renderCandidates[renderIndex];
+        const long e = cand.entity;
         float skel[28];
-        getSkeletonScreen(pid, gp.localPlayer, e, cand.bones, vm, screenW, screenH, skel);
+        for (float& value : skel) value = -1.0f;
+        skel[0] = headScreen[renderIndex][0];
+        skel[1] = headScreen[renderIndex][1];
+        if (reqBodyGeometry) {
+            for (size_t bodyIndex = 0; bodyIndex < 9; ++bodyIndex) {
+                const size_t flatIndex = renderIndex * 9 + bodyIndex;
+                if (!bodyResolved[flatIndex]) continue;
+                float sx = -1.0f, sy = -1.0f;
+                if (worldToScreen(vm, bodyPositions[flatIndex].data(), screenW, screenH, sx, sy)) {
+                    const int boneIndex = BODY_BONES[bodyIndex];
+                    skel[boneIndex * 2] = sx;
+                    skel[boneIndex * 2 + 1] = sy;
+                }
+            }
+        }
 
-        // Si la cabeza no proyecta en pantalla, omitir render
-        if (skel[0] <= 0 || skel[1] <= 0) continue;
-
-        int hp = reqHealth ? getPlayerHealth(pid, e) : 200;
-        short wepId = reqWeapon ? getPlayerWeaponId(pid, e) : 0;
+        int hp = reqHealth ? getCachedHealth(pid, e, snapshotNow) : 200;
+        short wepId = reqWeapon ? getCachedWeapon(pid, e, snapshotNow) : 0;
         float isBot = 0.0f;
         float nameFloats[6] = {0, 0, 0, 0, 0, 0};
         if (reqName) {
-            readPlayerNamePacked(pid, e, nameFloats, isBot);
+            getCachedName(pid, e, snapshotNow, nameFloats, isBot);
         }
 
         int baseIdx = shown * 40;
@@ -2186,5 +3500,77 @@ Java_com_freezy_NativeBridge_getEspSnapshotDirect(JNIEnv* env, jclass clazz, jin
 
     // Empaquetar conteo total de enemigos en los 16 bits altos, y entidades dibujadas en los 16 bits bajos
     int result = ((totalEnemiesInRange & 0xFFFF) << 16) | (shown & 0xFFFF);
+    pruneEspMetadata(pid, snapshotNow);
     return result;
+}
+
+// Snapshot compacto para el minimapa. Cada entidad ocupa cuatro floats:
+// X rotada, Z rotada, knocked y team. La rotación se realiza aquí con la cámara
+// del juego para que Kotlin solo tenga que escalar y dibujar los puntos.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_freezy_NativeBridge_getRadarSnapshot(JNIEnv* env, jclass, jint pid, jfloatArray outData) {
+    if (pid <= 0 || !outData) return 0;
+    jsize capacity = env->GetArrayLength(outData);
+    const int maxEntities = std::min<int>(64, capacity / 4);
+    if (maxEntities <= 0) return 0;
+
+    // La ruta normal del overlay llama primero al snapshot ESP con el flag Radar.
+    // Entregar esa copia evita resolver nuevamente toda la partida en esta JNI.
+    {
+        std::array<float, 64 * 4> cached{};
+        int cachedCount = 0;
+        bool fresh = false;
+        {
+            std::lock_guard<std::mutex> lock(g_radar_cache_mutex);
+            const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - g_radar_cache_time).count();
+            fresh = g_radar_cache_pid == pid && age >= 0 && age <= 150;
+            if (fresh) {
+                cachedCount = std::min(maxEntities, g_radar_cache_count);
+                cached = g_radar_cache;
+            }
+        }
+        if (fresh) {
+            if (cachedCount > 0) env->SetFloatArrayRegion(outData, 0, cachedCount * 4, cached.data());
+            return cachedCount;
+        }
+    }
+
+    GamePointers gp;
+    if (!resolveGamePointers(pid, gp) || !isPlausiblePtr(gp.localPlayer)) return 0;
+
+    float cameraPosition[3] = {0, 0, 0};
+    float viewMatrix[16] = {0};
+    if (!getLocalCameraPosition(pid, gp.localPlayer, cameraPosition) ||
+        !getViewMatrix(pid, gp.localPlayer, viewMatrix)) return 0;
+
+    float yaw = -atan2f(viewMatrix[8], viewMatrix[10]);
+    float cosYaw = cosf(yaw);
+    float sinYaw = sinf(yaw);
+    std::vector<float> radar;
+    radar.reserve((size_t)maxEntities * 4);
+
+    for (long entity : getEntities(pid, gp.currentGame)) {
+        if ((int)(radar.size() / 4) >= maxEntities || entity == gp.localPlayer) break;
+        uint8_t dead = 0;
+        if (!readU8(pid, entity + OFF_PLAYER_IS_DEAD, dead) || dead) continue;
+        int team = getTeamStatus(pid, entity);
+        if (team <= 0) continue;
+
+        float head[3] = {0, 0, 0};
+        if (!getBonePosition(pid, entity, OFF_BONE_HEAD, head)) continue;
+        float relativeX = head[0] - cameraPosition[0];
+        float relativeZ = head[2] - cameraPosition[2];
+        float distance = sqrtf(relativeX * relativeX + relativeZ * relativeZ);
+        if (!std::isfinite(distance) || distance > 250.0f) continue;
+
+        radar.push_back(relativeX * cosYaw - relativeZ * sinYaw);
+        radar.push_back(relativeX * sinYaw + relativeZ * cosYaw);
+        radar.push_back(isKnocked(pid, entity) ? 1.0f : 0.0f);
+        radar.push_back((float)team);
+    }
+
+    int count = (int)(radar.size() / 4);
+    if (count > 0) env->SetFloatArrayRegion(outData, 0, count * 4, radar.data());
+    return count;
 }

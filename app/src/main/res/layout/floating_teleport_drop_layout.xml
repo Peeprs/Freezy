@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/teleport_drop_floating_root"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/bg_floating_teleport_drop"
+    android:paddingStart="10dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="7dp"
+    android:paddingBottom="7dp"
+    android:elevation="9dp">
+
+    <ImageView
+        android:id="@+id/iv_teleport_drop_icon"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:src="@drawable/ic_airplane"
+        android:tint="#8A9BA8"
+        android:contentDescription="Teleport Drop"
+        android:layout_marginEnd="6dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="TP DROP"
+        android:textColor="#FFFFFF"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:letterSpacing="0.06"
+        android:layout_marginEnd="7dp" />
+
+    <TextView
+        android:id="@+id/tv_teleport_drop_status"
+        android:layout_width="40dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="OFF"
+        android:textColor="#FF3B30"
+        android:textSize="9sp"
+        android:textStyle="bold"
+        android:background="@drawable/shape_tab_back"
+        android:paddingVertical="2dp" />
+
+</LinearLayout>

@@ -11,6 +11,9 @@ object NativeBridge {
 
     @JvmStatic external fun setNativeDropProbability(probability: Int)
 
+    /** Activa el retardo selectivo para payloads UDP salientes de 50 a 150 bytes. */
+    @JvmStatic external fun setSelectiveUdpDelay(active: Boolean, delayMs: Int)
+
     @JvmStatic external fun getNativeString(id: Int): String
 
     @JvmStatic private external fun getNativeHWID(androidId: String, hardwareInfo: String): String
@@ -43,6 +46,36 @@ object NativeBridge {
     /** Verifica que la memoria del juego (libil2cpp.so) sea legible */
     @JvmStatic external fun isGameMemoryReady(pid: Int): Boolean
 
+    /** Activa/desactiva Aim Visible (selección por FOV y fijación del collider de cabeza). */
+    @JvmStatic external fun setAimVisible(active: Boolean): Boolean
+
+    /** Selecciona el bone objetivo: 0 Head, 1 Neck, 2 Root, 3 Hip, 4 Foot. */
+    @JvmStatic external fun setAimbotTarget(target: Int)
+
+    /** Configura el radio de Aim Visible en píxeles. */
+    @JvmStatic external fun setAimVisibleFov(pixels: Int)
+
+    /** Aimbot de cámara; no modifica ni retrasa tráfico de red. */
+    @JvmStatic external fun setCameraAimbot(active: Boolean): Boolean
+
+    /** Redirige el disparo hacia el enemigo visible más cercano mientras se dispara. */
+    @JvmStatic external fun setSilentAim(active: Boolean): Boolean
+
+    /** Activa/desactiva Enemy Pull después de seleccionar una dirección. */
+    @JvmStatic external fun setEnemyPull(active: Boolean): Boolean
+
+    /** Dirección de Enemy Pull: 0 Ninguna, 1 Arriba, 2 Abajo, 3 Izquierda, 4 Derecha. */
+    @JvmStatic external fun setEnemyPullDirection(direction: Int)
+
+    /** Eleva y mantiene al jugador mediante la posición segura de su Transform Root. */
+    @JvmStatic external fun setFlyHack(active: Boolean): Boolean
+
+    /** Fuerza el atributo NoReload del jugador local. */
+    @JvmStatic external fun setNoReload(active: Boolean): Boolean
+
+    /** Cierra el helper root persistente y descarta el PID de la partida anterior. */
+    @JvmStatic external fun shutdownMemoryAccess()
+
     /** Devuelve un diagnóstico detallado del acceso a memoria (para depurar fallos) */
     @JvmStatic external fun getGameMemoryDiagnostics(pid: Int): String
 
@@ -52,41 +85,7 @@ object NativeBridge {
     /** Escribe memoria del juego */
     @JvmStatic external fun writeGameMemory(pid: Int, address: Long, value: ByteArray): Boolean
 
-    /** Inicia el aimbot (se llama automáticamente al abrir la app) */
-    @JvmStatic external fun startAimbot()
-
-    /** Detiene el aimbot */
-    @JvmStatic external fun stopAimbot()
-
-    /** Obtiene el estado del menú */
-    @JvmStatic external fun getMenuStatus(): String
-
-    // ============ Sniper Switch (patch de patrones) ============
-
-    /** Busca el patrón de la mira y aplica el patch */
-    @JvmStatic external fun sniperSwitchApply(): Boolean
-
-    /** Restaura el patch original */
-    @JvmStatic external fun sniperSwitchRemove(): Boolean
-
-    /** ¿El patch de la mira está aplicado? */
-    @JvmStatic external fun sniperSwitchIsApplied(): Boolean
-
-    // ============ Sniper Scope (aim-assist) ============
-
-    /** Activa/desactiva el aim-assist de francotirador */
-    @JvmStatic external fun setSniperScope(active: Boolean)
-
-    /** Modo de puntería: 0 = cabeza, 1 = cuerpo */
-    @JvmStatic external fun setSniperMode(mode: Int)
-
-    /** Ignorar jugadores derribados */
-    @JvmStatic external fun setSniperIgnoreKnocked(ignore: Boolean)
-
-    /** Ignorar bots */
-    @JvmStatic external fun setSniperIgnoreBots(ignore: Boolean)
-
-    /** Tamaño de pantalla (para el FOV del aim assist) */
+    /** Tamaño de pantalla (para el FOV y W2S del ESP) */
     @JvmStatic external fun setScreenSize(w: Int, h: Int)
 
     // ============ Config nativa ============
@@ -100,11 +99,11 @@ object NativeBridge {
     /** Diagnóstico paso a paso de la cadena de punteros IL2CPP */
     @JvmStatic external fun getChainDiagnostics(pid: Int): String
 
-    /** Snapshot JSON con datos ESP (posición, salud, arma, nombre, team...) */
-    @JvmStatic external fun getEspSnapshot(pid: Int): String
-
     /** Snapshot directo a FloatArray sin overhead de JSON ni recolección de basura (ultra rápido con flags) */
     @JvmStatic external fun getEspSnapshotDirect(pid: Int, outData: FloatArray, flags: Int): Int
+
+    /** Posiciones relativas y rotadas para el minimapa del overlay. */
+    @JvmStatic external fun getRadarSnapshot(pid: Int, outData: FloatArray): Int
 
     const val STRING_ENDPOINT = 1
     const val STRING_BTN_START = 2
