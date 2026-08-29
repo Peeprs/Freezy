@@ -199,9 +199,10 @@
                             android:layout_width="match_parent"
                             android:layout_height="32dp"
                             android:max="30"
-                            android:progress="30"
-                            android:progressDrawable="@drawable/custom_seekbar_track"
-                            android:thumb="@drawable/custom_seekbar_thumb"
+                            android:progress="10"
+                            android:progressDrawable="@drawable/seekbar_feature_track"
+                            android:thumb="@drawable/seekbar_feature_thumb"
+                            android:thumbOffset="0dp"
                             android:splitTrack="false"
                             android:layout_marginTop="16dp"/>
 
@@ -430,8 +431,9 @@
                         android:min="0"
                         android:max="100"
                         android:progress="0"
-                        android:progressDrawable="@drawable/custom_seekbar_track"
-                        android:thumb="@drawable/custom_seekbar_thumb"
+                        android:progressDrawable="@drawable/seekbar_feature_track"
+                        android:thumb="@drawable/seekbar_feature_thumb"
+                        android:thumbOffset="0dp"
                         android:splitTrack="false" />
                 </LinearLayout>
 
@@ -449,33 +451,73 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="TONOS DE ACTIVACION"
+                        android:layout_marginBottom="5dp"
+                        android:letterSpacing="0.08"
+                        android:text="TONOS DE ACTIVACIÓN"
                         android:textColor="@color/colorTextMuted"
                         android:textSize="11sp"
-                        android:textStyle="bold"
-                        android:letterSpacing="0.08"
-                        android:layout_marginBottom="4dp" />
+                        android:textStyle="bold" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Se reproduce al activar y desactivar. Toca una opción para escucharla y guardarla."
+                        android:text="Selecciona un tono. Al tocarlo podrás escucharlo."
                         android:textColor="@color/colorTextMuted"
                         android:textSize="12sp"
-                        android:layout_marginBottom="12dp" />
+                        android:layout_marginBottom="14dp" />
 
-                    <HorizontalScrollView
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:scrollbars="none">
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
 
-                        <LinearLayout
-                            android:id="@+id/container_tones"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical" />
-                    </HorizontalScrollView>
+                        <TextView
+                            android:id="@+id/btn_tone_previous"
+                            android:layout_width="44dp"
+                            android:layout_height="48dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:clickable="true"
+                            android:contentDescription="Tono anterior"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:text="‹"
+                            android:textColor="@color/colorTextMuted"
+                            android:textSize="32sp" />
+
+                        <TextView
+                            android:id="@+id/tv_tone_name"
+                            android:layout_width="0dp"
+                            android:layout_height="52dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/tone_selector_center"
+                            android:gravity="center"
+                            android:text="--"
+                            android:textColor="@color/colorAccentPrimary"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/btn_tone_next"
+                            android:layout_width="44dp"
+                            android:layout_height="48dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:clickable="true"
+                            android:contentDescription="Tono siguiente"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:text="›"
+                            android:textColor="@color/colorTextMuted"
+                            android:textSize="32sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/container_tone_dots"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:gravity="center"
+                        android:orientation="horizontal" />
                 </LinearLayout>
 
                 <!-- Card de Estado del Dispositivo -->
@@ -494,123 +536,120 @@
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
                         android:gravity="center_vertical"
-                        android:layout_marginBottom="14dp">
+                        android:layout_marginBottom="16dp">
 
-                        <TextView
+                        <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="ESTADO DEL DISPOSITIVO"
-                            android:textColor="#FFFFFF"
-                            android:textSize="12sp"
-                            android:textStyle="bold"
-                            android:letterSpacing="0.08" />
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="ESTADO DEL DISPOSITIVO"
+                                android:textColor="#FFFFFF"
+                                android:textSize="13sp"
+                                android:textStyle="bold"
+                                android:letterSpacing="0.08" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:text="IDENTIDAD Y ACCESO DEL SISTEMA"
+                                android:textColor="@color/colorTextMuted"
+                                android:textSize="9sp"
+                                android:letterSpacing="0.06" />
+                        </LinearLayout>
 
                         <View
                             android:id="@+id/view_led_extras"
-                            android:layout_width="8dp"
-                            android:layout_height="8dp"
+                            android:layout_width="10dp"
+                            android:layout_height="10dp"
                             android:background="@drawable/shape_circle_led"
                             android:backgroundTint="@color/colorAccentPrimary" />
+
+                        <TextView
+                            android:id="@+id/btn_refresh_root"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_marginStart="8dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:clickable="true"
+                            android:contentDescription="Recargar estado"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:text="↻"
+                            android:textColor="@color/colorTextMuted"
+                            android:textSize="22sp" />
                     </LinearLayout>
 
-                    <!-- Estado Root en tarjeta interna -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:background="@drawable/shape_inner_card_dark"
-                        android:padding="12dp"
-                        android:orientation="horizontal"
                         android:gravity="center_vertical"
-                        android:layout_marginBottom="10dp">
+                        android:orientation="horizontal"
+                        android:paddingVertical="4dp">
 
-                        <TextView
+                        <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="MODO DE ACCESO"
-                            android:textColor="#FFFFFF"
-                            android:textSize="13sp"
-                            android:textStyle="bold" />
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="MODO DE ACCESO"
+                                android:textColor="@color/colorTextMuted"
+                                android:textSize="10sp"
+                                android:textStyle="bold"
+                                android:letterSpacing="0.08" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:text="Permisos del sistema"
+                                android:textColor="#FFFFFF"
+                                android:textSize="13sp" />
+                        </LinearLayout>
 
                         <TextView
                             android:id="@+id/tv_root_status"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="--"
-                            android:textSize="12sp"
-                            android:textStyle="bold"
+                            android:background="@drawable/shape_pill_dark"
                             android:paddingStart="12dp"
+                            android:paddingTop="5dp"
                             android:paddingEnd="12dp"
-                            android:paddingTop="4dp"
-                            android:paddingBottom="4dp"
-                            android:background="@drawable/shape_pill_dark" />
-
-                        <TextView
-                            android:id="@+id/btn_refresh_root"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="8dp"
-                            android:background="@drawable/shape_pill_blue"
-                            android:text="Recargar"
-                            android:textColor="#FFFFFF"
-                            android:textSize="11sp"
-                            android:textStyle="bold"
-                            android:paddingStart="10dp"
-                            android:paddingEnd="10dp"
-                            android:paddingTop="4dp"
-                            android:paddingBottom="4dp"
-                            android:clickable="true"
-                            android:focusable="true" />
-                    </LinearLayout>
-
-                    <!-- HWID en tarjeta interna estilo terminal -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/shape_inner_card_dark"
-                        android:padding="12dp"
-                        android:orientation="vertical"
-                        android:layout_marginBottom="10dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="IDENTIFICADOR UNICO (HWID)"
-                            android:textColor="#FFFFFF"
-                            android:textSize="12sp"
-                            android:textStyle="bold"
-                            android:letterSpacing="0.05" />
-
-                        <TextView
-                            android:id="@+id/tv_hwid"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
+                            android:paddingBottom="5dp"
                             android:text="--"
-                            android:textColor="@color/colorAccentPrimary"
-                            android:textSize="13sp"
-                            android:textStyle="bold"
-                            android:fontFamily="monospace"
-                            android:textIsSelectable="true"
-                            android:layout_marginTop="6dp" />
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
                     </LinearLayout>
 
-                    <!-- Marca del Teléfono en tarjeta interna -->
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginVertical="13dp"
+                        android:background="#222C35" />
+
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:background="@drawable/shape_inner_card_dark"
-                        android:padding="12dp"
-                        android:orientation="vertical">
+                        android:orientation="vertical"
+                        android:paddingVertical="2dp">
 
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="DISPOSITIVO Y MODELO"
-                            android:textColor="#FFFFFF"
-                            android:textSize="12sp"
+                            android:text="DISPOSITIVO"
+                            android:textColor="@color/colorTextMuted"
+                            android:textSize="10sp"
                             android:textStyle="bold"
-                            android:letterSpacing="0.05" />
+                            android:letterSpacing="0.08" />
 
                         <TextView
                             android:id="@+id/tv_device_brand"
@@ -618,10 +657,44 @@
                             android:layout_height="wrap_content"
                             android:text="--"
                             android:textColor="#FFFFFF"
-                            android:textSize="14sp"
+                            android:textSize="17sp"
                             android:textStyle="bold"
                             android:fontFamily="sans-serif-medium"
-                            android:layout_marginTop="4dp" />
+                            android:layout_marginTop="5dp" />
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginVertical="13dp"
+                        android:background="#222C35" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingVertical="2dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="IDENTIFICADOR ÚNICO · HWID"
+                            android:textColor="@color/colorTextMuted"
+                            android:textSize="9sp"
+                            android:textStyle="bold"
+                            android:letterSpacing="0.08" />
+
+                        <TextView
+                            android:id="@+id/tv_hwid"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="7dp"
+                            android:fontFamily="monospace"
+                            android:text="--"
+                            android:textColor="@color/colorAccentPrimary"
+                            android:textIsSelectable="true"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
                     </LinearLayout>
                 </LinearLayout>
 
@@ -653,42 +726,14 @@ android:orientation="vertical"
                     android:padding="16dp"
                     android:layout_marginBottom="12dp">
 
-                    <RelativeLayout
-                        android:layout_width="match_parent"
+                    <TextView
+                        android:id="@+id/tv_title_license"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginBottom="12dp">
-
-                        <TextView
-                            android:id="@+id/tv_title_license"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textColor="#FFFFFF"
-                            android:textSize="15sp"
-                            android:textStyle="bold"
-                            android:layout_alignParentStart="true"
-                            android:layout_centerVertical="true" />
-
-                        <TextView
-                            android:id="@+id/tv_license_percent"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textColor="@color/colorAccentPrimary"
-                            android:textSize="15sp"
-                            android:textStyle="bold"
-                            android:layout_alignParentEnd="true"
-                            android:layout_centerVertical="true"
-                            android:fontFamily="monospace"
-                            android:text="100%" />
-                    </RelativeLayout>
-
-                    <ProgressBar
-                        android:id="@+id/progress_license_days"
-                        style="@android:style/Widget.ProgressBar.Horizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="6dp"
-                        android:layout_marginBottom="16dp"
-                        android:progress="100"
-                        android:progressDrawable="@drawable/custom_seekbar_track"/>
+                        android:layout_marginBottom="18dp"
+                        android:textColor="#FFFFFF"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -699,16 +744,8 @@ android:orientation="vertical"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
+                            android:gravity="start"
                             android:orientation="vertical">
-
-                            <TextView
-                                android:id="@+id/tv_label_activation"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:textColor="@color/colorTextMuted"
-                                android:textSize="11sp"
-                                android:textStyle="bold"
-                                android:textAllCaps="true" />
 
                             <TextView
                                 android:id="@+id/tv_activation_date"
@@ -717,8 +754,18 @@ android:orientation="vertical"
                                 android:text="--"
                                 android:textColor="@color/colorTextPrimary"
                                 android:textSize="13sp"
-                                android:fontFamily="monospace"
-                                android:layout_marginTop="2dp" />
+                                android:textStyle="bold"
+                                android:fontFamily="monospace" />
+
+                            <TextView
+                                android:id="@+id/tv_label_activation"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:textAllCaps="true"
+                                android:textColor="@color/colorTextMuted"
+                                android:textSize="10sp"
+                                android:textStyle="bold" />
                         </LinearLayout>
 
                         <LinearLayout
@@ -729,25 +776,51 @@ android:orientation="vertical"
                             android:gravity="end">
 
                             <TextView
-                                android:id="@+id/tv_label_expiration"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:textColor="@color/colorTextMuted"
-                                android:textSize="11sp"
-                                android:textStyle="bold"
-                                android:textAllCaps="true" />
-
-                            <TextView
                                 android:id="@+id/tv_expiration_date"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="--"
                                 android:textColor="@color/colorTextPrimary"
                                 android:textSize="13sp"
-                                android:fontFamily="monospace"
-                                android:layout_marginTop="2dp" />
+                                android:textStyle="bold"
+                                android:fontFamily="monospace" />
+
+                            <TextView
+                                android:id="@+id/tv_label_expiration"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:textAllCaps="true"
+                                android:textColor="@color/colorTextMuted"
+                                android:textSize="10sp"
+                                android:textStyle="bold" />
                         </LinearLayout>
                     </LinearLayout>
+
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="28dp"
+                        android:layout_marginTop="8dp">
+
+                        <com.freezy.ui.LicenseTimelineView
+                            android:id="@+id/progress_license_days"
+                            android:layout_width="match_parent"
+                            android:layout_height="28dp"
+                            android:progress="100" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/tv_license_percent"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_horizontal"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/license_countdown_pill"
+                        android:fontFamily="monospace"
+                        android:text="--"
+                        android:textColor="@color/colorAccentPrimary"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
                 </LinearLayout>
 
                 <!-- Card de Ajustes (acciones) -->

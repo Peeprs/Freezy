@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Freezy"
 include(":app")
+include(":publicApp")

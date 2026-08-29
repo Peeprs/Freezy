@@ -1,0 +1,364 @@
+================================================================================
+ Teleport.txt — Modo TELEPORT (tele-infinity) — MyVpnService.java
+ Decompilado por jadx. Código LITERAL, sin modificar.
+================================================================================
+
+El "modo teleport" captura paquetes de posición del juego (puertos 10000-10030
+y 20000-20030), los dropea y después los REPLAYA (reinyecta) con micro-sleeps
+para simular que el jugador "teletransporta" / se mueve de forma errática.
+
+--------------------------------------------------------------------------------
+(1) Banderas, buffer y constantes del modo
+--------------------------------------------------------------------------------
+Línea 104:   volatile boolean a4 = false;                       // teleport ON
+Línea 111:   volatile boolean _teleInfinityActive = false;      // replay activo
+Línea 109:   final ConcurrentLinkedQueue<_TP> _teleBuf = new ConcurrentLinkedQueue<>();
+Línea 67:    static final int TELE_BUF_MAX = 5000;              // máx paquetes capturados
+Línea 114:   volatile int teleMode = 9;                         // modo por defecto
+Línea 115:   volatile boolean teleSmoothInfinity = true;
+Línea 123:   final ArrayList<byte[]> _burstPackets = new ArrayList<>();
+
+--------------------------------------------------------------------------------
+(2) Activación: A_TK (md.tk) con extras MODE y SMOOTH
+--------------------------------------------------------------------------------
+Línea 777-778 (dentro de onStartCommand):
+    if (A_TK.equals(action)) {
+        _doTele(intent.getIntExtra("MODE", 1), intent.getBooleanExtra("SMOOTH", true));
+    }
+
+--------------------------------------------------------------------------------
+(3) _doTele(int mode, boolean smooth) — enciende el modo
+--------------------------------------------------------------------------------
+Línea 1348-1374:
+    void _doTele(int i, boolean z) {
+        if (this.a4) {
+            _disableTele();
+            return;
+        }
+        if (this._teleInfinityActive) {
+            this._teleInfinityActive = false;
+        }
+        this._teleBuf.clear();
+        this._burstPackets.clear();
+        this._teleStartTime = System.currentTimeMillis();
+        this.teleMode = i;
+        this.teleSmoothInfinity = z;
+        this.teleFinished = false;
+        this.a4 = true;
+        this.teleActiveMode = true;
+        try {
+            Intent intent = new Intent(BC_SYNC);
+            intent.putExtra("_to", true);
+            intent.putExtra("_tm", i);
+            intent.putExtra("_r", this.active);
+            intent.putExtra("ghost", this.ghost);
+            intent.putExtra("freeze", this.freeze);
+            sendBroadcast(intent);
+        } catch (Exception unused) {
+        }
+    }
+
+--------------------------------------------------------------------------------
+(4) _disableTele() — apaga y dispara el replay
+--------------------------------------------------------------------------------
+Línea 1376-1385:
+    void _disableTele() {
+        this.a4 = false;
+        this.teleFinished = true;
+        this.posBlockCounter = 0;
+        this.teleActiveMode = false;
+        this.forceBlockOriginalPos = true;
+        this.postTelePatchActive = true;
+        _startTeleInfinity(true);
+        this.posBlockCounter = 0;
+    }
+
+--------------------------------------------------------------------------------
+(5) Captura y drop dentro del flujo UDP (handleIPv4Packet)
+--------------------------------------------------------------------------------
+Línea 1031-1058:
+    if (this.a4 && rs3 > 20) {
+        if (((rs2 >= 10000 && rs2 <= 10030) || (rs2 >= 20000 && rs2 <= 20030)) && rs3 >= 25) {
+            byte[] bArr5 = new byte[rs3];
+            System.arraycopy(bArr, i4, bArr5, 0, rs3);
+            while (this._teleBuf.size() >= TELE_BUF_MAX) {
+                this._teleBuf.poll();
+            }
+            this._teleBuf.add(new _TP(bArr5, ri, rs2, rs));
+        }
+        if (this.teleMode == 1 || this.teleMode == 9) {
+            if (rs3 > 20) {
+                this.drop.incrementAndGet();
+                return;
+            }
+        } else if (this.teleMode == 2) {
+            if (rs3 > 20 && this.rng.nextInt(100) < 70) {
+                this.drop.incrementAndGet();
+                return;
+            }
+        } else if (this.teleMode == 4) {
+            this.drop.incrementAndGet();
+            return;
+        }
+    }
+    if (this._teleInfinityActive && rs3 > 20) {
+        this.drop.incrementAndGet();
+        return;
+    }
+
+--------------------------------------------------------------------------------
+(6) _startTeleInfinity(boolean) — el REPLAY de los paquetes capturados
+--------------------------------------------------------------------------------
+Línea 1392-1472:
+    void _startTeleInfinity(boolean z) {
+        if (this._teleBuf.isEmpty()) {
+            this._teleInfinityActive = false;
+            _broadcastTeleOff();
+        } else {
+            final ArrayList arrayList = new ArrayList(this._teleBuf);
+            this._teleBuf.clear();
+            this._teleInfinityActive = true;
+            new Thread(new Runnable() { // from class: com.ponie.dayov12.MyVpnService.5
+                @Override // java.lang.Runnable
+                public void run() {
+                    try {
+                        int size = arrayList.size();
+                        int nextInt = MyVpnService.this.rng.nextInt(6) + 5;
+                        if (size > 1500) {
+                            nextInt = 0;
+                        } else if (size > 500) {
+                            nextInt = 1;
+                        }
+                        for (int i = 0; i < size; i++) {
+                            if (!this._teleInfinityActive) {
+                                cleanup(this);
+                                return;
+                            }
+                            _send(this, (_TP) arrayList.get(i));
+                            int nextInt2 = nextInt > 0 ? MyVpnService.this.rng.nextInt(4) + nextInt : 0;
+                            if (nextInt2 == 0 && i % 10 == 0) {
+                                nextInt2 = MyVpnService.this.rng.nextInt(2) + 1;
+                            }
+                            if (nextInt2 > 0) {
+                                Thread.sleep(nextInt2);
+                            }
+                        }
+                    } catch (Throwable unused) {
+                    }
+                    cleanup(this);
+                }
+
+                private void cleanup(MyVpnService myVpnService) {
+                    myVpnService._teleInfinityActive = false;
+                    myVpnService._teleBuf.clear();
+                    myVpnService.teleActiveMode = false;
+                    myVpnService.disableForceBlock();
+                    MyVpnService.this._broadcastTeleOff();
+                }
+
+                private void _send(MyVpnService myVpnService, _TP _tp) {
+                    _sendRaw(myVpnService, _tp.data, _tp.dip, _tp.dp, _tp.sp);
+                }
+
+                private void _sendRaw(MyVpnService myVpnService, byte[] bArr, int i, int i2, int i3) {
+                    DatagramChannel datagramChannel;
+                    boolean z2;
+                    try {
+                        SE se = myVpnService.map.get(Long.valueOf(((i3 & SupportMenu.USER_MASK) << 48) | ((i2 & SupportMenu.USER_MASK) << 32) | (4294967295L & i)));
+                        if (se != null && se.channel != null && se.channel.isOpen()) {
+                            datagramChannel = se.channel;
+                            z2 = false;
+                        } else {
+                            DatagramChannel open = DatagramChannel.open();
+                            myVpnService.protect(open.socket());
+                            datagramChannel = open;
+                            z2 = true;
+                        }
+                        if (datagramChannel.isOpen()) {
+                            byte[] filterSensitiveData = MyVpnService.this.filterSensitiveData(bArr);
+                            MyVpnService.this.injectPacketJitterDelay();
+                            datagramChannel.send(ByteBuffer.wrap(filterSensitiveData), new InetSocketAddress(InetAddress.getByAddress(MyVpnService.tb(i)), i2));
+                        }
+                        if (se != null) {
+                            se.touch();
+                        }
+                        if (z2) {
+                            datagramChannel.close();
+                        }
+                    } catch (Exception unused) {
+                    }
+                }
+            }, "TeleInfinity").start();
+        }
+    }
+
+--------------------------------------------------------------------------------
+(7) _broadcastTeleOff() — aviso de fin de teleport
+--------------------------------------------------------------------------------
+Línea 1474-1487:
+    void _broadcastTeleOff() {
+        try {
+            Intent intent = new Intent(BC_SYNC);
+            intent.putExtra("_to", false);
+            intent.putExtra("ts_st", false);
+            intent.putExtra("_r", this.active);
+            intent.putExtra(NotificationCompat.CATEGORY_STATUS, this.active ? DebugCoroutineInfoImplKt.RUNNING : "OFF");
+            intent.putExtra("ghost", this.ghost);
+            intent.putExtra("freeze", this.freeze);
+            intent.putExtra("_tm", this.teleMode);
+            sendBroadcast(intent);
+        } catch (Exception unused) {
+        }
+    }
+
+--------------------------------------------------------------------------------
+(8) Clase _TP — un paquete capturado para replay
+--------------------------------------------------------------------------------
+Línea 1501-1514:
+    static final class _TP {
+        final byte[] data;
+        final int dip;
+        final int dp;
+        final int sp;
+        final long ts = System.currentTimeMillis();
+
+        _TP(byte[] bArr, int i, int i2, int i3) {
+            this.data = bArr;
+            this.dip = i;
+            this.dp = i2;
+            this.sp = i3;
+        }
+    }
+
+================================================================================
+ EXPLICACIÓN LÍNEA POR LÍNEA (modo TELEPORT)
+================================================================================
+
+Estado:
+  a4 = teleport capturando (ON). _teleInfinityActive = replay ejecutándose.
+  _teleBuf = cola FIFO de paquetes capturados. TELE_BUF_MAX = 5000 (tope).
+
+_doTele(mode, smooth):
+  L1349 if (a4) { _disableTele(); return; }   -> si ya estaba activo, se apaga
+                                                 (el botón es toggle).
+  L1351 si hay replay activo lo para.
+  L1353 limpia _teleBuf y _burstPackets.
+  L1354 _teleStartTime = ahora.
+  L1355 teleMode = i   (modo de drop elegido)
+  L1356 teleSmoothInfinity = z
+  L1357 teleFinished = false; a4 = true; teleActiveMode = true
+  L1361-1366 broadcast BC_SYNC con _to=true, _tm, _r, ghost, freeze
+          -> avisa a la burbuja/UI de que el modo está activo.
+
+Captura en handleIPv4Packet (L1031-1058):
+  L1031 if (this.a4 && rs3 > 20):
+  L1032   if ((puerto dest 10000-10030 o 20000-20030) && rs3 >= 25):
+  L1033-34    copia el payload a byte[]
+  L1035-37    si _teleBuf >= 5000, descarta el más viejo (poll)
+  L1038      guarda _TP(payload, destIp, destPort, srcPort)  -> capturado para replay
+  L1040   teleMode 1 o 9: si rs3 > 20 -> DROP y return (NO envía nada)
+  L1045   teleMode 2: si rs3 > 20 y rng(100)<70 -> DROP (70% probabilidad)
+  L1050   teleMode 4: DROP siempre
+  L1055   si _teleInfinityActive y rs3 > 20 -> DROP (mientras rejuega, captura nada más)
+  L1059-77 si pasó todo -> envía normal (solo se envían los paquetes no dropeados)
+
+  => Durante el modo captura: los paquetes de posición (puerto 10000-10030/20000-20030)
+     se guardan y NO se envían al servidor (o se envían al 70% en modo 2).
+
+_disableTele() (L1376-1385):
+  a4=false; teleFinished=true; posBlockCounter=0; teleActiveMode=false;
+  forceBlockOriginalPos=true; postTelePatchActive=true;
+  _startTeleInfinity(true);   -> LANZA el replay
+  posBlockCounter=0;
+
+_startTeleInfinity(z) (L1392-1472):
+  L1394 si buffer vacío -> _teleInfinityActive=false y broadcast de apagado.
+  L1397 copia _teleBuf a una lista local y la limpia.
+  L1398 _teleInfinityActive = true.
+  L1401 hilo "TeleInfinity":
+  L1403   size = nº paquetes capturados
+  L1404   nextInt = rng(6)+5  -> sleep base 5..10 ms
+  L1406   si size > 1500 -> nextInt = 0   (muchos paquetes: sin pausa)
+  L1408   si size > 500  -> nextInt = 1   (bastantes: pausa mínima)
+  L1410   bucle sobre cada _TP:
+  L1412     si ya no activo -> cleanup y salir
+  L1414     _send(this,_tp): reenvía el paquete original por UDP
+  L1416     nextInt2 = (nextInt>0) ? rng(4)+nextInt : 0  -> pausa aleatoria
+              (5-10 -> 5..14 ms; 1 -> 1..4 ms; 0 -> 0)
+  L1419     si nextInt2==0 y i%10==0 -> nextInt2 = rng(2)+1 (evita cero pegado)
+  L1422     si nextInt2>0 -> Thread.sleep(nextInt2)
+  L1427   al terminar: cleanup -> _teleInfinityActive=false, limpia buffer,
+           teleActiveMode=false, disableForceBlock(), broadcast apagado.
+
+  => El replay reinyecta TODOS los paquetes de posición capturados hacia el
+     servidor, con micro-pausas aleatorias, en ráfaga. El servidor recibe de
+     golpe un montón de posiciones viejas -> parece teleport / caminar por el aire.
+
+_sendRaw (L1447-1470):
+  - Busca o crea DatagramChannel hacia (destIp, destPort).
+  - protect(socket) para que el socket use la red real (no el túnel).
+  - filterSensitiveData(payload)  -> filtra datos sensibles si aplica
+  - injectPacketJitterDelay()     -> pausa de jitter antes de enviar
+  - channel.send()                -> envío real del paquete
+  - si creó el canal a mano (z2) lo cierra tras enviar.
+
+_broadcastTeleOff (L1474-1487): avisa fin de teleport (BC_SYNC _to=false).
+
+_TP (L1501-1514): data + dip (IP dest) + dp (puerto dest) + sp (puerto src) + ts.
+
+EFECTOS DE ALTERAR (what-if):
+
+1) Puertos de captura (L1032: 10000-10030 / 20000-20030):
+   - Es el "blanco": los paquetes del juego de posición/acción en esos puertos.
+   - Ampliar el rango (ej. 10000-10090) -> se capturan y dropean más tipos de
+     paquetes (posiblemente rotura de la sesión, más notorio para otros).
+   - Reducir el rango -> se captura menos; el efecto teleport se vuelve sutil.
+   - Si el juego usa puertos dinámicos, el modo no captura nada -> teleport muerto.
+   - NOTA: los puertos van DESDE el cliente (rs2 = puerto destino que usa el juego).
+
+2) TELE_BUF_MAX (5000):
+   - Subirlo -> puede reinyectar más paquetes en el replay (ráfaga más larga,
+     efecto más fuerte y más sospechoso; riesgo de ban por "spike" de paquetes).
+   - Bajarlo -> ráfaga corta; el teleport dura menos y se siente flojo.
+   - En _startTeleInfinity el corte por tamaño (1500/500) ajusta el sleep base:
+     con buffers muy grandes el replay se dispara sin pausa (nextInt=0).
+
+3) Sleeps del replay (L1404, L1416, L1419, L1422):
+   - nextInt = rng(6)+5 -> pausa base 5-10 ms entre paquetes reinyectados.
+   - Subir base (ej. rng(6)+20) -> el replay se espacia: el teleport parece más
+     "lento"/natural, menos sospechoso, pero se nota menos.
+   - Bajar base (ej. rng(6)) -> ráfaga más cerrada: teleport más violento, más
+     riesgo de que el servidor filtre por flood.
+   - nextInt2 = rng(4)+nextInt -> suma 0-3 ms extra aleatorio (jitter del replay).
+
+4) teleMode (1,2,4,9) — política de drop DURANTE la captura:
+   - 1 y 9: drop 100% de todo paquete >20 bytes (incluye los capturados).
+   - 2: drop 70% aleatorio (rng<70). Más "natural", menos agresivo.
+   - 4: drop 100% (modo bruto).
+   - Si se añade un modo con probabilidad más baja (p.ej. rng<30), el jugador
+     mantiene más tráfico real -> mejor conexión pero teleport menos evidente.
+   - Nota: solo dropea mientras rs3 > 20 (los paquetes muy pequeños pasan).
+
+5) filterSensitiveData (L1465) e injectPacketJitterDelay (L1466):
+   - Si filterSensitiveData reescribe el payload, alterar el buf cambia qué se
+     envía. Si injectPacketJitterDelay añade sleep, retrasa cada reenvío.
+   - Ambas llamadas están también en forwardUdpPacketDirect (flujo normal): NO son
+     específicas del teleport; modificarlas afecta a TODOS los modos.
+
+6) El umbral rs3 > 20 en L1031/L1055:
+   - Subirlo (ej. >50) -> no se dropean paquetes de 20-50 bytes, la conexión se
+     mantiene más viva y el drop es más selectivo.
+   - Bajarlo -> se dropean casi todos; riesgo de timeout de sesión.
+
+7) forceBlockOriginalPos / postTelePatchActive (en _disableTele):
+   - Intervienen en la pos-procesado. Alterarlos podría dejar bloqueado el "parche"
+     de posición original (el personaje se queda anclado en su posición vieja).
+
+Resumen para ajustar el modo teleport:
+  - Agresividad del drop: teleMode (1/9 = total, 2 = 70%, 4 = total bruto).
+  - Duración/impacto del teleport: TELE_BUF_MAX + rango de puertos capturados.
+  - "Dureza" del salto: sleeps del replay (menor sleep = salto más violento).
+
+================================================================================
+ FIN Teleport.txt
+================================================================================

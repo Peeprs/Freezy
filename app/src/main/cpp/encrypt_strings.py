@@ -241,7 +241,7 @@ strings = {
      # ── LoginActivity strings ───────────────────────────────────────
      216: "Licencia cargada desde GET KEY",
      217: "Genera una key viendo unos pasos cortos (GET KEY)",
-     218: "Abriendo Telegram...",
+     218: "Abriendo WhatsApp...",
      219: "Abriendo TikTok...",
      220: "No hay navegador disponible.",
      221: "Error de conexión. Intenta de nuevo.",

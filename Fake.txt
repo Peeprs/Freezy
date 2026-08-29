@@ -1,0 +1,282 @@
+================================================================================
+ Fake.txt — Modo FREEZE (fake lag / congelar) — MyVpnService.java
+ Decompilado por jadx. Código LITERAL, sin modificar.
+================================================================================
+
+El "modo freeze" captura los datagramas UDP del juego que van del servidor al
+cliente dentro de un rango de tamaño aleatorio, los BUFFERIZA (los retiene en
+memoria en vez de entregarlos) y los "flushea" (reinyecta de golpe) cuando se
+desactiva. Efecto: el jugador parece "congelado" para los demás / lag masivo.
+
+--------------------------------------------------------------------------------
+(1) Buffer y banderas del modo
+--------------------------------------------------------------------------------
+Línea 110:
+    final ConcurrentLinkedQueue<byte[]> _freezeBuf = new ConcurrentLinkedQueue<>();
+
+Línea 102:
+    volatile boolean freeze = false;
+
+Línea 105:
+    volatile long unfreeze = 0;
+
+Línea 46:
+    public static final String ACTION_FREEZE = "com/ponie/dayov12.md.f1";
+
+--------------------------------------------------------------------------------
+(2) Activación/desactivación desde el intent (FloatingService manda md.f1)
+--------------------------------------------------------------------------------
+Línea 755-763 (dentro de onStartCommand):
+    if ("com/ponie/dayov12.md.f1".equals(action)) {
+        this.freeze = intent.hasExtra("enabled") ? intent.getBooleanExtra("enabled", false) : !this.freeze;
+        if (!this.freeze) {
+            this.unfreeze = System.currentTimeMillis();
+            _flushFreezeBuffer();
+        } else {
+            this._freezeBuf.clear();
+        }
+        m_bcs();
+    }
+
+-> Al APAGAR (freeze=false): marca unfreeze=ahora y vacía el buffer hacia la tun.
+-> Al ENCENDER (freeze=true): limpia el buffer (descarta lo anterior).
+
+--------------------------------------------------------------------------------
+(3) La función de decisión de captura: shouldFreezeDropPacket
+--------------------------------------------------------------------------------
+Línea 850-860:
+    boolean shouldFreezeDropPacket(int i) {
+        SharedPreferences sharedPreferences = getSharedPreferences("cfg", 0);
+        int i2 = sharedPreferences.getInt("fdm_n", 20);
+        int i3 = sharedPreferences.getInt("fdm_x", 450);
+        int nextInt = i2 + this.rng.nextInt(10);
+        int nextInt2 = i3 + this.rng.nextInt(50);
+        if (nextInt >= nextInt2) {
+            nextInt = nextInt2 - 1;
+        }
+        return i > nextInt && i < nextInt2;
+    }
+
+-> Lee cfg: fdm_n (default 20) y fdm_x (default 450).
+-> nextInt = fdm_n + rng(0..9)   -> piso aleatorio (20..29)
+-> nextInt2 = fdm_x + rng(0..49) -> techo aleatorio (450..499)
+-> Devuelve true si el payload i está ESTRICTAMENTE entre piso y techo.
+
+--------------------------------------------------------------------------------
+(4) El flush: _flushFreezeBuffer() — reinyecta los paquetes retenidos
+--------------------------------------------------------------------------------
+Línea 816-842:
+    void _flushFreezeBuffer() {
+        if (this._freezeBuf.isEmpty() || this.tunOutChannel == null || !this.tunOutChannel.isOpen()) {
+            return;
+        }
+        final ArrayList arrayList = new ArrayList(this._freezeBuf);
+        this._freezeBuf.clear();
+        Thread thread = new Thread(new Runnable() { // from class: com.ponie.dayov12.MyVpnService.3
+            @Override // java.lang.Runnable
+            public void run() {
+                for (int i = 0; i < arrayList.size(); i++) {
+                    try {
+                        byte[] bArr = (byte[]) arrayList.get(i);
+                        MyVpnService.this.injectPacketJitterDelay();
+                        MyVpnService myVpnService = MyVpnService.this;
+                        myVpnService.writeTunSafe(myVpnService.tunOutChannel, bArr);
+                        if (i > 0 && i % 2 == 0) {
+                            Thread.sleep(MyVpnService.this.rng.nextInt(3) + 1);
+                        }
+                    } catch (Exception unused) {
+                        return;
+                    }
+                }
+            }
+        }, "FreezeFlush");
+        thread.setPriority(10);
+        thread.start();
+    }
+
+-> Copia el buffer a una lista local y lo vacía.
+-> Hilo "FreezeFlush" prioridad 10: reescribe cada paquete en la TUN (writeTunSafe).
+-> Cada 2 paquetes (i>0 y i%2==0) duerme rng(0..2)+1 ms (1-3 ms).
+
+--------------------------------------------------------------------------------
+(5) Dónde se captura (buffer) en el hilo receptor — RecvRunnable
+--------------------------------------------------------------------------------
+El método run() de RecvRunnable (líneas 1529-1703) quedó con bloques perdidos
+por jadx. Los fragmentos JADX WARN (líneas 1548-1597) muestran la lógica real:
+
+Línea 1550:  if (r6 <= 65536) goto L62;            // tamaño válido
+Línea 1554:  r23.svc.bi.addAndGet(r6);            // bytes in += tamaño
+Línea 1555:  r23.ne.touch();                       // marca actividad del socket
+Línea 1556:  r2.get(r4, 0, r6);                    // lee payload
+Línea 1561:  if (r3 < 7000) goto L66;              // puerto dest < 7000 -> no control
+Línea 1565:  if (r3 > 10000) goto L66;             // puerto dest > 10000 -> no control
+Línea 1569:  r3 = r23.svc.mkPkt(r4, 0, r6, r23.sip, r23.dp, r23.sp);  // reempaqueta a IP
+Línea 1570:  r23.svc.injectPacketJitterDelay();
+Línea 1571:  r23.svc.writeTunSafe(r23.out, r3);    // si puerto [7000,10000] -> directo
+Línea 1575:  if (r23.svc.freeze == false) goto L74;   // si freeze OFF -> directo
+Línea 1579:  if (r23.svc.shouldFreezeDropPacket(r6) == false) goto L74;
+Línea 1583:  if (r23.svc._freezeBuf.size() < 10000) goto L121;  // máx 10000
+Línea 1587:  r23.svc._freezeBuf.poll();            // si lleno, descarta el más viejo
+Línea 1591:  r23.svc._freezeBuf.add(r23.svc.mkPkt(r4, 0, r6, r23.sip, r23.dp, r23.sp));
+Línea 1592:  r23.svc.drop.incrementAndGet();       // cuenta como "dropeado" (retenido)
+
+Resumen: en el hilo receptor, cuando freeze está activo y el payload cae en el
+rango de shouldFreezeDropPacket, el paquete NO se escribe en la TUN: se mete a
+_freezeBuf (máx 10000) y cuenta en drop.
+
+--------------------------------------------------------------------------------
+(6) El flujo de salida (lado cliente -> servidor) también pasa por el check
+--------------------------------------------------------------------------------
+Línea 993-996 (handleIPv4Packet):
+    if (!this.freeze && !this.ghost && !this.a4 && !this._teleInfinityActive && !this.jitterMode && !this.jitterInfinity) {
+        forwardUdpPacketDirect(bArr, i3, ri, rs, rs2, i4, rs3, fileChannel);
+        return;
+    }
+
+(Con freeze activo, los paquetes no entran por esta rama "todo limpio".)
+
+--------------------------------------------------------------------------------
+(7) Anti-flood que protege (o no) tras el unfreeze
+--------------------------------------------------------------------------------
+Línea 1677-1683 (dentro de RecvRunnable):
+    if (System.currentTimeMillis() - this.svc.unfreeze >= 5000 && i5 > 4000) {
+        this.svc.drop.incrementAndGet();
+        i4 = i5;
+        ...
+    }
+
+-> Si han pasado >=5000 ms desde el unfreeze y hay >4000 paquetes en la ventana
+   de 1 s, se dropean (anti-flood tras reventar el buffer).
+
+================================================================================
+ EXPLICACIÓN LÍNEA POR LÍNEA (modo FREEZE / fake lag)
+================================================================================
+
+Estado:
+  freeze = ON/OFF. unfreeze = timestamp del último apagado (para el anti-flood).
+  _freezeBuf = cola FIFO de paquetes retenidos (no entregados a la TUN).
+
+onStartCommand (L755-763) — activación/desactivación:
+  L756 if (ACTION_FREEZE.equals(action))            // botón manda md.f1
+  L757   this.freeze = intent.hasExtra("enabled")
+              ? intent.getBooleanExtra("enabled", false)  // valor explícito si llega
+              : !this.freeze;                              // si no, toggle
+  L759   if (!this.freeze) {
+  L760      this.unfreeze = System.currentTimeMillis();     // marca el momento
+  L761      _flushFreezeBuffer();                            // reinyecta lo retenido
+  L762   } else {
+  L763      this._freezeBuf.clear();                          // al encender: descarta
+  L764   }
+  L765   m_bcs();                                            // difunde estado
+
+  => Al ENCENDER se limpia el buffer (empezar de cero).
+     Al APAGAR se libera TODO lo retenido hacia el juego de golpe -> "explota" el lag.
+
+shouldFreezeDropPacket(int i) (L850-860):
+  L852 lee SharedPreferences "cfg" -> fdm_n (default 20), fdm_x (default 450)
+  L855 nextInt  = fdm_n + rng(10)   -> piso aleatorio 20..29
+  L856 nextInt2 = fdm_x + rng(50)   -> techo aleatorio 450..499
+  L858 si piso >= techo -> piso = techo-1
+  L860 return i > nextInt && i < nextInt2
+       -> true si el tamaño del payload está ESTRICTAMENTE entre piso y techo.
+
+  => El rango de captura cambia en CADA llamada (aleatorio). Es la "firma" del freeze.
+
+_flushFreezeBuffer() (L816-842):
+  L817 si buffer vacío o TUN cerrada -> return
+  L820 copia el buffer a lista local y lo vacía
+  L823 hilo "FreezeFlush" (prioridad 10):
+  L825   bucle por cada paquete retenido:
+  L828     injectPacketJitterDelay()
+  L829     writeTunSafe(tunOutChannel, paquete)   -> escribe el paquete en la TUN
+  L831     si i>0 y i%2==0 -> Thread.sleep(rng(3)+1)  -> pausa 1..3 ms cada 2 paq.
+  L837   al salir: nada más (el hilo muere)
+
+  => Reinyecta los paquetes retenidos hacia la app del juego (Free Fire) con pausas
+     mínimas de 1-3 ms cada dos paquetes. Prioridad 10 = máxima.
+
+Captura en RecvRunnable (reconstruido de los fragmentos JADX WARN, L1548-1597):
+  L1554 bi.addAndGet(r6)                      -> bytes entrantes acumulados
+  L1556 lee payload (r6 bytes)
+  L1561 if puerto dest < 7000 -> goto L66 (envío directo)
+  L1565 if puerto dest > 10000 -> goto L66 (envío directo)
+  L1569 mkPkt(...)  -> reempaqueta a paquete IP completo
+  L1570 injectPacketJitterDelay()
+  L1571 writeTunSafe -> si puerto está en [7000,10000], va directo a la TUN
+  L1575 if (freeze == false) -> directo
+  L1579 if (shouldFreezeDropPacket(r6) == false) -> directo
+  L1583 if (_freezeBuf.size() < 10000) -> guarda
+  L1587 _freezeBuf.poll()        -> si lleno (>=10000), descarta el más viejo
+  L1591 _freezeBuf.add(mkPkt(...))  -> retiene el paquete (NO llega al juego)
+  L1592 drop.incrementAndGet()
+
+  => El freeze retiene paquetes del SERVIDOR que ya llegaron a la TUN, en vez de
+     escribirlos al juego. Máximo 10000 paquetes en espera.
+
+Anti-flood (L1677-1683):
+  L1677 if (ahora - unfreeze >= 5000 && i5 > 4000):
+  L1678   drop.incrementAndGet()
+  L1681   i4 = i5 ...
+  => Pasados 5 s del unfreeze, si llegan >4000 paquetes en la ventana, se dropean
+     (protección contra la ráfaga descomunal del flush).
+
+EFECTOS DE ALTERAR (what-if):
+
+1) fdm_n / fdm_x (piso/techo del rango de captura):
+   - Son configurables en SharedPreferences "cfg" (el APK los lee).
+   - Subir fdm_n (ej. 100) -> solo se retienen paquetes de >=100 bytes; el freeze
+     deja pasar los pequeños (acks, pings) -> conexión más estable, efecto menor.
+   - Bajar fdm_n a 0 -> se retienen casi todos los paquetes (freeze total; riesgo
+     alto de timeout/desconexión).
+   - Subir fdm_x (ej. 900) -> se retienen también paquetes grandes (datos de escena),
+     freeze más profundo pero más sospechoso.
+   - Bajar fdm_x a < fdm_n -> el rango se invierte; deberFreezeDropPacket devuelve
+     casi siempre false (la corrección L858 solo aplica al piso, el techo queda raro).
+   - El +rng(10)/+rng(50) hace el rango volátil a propósito: alterar esas constantes
+     cambia cuánto "baila" el rango entre paquetes.
+
+2) El tope de 10000 paquetes del buffer (L1583/L1587):
+   - Subirlo -> más memoria y un flush más masivo (ráfaga gigante al apagar;
+     riesgo de ban o de que el juego se cuelgue).
+   - Bajarlo -> buffer se llena antes, se descartan los más viejos (el freeze
+     "pierde" cobertura, se nota menos).
+   - Cada paquete reempaquetado ocupa memoria: 10000 * (IP+UDP+payload) ≈ varios MB.
+     Bajarlo a 2000-3000 es lo prudente si se quiere estabilidad.
+
+3) Sleeps del flush (L831: rng(3)+1, cada 2 paquetes):
+   - Son 1-3 ms cada DOS paquetes. Muy ligero.
+   - Subir a rng(10)+5 -> el flush se alarga; el "rebote" del lag se reparte más
+     tiempo (menos explosivo, más sostenido).
+   - Bajar a 0 -> todo se vacía en un solo write() -> pico brutal, más ban-friendly.
+   - Nota: el hilo es prioridad 10 (MAX_PRIORITY): se come CPU a propósito.
+
+4) El umbral anti-flood (L1677: 5000 ms / >4000 paquetes):
+   - Bajar a 1000 ms -> se dropean antes los picos tras el flush (protege más al
+     servidor/juego pero el freeze "corta" antes).
+   - Subir a 20000 ms -> se deja pasar la ráfaga entera (más lag percibido).
+   - Este check NO frena el flush en sí; solo descarta lo que llegue DESPUÉS.
+
+5) El rango de puertos directos [7000,10000] (L1561/L1565):
+   - El freeze NO toca el tráfico de los puertos 7000-10000 (se entrega directo).
+   - Si el tráfico crítico del juego va por otro puerto, se expande el rango para
+     retenerlo; si se estrecha, más paquetes pasan (freeze menos efectivo).
+
+6) mkPkt (reempaquetado):
+   - Cada paquete retenido se convierte a IP completo (header + UDP). Si se modifica
+     el reempaquetado se altera qué le llega exactamente al juego en el flush.
+
+7) Interacción con los otros modos:
+   - L993: con freeze activo los paquetes de SALIDA (cliente->servidor) también
+     entran en la cascada, así que el freeze NO solo retiene entrada: el envío
+     normal queda condicionado. Con freeze+ghost ambos se aplican: salida limitada
+     por ghost, entrada retenida por freeze.
+
+Resumen para ajustar el modo freeze:
+  - Qué se retiene: fdm_n/fdm_x (+rng) en shouldFreezeDropPacket.
+  - Cuánto se retiene: tope 10000 del buffer.
+  - Cómo se libera: sleeps del hilo FreezeFlush.
+  - Cuándo deja de proteger: umbral anti-flood (5000 ms / 4000 paquetes).
+
+================================================================================
+ FIN Fake.txt
+================================================================================

@@ -17,3 +17,15 @@ local.properties
 /keystores/
 /*.txt
 /*.md
+!/AQUITECTURA.md
+!/AUDITORIA_Y_PLAN_DE_MEJORAS.md
+!/POSIBLES_OFFSETS.md
+!/PROGRESS.md
+!/Ghost.txt
+!/Fake.txt
+!/Teleport.txt
+/*.cs
+/*.log
+/*.apk
+/.kotlin/
+/publicApp/build/

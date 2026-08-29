@@ -1,0 +1,184 @@
+================================================================================
+ GHOST.txt — Modo GHOST (fantasma) — MyVpnService.java (com.ponie.dayov12)
+ Decompilado por jadx. Código LITERAL, sin modificar.
+================================================================================
+
+El "modo ghost" sirve para que el jugador aparezca "fantasma": se dropean los
+datagramas UDP del juego que llevan actualizaciones de posición/acción en el
+rango de tamaño 50–200 bytes.
+
+--------------------------------------------------------------------------------
+(1) Constante y bandera del modo
+--------------------------------------------------------------------------------
+Línea 103:
+    volatile boolean ghost = false;
+
+Línea 47:
+    public static final String ACTION_GHOST = "com/ponie/dayov12.md.g1";
+
+--------------------------------------------------------------------------------
+(2) Activación/desactivación desde el intent (FloatingService manda md.g1)
+--------------------------------------------------------------------------------
+Línea 783-785 (dentro de onStartCommand):
+    } else if ("com/ponie/dayov12.md.g1".equals(action)) {
+        this.ghost = intent.hasExtra("enabled") ? intent.getBooleanExtra("enabled", false) : !this.ghost;
+        m_bcs();
+    }
+
+Nota: si el intent lleva extra "enabled" lo usa tal cual; si no, hace toggle (!ghost).
+
+--------------------------------------------------------------------------------
+(3) La función de decisión de drop: shouldGhostDropPacket
+--------------------------------------------------------------------------------
+Línea 160-162:
+    boolean shouldGhostDropPacket(int i) {
+        return i >= 50 && i <= 200;
+    }
+
+-> Devuelve true si el payload UDP mide entre 50 y 200 bytes inclusive.
+
+--------------------------------------------------------------------------------
+(4) El punto de decisión dentro del despacho de paquetes UDP
+--------------------------------------------------------------------------------
+Línea 1011-1014 (dentro de handleIPv4Packet):
+    if (this.ghost && shouldGhostDropPacket(rs3)) {
+        this.drop.incrementAndGet();
+        return;
+    }
+
+-> rs3 = tamaño del payload UDP (bytes). Si ghost está activo y el payload
+   cae en [50,200], el paquete se DROPEA (no se envía al servidor del juego)
+   y se incrementa el contador drop.
+
+--------------------------------------------------------------------------------
+(5) Orden de prioridad en el flujo del paquete (para entender interacciones)
+--------------------------------------------------------------------------------
+Línea 985:
+    boolean z = (rs2 >= 7000 && rs2 <= 10000) || rs3 < 15;
+
+Línea 989-992:
+    if (rs3 > 0 && rs3 <= 45) {
+        forwardUdpPacketDirect(bArr, i3, ri, rs, rs2, i4, rs3, fileChannel);
+        return;
+    }
+
+Línea 993-996:
+    if (!this.freeze && !this.ghost && !this.a4 && !this._teleInfinityActive && !this.jitterMode && !this.jitterInfinity) {
+        forwardUdpPacketDirect(bArr, i3, ri, rs, rs2, i4, rs3, fileChannel);
+        return;
+    }
+
+Línea 1007-1010:
+    if (z) {
+        forwardUdpPacketDirect(bArr, i3, ri, rs, rs2, i4, rs3, fileChannel);
+        return;
+    }
+
+Línea 1011-1014:
+    if (this.ghost && shouldGhostDropPacket(rs3)) {   <-- AQUÍ
+        this.drop.incrementAndGet();
+        return;
+    }
+
+Línea 1059+:
+    SE se = getSE(j, rs, ri, rs2, fileChannel);
+    ...
+    se.channel.send(...)   // forward normal hacia el servidor
+
+--------------------------------------------------------------------------------
+(6) Contador que se ve en los broadcasts de estado
+--------------------------------------------------------------------------------
+Línea 83:
+    final AtomicLong drop;
+
+Línea 1338 / 1734 (broadcasts md.st y BC_SYNC):
+    intent.putExtra("_bb", 0);
+    intent.putExtra("_bs", 0);
+
+(El contador real drop se incrementa en los drops, aunque no se expone en los extras.)
+
+================================================================================
+ EXPLICACIÓN LÍNEA POR LÍNEA (modo GHOST)
+================================================================================
+
+Declaración:
+  volatile boolean ghost = false;      // estado ON/OFF, visible en broadcasts
+
+L.783-785 onStartCommand (activación):
+  if (ACTION_GHOST.equals(action))       // el botón manda "com/ponie/dayov12.md.g1"
+      this.ghost = intent.hasExtra("enabled")
+          ? intent.getBooleanExtra("enabled", false)   // si el intent trae valor, lo respeta
+          : !this.ghost;                                // si no, alterna (toggle)
+      m_bcs();                            // difunde el nuevo estado al UI/burbuja
+
+shouldGhostDropPacket(int i):
+  return i >= 50 && i <= 200;
+  -> "i" es el tamaño del payload UDP (rs3). Decide si el paquete debe dropearse.
+
+handleIPv4Packet (punto de corte):
+  if (this.ghost && shouldGhostDropPacket(rs3)) {
+      this.drop.incrementAndGet();   // cuenta 1 drop
+      return;                        // NO envía el paquete: lo descarta
+  }
+
+Contexto del flujo (lo que corre ANTES de esta línea):
+  L.985  z  = (puerto 7000-10000) || tamaño < 15      -> paquetes "de control", se pasan
+  L.989  si payload <= 45 bytes  -> forward directo    (handshakes/acks pequeños)
+  L.993  si NINGÚN modo activo   -> forward directo
+  L.997  si puerto/source altos  -> se aprende la IP del servidor del juego
+  L.1007 si z                    -> forward directo    (puerto 7000-10000 = tráfico crítico)
+  L.1011 si ghost y 50<=size<=200 -> DROP  <-- EFECTO PRINCIPAL
+  L.1059 si no se dropeó -> se envía por el socket UDP hacia el servidor
+
+EFECTOS DE ALTERAR (what-if):
+
+1) Cambiar el rango 50..200 de shouldGhostDropPacket:
+   - Mínimo más bajo (ej. 10)  -> también se dropean paquetes de handshake cortos.
+     Riesgo alto: romper la conexión, o que el servidor te baje por timeout.
+   - Mínimo más alto (ej. 150) -> solo se dropean paquetes grandes (menos agresivo,
+     más "natural", pero el efecto fantasma se nota menos).
+   - Máximo 400+              -> se dropean los paquetes de movimiento más grandes
+     (sincronización de posiciones largas); el jugador puede quedar congelado de verdad
+     en vez de "fantasma".
+   - Rango vacío o invertido (min > max): shouldGhostDropPacket siempre false -> modo
+     muerto (nada se dropea). Si se deja i > min && i < max con min>max nunca pasa.
+     Nota: la condición es ESTRICTA (>= 50 && <= 200). Para hacer el modo más agresivo
+     habría que bajar el 50 y subir el 200.
+
+2) Alterar el tamaño umbral en handleIPv4Packet:
+   - La línea 989 (payload <= 45 -> forward directo) NO depende de ghost. Si se sube
+     ese umbral a, p.ej., 100, los paquetes de 50-100 bytes se pasarían SIEMPRE,
+     anulando parte del ghost. Si se baja a 0, el ghost puede cortar handshakes.
+
+3) Alterar los puertos "de control" (z en L.985, rango 7000-10000):
+   - El ghost NO dropea tráfico a puertos 7000-10000 (siempre se pasa). Si el juego
+     usara el puerto de tráfico de posición dentro de ese rango, el modo no funcionaría.
+   - Bajar el techo (ej. 7000-9000) hace que paquetes de 9000-10000 pasen por ghost
+     (más agresivo). Subirlo (7000-10000 -> 7000-12000) protege más tráfico.
+
+4) Cambiar el tamaño mínimo rs3 > 0 en L.989:
+   - Si rs3 = 0 (datagrama vacío) el paquete llega a la rama ghost: 0 no está en
+     [50,200] -> se envía igual. Sin impacto práctico.
+
+5) Alterar los sleeps/tiempos: el modo ghost NO usa sleeps. No hay nada que ajustar.
+   El "ghost" es 100% loss selectivo por tamaño de payload, sin reintento.
+
+6) Alterar el contador drop:
+   - drop.incrementAndGet() se muestra en la burbuja/estado como paquetes perdidos.
+   - No afecta al gameplay; solo es telemetría.
+
+7) Interacción con otros modos (importante):
+   - L.993: si freeze O ghost O teleport O jitter está activo, los paquetes ya NO
+     pasan por forwardUdpPacketDirect a ciegas; entran en la cascada. Esto significa
+     que ghost combinado con jitter/freeze comparte la misma cola de decisión y los
+     drops se acumulan. No hay bloqueo mutuo: los modos se pueden superponer.
+
+Resumen de qué tocar para ajustar el modo ghost:
+  - Agresividad: bajar el mínimo (50) o subir el máximo (200) en shouldGhostDropPacket.
+  - Espectro cubierto: el rango [50,200] está pensado para el payload típico de
+    posiciones/acciones en Free Fire. Paquetes <50 (acks) y >200 (datos de escena)
+    pasan intactos para no romper la sesión.
+
+================================================================================
+ FIN GHOST.txt
+================================================================================

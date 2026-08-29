@@ -390,17 +390,6 @@ class BubbleService : Service() {
                                         recreateBubbles()
                                     }
                                 }
-                                val warning = jsonObject.optString("update_warning", "")
-                                if (warning.isNotEmpty()) {
-                                    handler.post {
-                                        Toast.makeText(
-                                                        this@BubbleService,
-                                                        warning,
-                                                        Toast.LENGTH_LONG
-                                                )
-                                                .show()
-                                    }
-                                }
                             }
                         } else {
                             val errorBody =
@@ -467,7 +456,7 @@ class BubbleService : Service() {
                         .setContentText(
                                 NativeBridge.getNativeString(NativeBridge.STRING_BUBBLE_NOTIF_TEXT)
                         )
-                        .setSmallIcon(android.R.drawable.ic_secure)
+                        .setSmallIcon(R.drawable.ic_notification_freezy)
                         .build()
         try {
             if (android.os.Build.VERSION.SDK_INT >= 34)

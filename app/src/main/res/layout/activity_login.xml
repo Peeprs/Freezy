@@ -1,180 +1,255 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/colorBackgroundBase">
+    android:background="#08090C">
 
-    <!-- SPLASH / LOADING CONTAINER -->
-    <LinearLayout
+    <FrameLayout
         android:id="@+id/layout_splash"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:gravity="center"
-        android:orientation="vertical"
+        android:padding="28dp"
         android:visibility="visible">
-
-        <ImageView
-            android:id="@+id/iv_splash_logo"
-            android:layout_width="120dp"
-            android:layout_height="120dp"
-            android:src="@mipmap/ic_launcher"
-            android:layout_marginBottom="24dp" />
-
-        <TextView
-            android:id="@+id/tv_splash_status"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="[>] Obteniendo datos..."
-            android:textColor="@color/colorAccentPrimary"
-            android:textSize="14sp"
-            android:fontFamily="monospace"
-            android:letterSpacing="0.1" />
-
-    </LinearLayout>
-
-    <!-- LOGIN FORM CONTAINER -->
-    <FrameLayout
-        android:id="@+id/layout_login"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="gone">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
+            android:background="@drawable/bg_update_modal"
+            android:gravity="center_horizontal"
             android:orientation="vertical"
-            android:background="@drawable/bg_glass_blue"
-            android:padding="32dp">
+            android:paddingStart="28dp"
+            android:paddingTop="30dp"
+            android:paddingEnd="28dp"
+            android:paddingBottom="28dp">
+
+            <ImageView
+                android:id="@+id/iv_splash_logo"
+                android:layout_width="92dp"
+                android:layout_height="92dp"
+                android:contentDescription="Estado de verificación"
+                android:scaleType="fitCenter"
+                android:src="@drawable/freezy_logo" />
+
+            <TextView
+                android:id="@+id/tv_state_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:background="@drawable/bg_update_badge"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.12"
+                android:text="VERIFICACIÓN SEGURA"
+                android:textColor="#D996FF"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tv_state_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:fontFamily="sans-serif-black"
+                android:gravity="center"
+                android:text="Validando licencia"
+                android:textColor="#F8F5FC"
+                android:textSize="25sp" />
+
+            <TextView
+                android:id="@+id/tv_splash_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center"
+                android:lineSpacingExtra="3dp"
+                android:text="Comprobando tu acceso con el servidor de Freezy"
+                android:textColor="#AFA9B8"
+                android:textSize="14sp" />
+
+            <ProgressBar
+                android:id="@+id/progress_verification"
+                style="?android:attr/progressBarStyle"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:layout_marginTop="24dp"
+                android:indeterminateTint="#B026FF" />
+
+            <TextView
+                android:id="@+id/btn_state_return"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="22dp"
+                android:background="@drawable/bg_update_secondary"
+                android:clickable="true"
+                android:focusable="true"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:text="VOLVER AL LOGIN"
+                android:textColor="#E7D7F0"
+                android:textSize="13sp"
+                android:visibility="gone" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <ScrollView
+        android:id="@+id/layout_login"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingStart="26dp"
+            android:paddingTop="42dp"
+            android:paddingEnd="26dp"
+            android:paddingBottom="28dp">
+
+            <ImageView
+                android:layout_width="88dp"
+                android:layout_height="88dp"
+                android:contentDescription="Freezy"
+                android:src="@drawable/freezy_logo" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_update_badge"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.12"
+                android:text="ACCESO SEGURO"
+                android:textColor="#D996FF"
+                android:textSize="10sp" />
 
             <TextView
                 android:id="@+id/tv_app_name"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="@color/colorAccentPrimary"
-                android:textSize="28sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="24dp"
-                android:gravity="center"
-                android:letterSpacing="0.1" />
-
-            <TextView
-                android:id="@+id/tv_label_user"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/colorTextMuted"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="8dp" />
-
-            <EditText
-                android:id="@+id/et_user"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:textColorHint="@color/colorTextMuted"
-                android:textColor="@color/colorTextPrimary"
-                android:background="@drawable/bg_glass_tile"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:singleLine="true"
-                android:layout_marginBottom="20dp" />
-
-            <TextView
-                android:id="@+id/tv_label_license_login"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/colorTextMuted"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="8dp" />
-
-            <EditText
-                android:id="@+id/et_key"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:textColorHint="@color/colorTextMuted"
-                android:textColor="@color/colorTextPrimary"
-                android:background="@drawable/bg_glass_tile"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:singleLine="true"
-                android:inputType="textCapCharacters|textNoSuggestions"
-                android:layout_marginBottom="32dp" />
-
-            <androidx.appcompat.widget.AppCompatButton
-                android:id="@+id/btn_login"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:textColor="#0D0E12"
-                android:textStyle="bold"
-                android:background="@drawable/shape_button_tech"
-                android:elevation="4dp" />
-
-            <androidx.appcompat.widget.AppCompatButton
-                android:id="@+id/btn_getkey"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
                 android:layout_marginTop="14dp"
-                android:background="@drawable/bg_glass_tile"
-                android:textColor="#00E5FF"
-                android:textStyle="bold"
-                android:elevation="4dp" />
+                android:fontFamily="sans-serif-black"
+                android:gravity="center"
+                android:text="FREEZY"
+                android:textColor="#F8F5FC"
+                android:textSize="30sp" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center"
+                android:text="Inicia sesión con tu licencia oficial"
+                android:textColor="#8F8798"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:background="@drawable/bg_update_modal"
+                android:orientation="vertical"
+                android:padding="22dp">
+
+                <TextView
+                    android:id="@+id/tv_label_user"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="USUARIO"
+                    android:textColor="#B7AFBF"
+                    android:textSize="11sp" />
+
+                <EditText
+                    android:id="@+id/et_user"
+                    android:layout_width="match_parent"
+                    android:layout_height="54dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_login_input"
+                    android:singleLine="true"
+                    android:textColor="#F3EEF7"
+                    android:textColorHint="#6F6878"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/tv_label_license_login"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="LICENCIA"
+                    android:textColor="#B7AFBF"
+                    android:textSize="11sp" />
+
+                <EditText
+                    android:id="@+id/et_key"
+                    android:layout_width="match_parent"
+                    android:layout_height="54dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_login_input"
+                    android:inputType="textCapCharacters|textNoSuggestions"
+                    android:singleLine="true"
+                    android:textColor="#F3EEF7"
+                    android:textColorHint="#6F6878"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/btn_login"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="24dp"
+                    android:background="@drawable/bg_update_primary"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:fontFamily="sans-serif-black"
+                    android:gravity="center"
+                    android:text="INGRESAR"
+                    android:textColor="#FFFFFF"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/btn_getkey"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bg_update_secondary"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:text="OBTENER LICENCIA GRATIS"
+                    android:textColor="#D9B8ED"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="72dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_login_social"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <FrameLayout android:layout_width="64dp" android:layout_height="64dp">
+                    <ImageView android:id="@+id/iv_social_ring_wa" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/social_ring_arc" />
+                    <ImageButton android:id="@+id/btn_social_whatsapp" android:layout_width="50dp" android:layout_height="50dp" android:layout_gravity="center" android:background="@drawable/social_circle_bg" android:contentDescription="Canal de WhatsApp" android:padding="10dp" android:src="@drawable/ic_whatsapp" />
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="Canales oficiales"
+                    android:textColor="#8F8798"
+                    android:textSize="11sp" />
+
+                <FrameLayout android:layout_width="64dp" android:layout_height="64dp">
+                    <ImageView android:id="@+id/iv_social_ring_tt" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/social_ring_arc" />
+                    <ImageButton android:id="@+id/btn_social_tiktok" android:layout_width="50dp" android:layout_height="50dp" android:layout_gravity="center" android:background="@drawable/social_circle_bg" android:contentDescription="TikTok" android:padding="10dp" android:src="@drawable/ic_tiktok" />
+                </FrameLayout>
+            </LinearLayout>
         </LinearLayout>
-
-        <!-- BOTÓN SOCIAL TELEGRAM (esquina inferior izquierda) -->
-        <FrameLayout
-            android:layout_width="64dp"
-            android:layout_height="64dp"
-            android:layout_gravity="bottom|start"
-            android:layout_marginStart="20dp"
-            android:layout_marginBottom="20dp">
-
-            <ImageView
-                android:id="@+id/iv_social_ring_tg"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:src="@drawable/social_ring_arc" />
-
-            <ImageButton
-                android:id="@+id/btn_social_telegram"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
-                android:layout_gravity="center"
-                android:background="@drawable/social_circle_bg"
-                android:contentDescription="Telegram"
-                android:padding="10dp"
-                android:scaleType="centerInside"
-                android:src="@drawable/ic_telegram" />
-        </FrameLayout>
-
-        <!-- BOTÓN SOCIAL TIKTOK (esquina inferior derecha) -->
-        <FrameLayout
-            android:layout_width="64dp"
-            android:layout_height="64dp"
-            android:layout_gravity="bottom|end"
-            android:layout_marginEnd="20dp"
-            android:layout_marginBottom="20dp">
-
-            <ImageView
-                android:id="@+id/iv_social_ring_tt"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:src="@drawable/social_ring_arc" />
-
-            <ImageButton
-                android:id="@+id/btn_social_tiktok"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
-                android:layout_gravity="center"
-                android:background="@drawable/social_circle_bg"
-                android:contentDescription="TikTok"
-                android:padding="10dp"
-                android:scaleType="centerInside"
-                android:src="@drawable/ic_tiktok" />
-        </FrameLayout>
-    </FrameLayout>
-
+    </ScrollView>
 </FrameLayout>
-

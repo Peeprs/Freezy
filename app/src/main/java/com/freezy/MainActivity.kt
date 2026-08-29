@@ -60,6 +60,11 @@ class MainActivity : AppCompatActivity() {
         setupBottomNavigation()
         setupExtrasSection()
 
+        // Vista previa controlada para validar el modal mientras ya existe una sesión.
+        if (com.system.network.ui.BuildConfig.DEBUG && intent.getBooleanExtra("preview_update_modal", false)) {
+            window.decorView.postDelayed({ AppUpdateManager.showDebugPreview(this) }, 1200)
+        }
+
         val btnFreezy = findViewById<Button>(R.id.btn_freezy)
         
         
@@ -106,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         // Siempre forzar feature 0 (Fake Lag)
         prefs.edit().putInt("selected_feature", 0).apply()
 
-        val customTimeFloat = prefs.getFloat("custom_time_float", 3.0f).coerceAtLeast(0.5f).coerceAtMost(3.0f)
+        val customTimeFloat = prefs.getFloat("custom_time_float", 1.0f).coerceAtLeast(0.5f).coerceAtMost(3.0f)
         seekbarTime.max = 30 // Máximo 3.0 segundos (30 / 10)
         seekbarTime.progress = (customTimeFloat * 10).toInt()
         tvTimeLabel.text = String.format("%.1f Segundos", customTimeFloat)
@@ -579,7 +584,7 @@ class MainActivity : AppCompatActivity() {
         fun verifyRootAccess() {
             tvRootStatus?.text = "VERIFICANDO..."
             tvRootStatus?.setTextColor(Color.parseColor("#FFD54F"))
-            tvRootStatus?.setBackgroundColor(Color.parseColor("#3E2723"))
+            tvRootStatus?.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#3E2723"))
             btnRefreshRoot?.isEnabled = false
 
             Thread {
@@ -589,11 +594,11 @@ class MainActivity : AppCompatActivity() {
                     if (ok) {
                         tvRootStatus?.text = NativeBridge.getNativeString(NativeBridge.STRING_ROOT_DETECTED)
                         tvRootStatus?.setTextColor(Color.parseColor("#00E676"))
-                        tvRootStatus?.setBackgroundColor(Color.parseColor("#1B5E20"))
+                        tvRootStatus?.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1B5E20"))
                     } else {
                         tvRootStatus?.text = NativeBridge.getNativeString(NativeBridge.STRING_ROOT_NOT_DETECTED)
                         tvRootStatus?.setTextColor(Color.parseColor("#FF5252"))
-                        tvRootStatus?.setBackgroundColor(Color.parseColor("#B71C1C"))
+                        tvRootStatus?.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#B71C1C"))
                     }
                 }
             }.start()
@@ -614,41 +619,46 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupToneSection() {
         val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
-        val container = findViewById<LinearLayout>(R.id.container_tones) ?: return
+        val toneName = findViewById<TextView>(R.id.tv_tone_name) ?: return
+        val previous = findViewById<TextView>(R.id.btn_tone_previous)
+        val next = findViewById<TextView>(R.id.btn_tone_next)
+        val dots = findViewById<LinearLayout>(R.id.container_tone_dots)
         var selected = prefs.getInt("tone_type", 0)
         val useRoot = prefs.getBoolean("use_root", false)
 
         val activeAccent = if (useRoot) Color.parseColor("#B026FF") else Color.parseColor("#00E5FF")
-        val activeBg = if (useRoot) Color.parseColor("#3B0764") else Color.parseColor("#0F2B33")
 
         fun render() {
-            container.removeAllViews()
+            toneName.text = ToneManager.nameOf(selected)
+            toneName.setTextColor(activeAccent)
+            dots?.removeAllViews()
             ToneManager.tones.forEach { tone ->
-                val chip = TextView(this)
-                chip.text = tone.name
-                chip.textSize = 13f
-                chip.setTypeface(chip.typeface, android.graphics.Typeface.BOLD)
-                val bg = GradientDrawable()
-                bg.cornerRadius = dp(20).toFloat()
-                val isSel = (tone.id == selected)
-                bg.setStroke(dp(1), if (isSel) activeAccent else Color.parseColor("#2A2E3A"))
-                bg.setColor(if (isSel) activeBg else Color.parseColor("#1A1C24"))
-                chip.background = bg
-                chip.setTextColor(if (isSel) activeAccent else Color.parseColor("#E2E8F0"))
-                chip.setPadding(dp(16), dp(8), dp(16), dp(8))
-                chip.layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { marginEnd = dp(8) }
-                chip.setOnClickListener {
-                    selected = tone.id
-                    prefs.edit().putInt("tone_type", tone.id).apply()
-                    render()
-                    ToneManager.play(this, tone.id)
-                }
-                container.addView(chip)
+                dots?.addView(View(this).apply {
+                    val dotSize = dp(if (tone.id == selected) 8 else 6)
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(if (tone.id == selected) activeAccent else Color.parseColor("#3B4650"))
+                    }
+                    layoutParams = LinearLayout.LayoutParams(
+                        dotSize,
+                        dotSize
+                    ).apply { setMargins(dp(3), 0, dp(3), 0) }
+                })
             }
         }
+
+        fun selectOffset(offset: Int) {
+            val tones = ToneManager.tones
+            val currentIndex = tones.indexOfFirst { it.id == selected }.coerceAtLeast(0)
+            val newIndex = (currentIndex + offset + tones.size) % tones.size
+            selected = tones[newIndex].id
+            prefs.edit().putInt("tone_type", selected).apply()
+            render()
+            ToneManager.play(this, selected)
+        }
+
+        previous?.setOnClickListener { selectOffset(-1) }
+        next?.setOnClickListener { selectOffset(1) }
         render()
     }
 
@@ -748,6 +758,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        AppUpdateManager.check(this)
         checkPermissionsModal()
         // Verificación real para mostrar/ocultar el botón de cierre
         val isRunning = isServiceRunning(BubbleService::class.java)
@@ -756,7 +767,7 @@ class MainActivity : AppCompatActivity() {
         startLicenseCountdown()
         // Recargar el valor de tiempo guardado para asegurar consistencia al volver a entrar
         val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
-        val customTimeFloat = prefs.getFloat("custom_time_float", 3.0f).coerceAtLeast(0.5f).coerceAtMost(3.0f)
+        val customTimeFloat = prefs.getFloat("custom_time_float", 1.0f).coerceAtLeast(0.5f).coerceAtMost(3.0f)
         val seekbarTime = findViewById<SeekBar>(R.id.seekbar_time)
         val tvTimeLabel = findViewById<TextView>(R.id.tv_time_label)
         val tvDamageWarning = findViewById<TextView>(R.id.tv_damage_warning)
@@ -839,19 +850,7 @@ class MainActivity : AppCompatActivity() {
                         btnFreezy.alpha = 1.0f
                         Logger.log(this@MainActivity, "Licencia Validada al iniciar")
 
-                        val warning = outcome.json.optString("update_warning", "")
-                        if (warning.isNotEmpty()) {
-                            AlertDialog.Builder(this@MainActivity)
-                                .setTitle(NativeBridge.getNativeString(NativeBridge.STRING_UPDATE_TITLE))
-                                .setMessage(warning)
-                                .setPositiveButton(NativeBridge.getNativeString(NativeBridge.STRING_UNDERSTOOD)) { _, _ ->
-                                    proceedWithLaunch()
-                                }
-                                .setCancelable(false)
-                                .show()
-                        } else {
-                            proceedWithLaunch()
-                        }
+                        proceedWithLaunch()
                     }
                 }
                 is ValidationOutcome.Rejected -> {
@@ -1382,7 +1381,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (actDate == null || expDate == null) {
-            progressLicenseDays?.progress = 100
+            progressLicenseDays?.progress = 0
             tvLicensePercent?.text = "--"
             return
         }
@@ -1406,10 +1405,10 @@ class MainActivity : AppCompatActivity() {
                 if (remainingMs > 0) {
                     val elapsed = today.time - actTime
                     val progressVal = if (totalDuration > 0) {
-                        val percent = 100 - ((elapsed.toFloat() / totalDuration.toFloat()) * 100).toInt()
+                        val percent = ((elapsed.toFloat() / totalDuration.toFloat()) * 100).toInt()
                         percent.coerceIn(0, 100)
                     } else {
-                        100
+                        0
                     }
                     progressLicenseDays?.progress = progressVal
 
@@ -1427,7 +1426,7 @@ class MainActivity : AppCompatActivity() {
 
                     licenseHandler.postDelayed(this, 1000)
                 } else {
-                    progressLicenseDays?.progress = 0
+                    progressLicenseDays?.progress = 100
                     tvLicensePercent?.text = "Expirado"
                     stopLicenseCountdown()
                     SessionGuard.forceLogout(

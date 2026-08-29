@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Freezy</string>
+    <string name="public_edition">Edición pública</string>
+    <string name="new_version_title">Nueva versión en preparación</string>
+    <string name="new_version_body">Esta base pública no incluye las funciones del menú de desarrollo. Las características se incorporarán individualmente después de revisarlas.</string>
+    <string name="version_label">Versión 4.1.0</string>
+</resources>

@@ -7,6 +7,7 @@ import android.content.pm.ServiceInfo
 import androidx.core.app.NotificationCompat
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import com.system.network.ui.R
 
 /**
  * AntigravityFirewall — Proxy UDP Asimétrico sin Root (Fase 1 Optimizado).
@@ -77,7 +78,7 @@ class AntigravityFirewall : VpnService() {
         val notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle(NativeBridge.getNativeString(NativeBridge.S93))
             .setContentText(NativeBridge.getNativeString(NativeBridge.S106))
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification_freezy)
             .build()
 
         if (android.os.Build.VERSION.SDK_INT >= 34) {

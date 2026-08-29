@@ -27,7 +27,7 @@ def generate_sequence(notes, filename):
                 sample *= envelope * 32767 * 0.25 # very soft volume
                 wav_file.writeframes(struct.pack('h', int(sample)))
 
-raw_dir = "/home/nuts11x1/AndroidStudioProjects/Freezy/app/src/main/res/raw"
+raw_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app/src/main/res/raw")
 os.makedirs(raw_dir, exist_ok=True)
 
 # Coin ON: B5 then E6 (ascending)

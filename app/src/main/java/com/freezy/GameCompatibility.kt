@@ -22,7 +22,7 @@ object GameCompatibility {
         if (targetPackage == maxPackage) {
             return Report(
                 false,
-                "Free Fire MAX/64 bits: solo Fake Lag. Las opciones avanzadas requieren Free Fire 32 bits."
+                "FF MAX/64 bits: solo Fake Lag."
             )
         }
 
@@ -87,18 +87,18 @@ object GameCompatibility {
             has32 -> supported32()
             else -> Report(
                 false,
-                "Arquitectura del juego no verificada: solo Fake Lag. Instala la versión 32 bits para usar las demás opciones."
+                "Instala la versión 32 bits solo Fake Lag."
             )
         }
     }
 
     private fun supported32() = Report(
         true,
-        "Free Fire 32 bits compatible con las opciones avanzadas."
+        "FF 32 bits compatible con las opciones avanzadas."
     )
 
     private fun unsupported64() = Report(
         false,
-        "Juego detectado en 64 bits: solo Fake Lag. Las opciones avanzadas requieren Free Fire 32 bits."
+        "FF 64 bits: solo Fake Lag."
     )
 }

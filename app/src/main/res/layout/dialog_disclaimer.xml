@@ -2,58 +2,95 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_glass_dialog"
+    android:background="@drawable/bg_update_modal"
     android:orientation="vertical"
-    android:padding="24dp">
+    android:paddingStart="24dp"
+    android:paddingTop="22dp"
+    android:paddingEnd="24dp"
+    android:paddingBottom="22dp">
+
+    <ImageView
+        android:layout_width="68dp"
+        android:layout_height="68dp"
+        android:layout_gravity="center_horizontal"
+        android:contentDescription="Freezy"
+        android:src="@drawable/freezy_logo" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_update_badge"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.12"
+        android:text="AVISO IMPORTANTE"
+        android:textColor="#D996FF"
+        android:textSize="11sp" />
 
     <TextView
         android:id="@+id/tv_disclaimer_title"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="⚠️ DESCARGO DE RESPONSABILIDAD"
-        android:textColor="@color/colorTextPrimary"
-        android:textSize="20sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="20dp"
-        android:gravity="center" />
+        android:layout_marginTop="14dp"
+        android:fontFamily="sans-serif-black"
+        android:gravity="center"
+        android:text="DESCARGO DE RESPONSABILIDAD"
+        android:textColor="#F8F5FC"
+        android:textSize="23sp" />
 
-    <!-- Tile: Contenido del Disclaimer -->
-    <LinearLayout
+    <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="@drawable/bg_glass_tile"
-        android:padding="16dp"
-        android:layout_marginBottom="24dp">
+        android:layout_marginTop="7dp"
+        android:gravity="center"
+        android:text="Lee cuidadosamente antes de continuar"
+        android:textColor="#AFA9B8"
+        android:textSize="13sp" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="280dp"
+        android:layout_marginTop="18dp"
+        android:background="@drawable/bg_disclaimer_content"
+        android:fadeScrollbars="false"
+        android:scrollbarStyle="insideInset">
 
         <TextView
             android:id="@+id/tv_disclaimer_body"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Si bien esta herramienta NO altera los archivos originales del juego, te otorga una ventaja extrema.\n\n⚠️ Uso de Datos y Dispositivo:\nSolicitamos acceso al 'Uso de Datos' para monitorear la ejecución del juego y activar las funciones correctamente. También almacenamos el nombre de tu dispositivo para la detección y prevención de fallas técnicas específicas reportadas anteriormente en modelos similares.\n\nEl uso abusivo puede causar baneos. El uso de esta herramienta es bajo tu propia responsabilidad."
-            android:textColor="@color/colorTextPrimary"
-            android:textSize="13sp"
-            android:lineSpacingExtra="4sp"/>
-    </LinearLayout>
+            android:lineSpacingExtra="5dp"
+            android:textColor="#D8D3DE"
+            android:textSize="14sp" />
+    </ScrollView>
 
-    <androidx.appcompat.widget.AppCompatButton
+    <TextView
         android:id="@+id/btn_accept_risk"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:text="ACEPTO EL RIESGO"
-        android:textColor="#0D0E12"
-        android:textStyle="bold"
-        android:background="@drawable/shape_button_tech"
-        android:elevation="4dp"
-        android:layout_marginBottom="12dp" />
+        android:layout_height="56dp"
+        android:layout_marginTop="18dp"
+        android:background="@drawable/bg_update_primary"
+        android:clickable="true"
+        android:focusable="true"
+        android:fontFamily="sans-serif-black"
+        android:gravity="center"
+        android:text="ACEPTO Y CONTINÚO"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp" />
 
-    <androidx.appcompat.widget.AppCompatButton
+    <TextView
         android:id="@+id/btn_exit_app"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:text="SALIR"
-        android:textColor="#F5F6F8"
-        android:textStyle="bold"
-        android:background="@drawable/shape_button_tech"
-        android:elevation="4dp" />
+        android:layout_height="50dp"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/bg_disclaimer_exit"
+        android:clickable="true"
+        android:focusable="true"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:text="NO ACEPTO · SALIR"
+        android:textColor="#E9A8B0"
+        android:textSize="13sp" />
+
 </LinearLayout>
