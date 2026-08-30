@@ -34,16 +34,16 @@
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  TAG, __VA_ARGS__)
 #endif
 
-/* ── CSPRNG: Generador de números aleatorios seguro (CWE-330 fix) ────────── */
-/* Lee entropía del kernel Linux via /dev/urandom en lugar de usar rand()     */
-static uint16_t secure_random_u16() {
-    uint16_t val = 0;
-    int fd = open("/dev/urandom", O_RDONLY);
-    if (fd >= 0) {
-        read(fd, &val, sizeof(val));
-        close(fd);
-    }
-    return val;
+/* El ID IPv4 no es un secreto. Abrir /dev/urandom por paquete añadía tres
+ * syscalls a la ruta caliente y podía saturar CPUs lentas. */
+static std::atomic<uint32_t> g_fast_random_state{0x6d2b79f5u};
+static uint16_t fast_random_u16() {
+    uint32_t x = g_fast_random_state.fetch_add(
+        0x9e3779b9u, std::memory_order_relaxed);
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    return static_cast<uint16_t>(x ^ (x >> 16));
 }
 
 /* ── IP / UDP / TCP header structs ───────────────────────────────────────── */
@@ -89,8 +89,7 @@ struct TcpHdr {
 } __attribute__((packed));
 
 /* ── Telemetry & Secure Debug System ─────────────────────────────────────── */
-#define DEBUG 1
-#ifdef DEBUG
+#ifndef NDEBUG
 #define DBG_LOG(fmt, ...) LOGI("[DEBUG-NET] " fmt, ##__VA_ARGS__)
 #else
 #define DBG_LOG(fmt, ...) do {} while (0)
@@ -131,27 +130,40 @@ static int          g_tcp_flow_count = 0;
 
 static pthread_mutex_t g_flows_mtx = PTHREAD_MUTEX_INITIALIZER;
 
+// El TUN se establece con MTU 1500. 2048 deja margen para cabeceras sin
+// reservar decenas de MB en colas cuyos paquetes nunca pueden llegar a 64 KB.
+static constexpr int PACKET_BUFFER_CAPACITY = 2048;
+static constexpr int MAX_PACKETS_PER_EVENT = 32;
+
 struct PacketBuffer {
-    uint8_t data[65536]; // Ajustado para evitar truncado de paquetes con MTU de 65535
+    uint8_t data[PACKET_BUFFER_CAPACITY];
     int len;
 };
 
-static const int BUFFER_POOL_SIZE = 64; // Optimización de pool para limitar consumo a 4MB
-static PacketBuffer g_buffer_pool[BUFFER_POOL_SIZE];
-static std::atomic<int> g_buffer_pool_index{0};
-
-static PacketBuffer* acquire_buffer() {
-    int idx = g_buffer_pool_index.fetch_add(1) % BUFFER_POOL_SIZE;
-    return &g_buffer_pool[idx];
-}
-
 /* ── Global engine state ─────────────────────────────────────────────────── */
-static volatile int   g_tun_fd   = -1;
+static std::atomic<int> g_tun_fd{-1};
 static int            g_pipe[2]  = {-1, -1};
 static pthread_t      g_thread;
 static std::atomic<bool> g_running{false};
+static bool           g_thread_started = false;
+static pthread_mutex_t g_lifecycle_mtx = PTHREAD_MUTEX_INITIALIZER;
+static std::atomic<bool> g_flush_delay_requested{false};
+static std::atomic<bool> g_flush_outbound_requested{false};
 
 static int g_epoll_fd = -1;
+
+static void wake_engine() {
+    if (g_pipe[1] >= 0) {
+        const uint8_t signal = 1;
+        (void)write(g_pipe[1], &signal, sizeof(signal));
+    }
+}
+
+static void wake_engine_from_control() {
+    pthread_mutex_lock(&g_lifecycle_mtx);
+    wake_engine();
+    pthread_mutex_unlock(&g_lifecycle_mtx);
+}
 
 static bool epoll_add(int fd) {
     if (g_epoll_fd < 0) return false;
@@ -317,7 +329,7 @@ struct DelayedPacket {
     uint8_t  src_ip6[16];
     uint8_t  dst_ip6[16];
     
-    uint8_t  payload[65536]; // Ajustado a 64KB para evitar truncado de paquetes grandes de juego
+    uint8_t  payload[PACKET_BUFFER_CAPACITY];
     int      payload_len;
     uint64_t timestamp; // Time when it was buffered
 };
@@ -326,15 +338,13 @@ static DelayedPacket g_delay_queue[MAX_DELAY_QUEUE_SIZE];
 static int g_delay_queue_head = 0;
 static int g_delay_queue_tail = 0;
 static int g_delay_queue_count = 0;
-static pthread_mutex_t g_delay_queue_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static void delay_queue_push(bool is_ipv6, 
                              const uint8_t* src_ip, uint16_t src_port,
                              const uint8_t* dst_ip, uint16_t dst_port,
                              const uint8_t* payload, int plen) {
-    if (plen > 65536) return; // Supera tamaño del buffer de cola
+    if (plen < 0 || plen > PACKET_BUFFER_CAPACITY) return;
     
-    pthread_mutex_lock(&g_delay_queue_mtx);
     if (g_delay_queue_count >= MAX_DELAY_QUEUE_SIZE) {
         // Cola llena: descartamos el más antiguo (head)
         g_delay_queue_head = (g_delay_queue_head + 1) % MAX_DELAY_QUEUE_SIZE;
@@ -358,7 +368,6 @@ static void delay_queue_push(bool is_ipv6,
     
     g_delay_queue_tail = (g_delay_queue_tail + 1) % MAX_DELAY_QUEUE_SIZE;
     g_delay_queue_count++;
-    pthread_mutex_unlock(&g_delay_queue_mtx);
 }
 
 static void write_to_tun(int tun_fd,
@@ -373,7 +382,6 @@ static void write_ipv6_to_tun(int tun_fd,
 
 // Vaciar la cola inyectando todos los paquetes acumulados al TUN de golpe
 static void delay_queue_flush(int tun_fd) {
-    pthread_mutex_lock(&g_delay_queue_mtx);
     int flushed_count = g_delay_queue_count;
     uint64_t now = get_now_ms();
     while (g_delay_queue_count > 0) {
@@ -400,7 +408,6 @@ static void delay_queue_flush(int tun_fd) {
     if (flushed_count > 0) {
         LOGI("Flushed delay queue containing %d packets.", flushed_count);
     }
-    pthread_mutex_unlock(&g_delay_queue_mtx);
 }
 
 /* ── Jitter/Heartbeat and Anti-Detection Evasion ───────────────────────────── */
@@ -421,7 +428,7 @@ static bool handle_lag_evasion(int plen) {
 /* ── Jitter Outbound Queue (Paso 12) ───────────────────────────────────────── */
 struct OutboundPacket {
     int      sock;
-    uint8_t  payload[65536];
+    uint8_t  payload[PACKET_BUFFER_CAPACITY];
     int      payload_len;
     sockaddr_storage dst_addr;
     socklen_t dst_addr_len;
@@ -434,7 +441,6 @@ static OutboundPacket g_outbound_queue[MAX_OUTBOUND_QUEUE_SIZE];
 static int g_outbound_queue_head = 0;
 static int g_outbound_queue_tail = 0;
 static int g_outbound_queue_count = 0;
-static pthread_mutex_t g_outbound_queue_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static std::atomic<uint32_t> g_outbound_jitter_ms{0};
 static std::atomic<int> g_drop_probability{0};
@@ -635,8 +641,7 @@ static void cancel_teleport_drop() {
 static void outbound_queue_push(int sock, const uint8_t* payload, int plen,
                                 const sockaddr* dst, socklen_t dst_len,
                                 uint32_t delay_ms) {
-    if (plen > 65536) return;
-    pthread_mutex_lock(&g_outbound_queue_mtx);
+    if (plen < 0 || plen > PACKET_BUFFER_CAPACITY) return;
     if (g_outbound_queue_count >= MAX_OUTBOUND_QUEUE_SIZE) {
         OutboundPacket& oldest = g_outbound_queue[g_outbound_queue_head];
         sendto(oldest.sock, oldest.payload, oldest.payload_len, 0, (sockaddr*)&oldest.dst_addr, oldest.dst_addr_len);
@@ -655,11 +660,9 @@ static void outbound_queue_push(int sock, const uint8_t* payload, int plen,
     
     g_outbound_queue_tail = (g_outbound_queue_tail + 1) % MAX_OUTBOUND_QUEUE_SIZE;
     g_outbound_queue_count++;
-    pthread_mutex_unlock(&g_outbound_queue_mtx);
 }
 
 static void process_outbound_queue() {
-    pthread_mutex_lock(&g_outbound_queue_mtx);
     uint64_t now = get_now_ms();
     while (g_outbound_queue_count > 0) {
         int idx = g_outbound_queue_head;
@@ -672,11 +675,9 @@ static void process_outbound_queue() {
             break;
         }
     }
-    pthread_mutex_unlock(&g_outbound_queue_mtx);
 }
 
 static void clear_outbound_queue() {
-    pthread_mutex_lock(&g_outbound_queue_mtx);
     while (g_outbound_queue_count > 0) {
         int idx = g_outbound_queue_head;
         OutboundPacket& pkt = g_outbound_queue[idx];
@@ -684,27 +685,14 @@ static void clear_outbound_queue() {
         g_outbound_queue_head = (g_outbound_queue_head + 1) % MAX_OUTBOUND_QUEUE_SIZE;
         g_outbound_queue_count--;
     }
-    pthread_mutex_unlock(&g_outbound_queue_mtx);
 }
 
 /* ── QoS Local Filter (Paso 13) ────────────────────────────────────────────── */
-static bool qos_should_throttle_tcp() {
-    static uint64_t last_tcp_time = 0;
-    static int tcp_packet_count = 0;
-    uint64_t now = get_now_ms();
-    if (now - last_tcp_time > 100) {
-        last_tcp_time = now;
-        tcp_packet_count = 0;
-    }
-    tcp_packet_count++;
-    return (tcp_packet_count > 10);
-}
-
 /* ── Probabilistic Packet Drop (Paso 14) ───────────────────────────────────── */
 static bool should_probabilistic_drop() {
     int prob = g_drop_probability.load();
     if (prob <= 0) return false;
-    uint16_t r = secure_random_u16() % 100;
+    uint16_t r = fast_random_u16() % 100;
     return (r < prob);
 }
 
@@ -860,7 +848,7 @@ static void write_to_tun(int tun_fd,
     IpHdr* iph = (IpHdr*)pkt;
     iph->ihl_ver  = 0x45;
     iph->tot_len  = htons(ip_len);
-    iph->id       = htons(secure_random_u16());
+    iph->id       = htons(fast_random_u16());
     iph->ttl      = 64;
     iph->proto    = 17;
     iph->saddr    = src_ip;
@@ -947,7 +935,7 @@ static void write_tcp_to_tun(int tun_fd,
     IpHdr* iph = (IpHdr*)pkt;
     iph->ihl_ver  = 0x45;
     iph->tot_len  = htons(ip_len);
-    iph->id       = htons(secure_random_u16());
+    iph->id       = htons(fast_random_u16());
     iph->ttl      = 64;
     iph->proto    = 6; // TCP
     iph->saddr    = src_ip;
@@ -1092,7 +1080,8 @@ static void handle_tcp_packet(int tun_fd, IpHdr* iph, uint8_t* buf, int n) {
 
 /* ── Main engine thread ──────────────────────────────────────────────────── */
 void* engine_thread(void*) {
-    LOGI("Asymmetric UDP Proxy started. tun_fd=%d", g_tun_fd);
+    LOGI("Asymmetric UDP Proxy started. tun_fd=%d",
+         g_tun_fd.load(std::memory_order_relaxed));
 
     // Establecer prioridad alta para el hilo de red nativo (evitar retrasos/jitter)
     if (setpriority(PRIO_PROCESS, 0, -20) < 0) { // Set maximum priority (nice -20)
@@ -1122,7 +1111,7 @@ void* engine_thread(void*) {
         return nullptr;
     }
 
-    int tun = g_tun_fd;
+    int tun = g_tun_fd.load(std::memory_order_acquire);
     if (tun < 0) {
         close(g_epoll_fd);
         g_epoll_fd = -1;
@@ -1142,15 +1131,28 @@ void* engine_thread(void*) {
 
     const int MAX_EVENTS = 64;
     struct epoll_event events[MAX_EVENTS];
+    PacketBuffer packet_buffer{};
 
     while (g_running) {
         int timeout_ms = 100;
-        pthread_mutex_lock(&g_outbound_queue_mtx);
+        const uint64_t timeout_now = get_now_ms();
         if (g_outbound_queue_count > 0) {
-            timeout_ms = 1;
+            const OutboundPacket& next = g_outbound_queue[g_outbound_queue_head];
+            const uint64_t deadline = next.timestamp + next.delay_ms;
+            timeout_ms = deadline <= timeout_now
+                ? 0
+                : std::min(timeout_ms, static_cast<int>(deadline - timeout_now));
         }
-        pthread_mutex_unlock(&g_outbound_queue_mtx);
-        if (g_teleport_drop_state.load() == 2) timeout_ms = 1;
+        if (g_teleport_drop_state.load() == 2) {
+            pthread_mutex_lock(&g_teleport_mtx);
+            if (g_teleport_replay_count > 0) {
+                timeout_ms = g_teleport_next_release_ms <= timeout_now
+                    ? 0
+                    : std::min(timeout_ms, static_cast<int>(
+                        g_teleport_next_release_ms - timeout_now));
+            }
+            pthread_mutex_unlock(&g_teleport_mtx);
+        }
 
         int nfds = epoll_wait(g_epoll_fd, events, MAX_EVENTS, timeout_ms);
         if (nfds < 0) {
@@ -1160,25 +1162,26 @@ void* engine_thread(void*) {
         }
 
         // Procesar cualquier paquete con retardo (jitter general o filtro selectivo).
-        process_outbound_queue();
+        if (g_flush_outbound_requested.exchange(false, std::memory_order_acq_rel)) {
+            clear_outbound_queue();
+        } else {
+            process_outbound_queue();
+        }
         process_teleport_replay();
+        if (g_flush_delay_requested.exchange(false, std::memory_order_acq_rel)) {
+            delay_queue_flush(tun);
+        }
 
         // Safety timeout flush check for delayed packets (Requirement 12)
         // Safety timeout flush check for delayed packets (Paso 7: Watchdog Dinámico)
         if (gLagActive.load()) {
             uint64_t now = get_now_ms();
-            pthread_mutex_lock(&g_delay_queue_mtx);
             if (g_delay_queue_count > 0) {
                 uint64_t oldest_age = now - g_delay_queue[g_delay_queue_head].timestamp;
                 if (oldest_age > g_max_desync_ms.load()) { // Límite de seguridad dinámico
-                    pthread_mutex_unlock(&g_delay_queue_mtx);
                     LOGI("Safety timeout limit reached: flushing delay queue (%d packets)", g_delay_queue_count);
                     delay_queue_flush(tun);
-                } else {
-                    pthread_mutex_unlock(&g_delay_queue_mtx);
                 }
-            } else {
-                pthread_mutex_unlock(&g_delay_queue_mtx);
             }
         }
 
@@ -1217,15 +1220,20 @@ void* engine_thread(void*) {
             }
 
             if (fd == g_pipe[0]) {
-                LOGI("Stop signal received via pipe.");
-                g_running = false;
-                break;
+                uint8_t signals[32];
+                while (read(g_pipe[0], signals, sizeof(signals)) > 0) {}
+                if (!g_running.load(std::memory_order_acquire)) {
+                    LOGI("Stop signal received via pipe.");
+                    break;
+                }
+                continue;
             }
 
             if (fd == tun) {
-                // Leer todos los paquetes disponibles del TUN de forma no bloqueante (Zero-Allocation)
-                while (g_running) {
-                    PacketBuffer* pkt_buf = acquire_buffer();
+                // Procesar por lotes evita que TUN o un socket monopolicen el hilo.
+                int tun_packets_processed = 0;
+                while (g_running && tun_packets_processed < MAX_PACKETS_PER_EVENT) {
+                    PacketBuffer* pkt_buf = &packet_buffer;
                     int n = read(tun, pkt_buf->data, sizeof(pkt_buf->data));
                     if (n < 0) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1237,6 +1245,7 @@ void* engine_thread(void*) {
                     if (n == 0) {
                         break; // EOF
                     }
+                    ++tun_packets_processed;
                     if (n > 20) {
                         uint8_t version = (pkt_buf->data[0] >> 4) & 0x0f;
                         if (version == 4) { // IPv4 Zero-Copy Parsing
@@ -1273,9 +1282,12 @@ void* engine_thread(void*) {
                                         dst.sin_addr.s_addr = iph->daddr;
                                         dst.sin_port        = udph->dport;
 
-                                        bool likelyPosition =
-                                            observe_likely_position(dport, plen);
                                         int teleportState = g_teleport_drop_state.load();
+                                        const bool inspectPosition =
+                                            gGhostActive.load(std::memory_order_relaxed) ||
+                                            teleportState != 0;
+                                        bool likelyPosition = inspectPosition &&
+                                            observe_likely_position(dport, plen);
                                         if (likelyPosition) {
                                             if (teleportState == 1 &&
                                                 capture_teleport_packet(
@@ -1306,10 +1318,7 @@ void* engine_thread(void*) {
                                         }
                                     }
                                 }
-                            } else if (iph->proto == 6 && n > ihl + 20) { // TCP (Early Protocol Filter: instant transparent bypass with QoS)
-                                if (qos_should_throttle_tcp()) {
-                                    usleep(1000); // 1ms slowdown to prioritize UDP
-                                }
+                            } else if (iph->proto == 6 && n > ihl + 20) {
                                 handle_tcp_packet(tun, iph, pkt_buf->data, n);
                             }
                         } else if (version == 6 && n > 40) { // IPv6 Zero-Copy Parsing
@@ -1344,9 +1353,12 @@ void* engine_thread(void*) {
                                         memcpy(&dst.sin6_addr, ip6h->daddr, 16);
                                         dst.sin6_port = udph->dport;
 
-                                        bool likelyPosition =
-                                            observe_likely_position(dport, plen);
                                         int teleportState = g_teleport_drop_state.load();
+                                        const bool inspectPosition =
+                                            gGhostActive.load(std::memory_order_relaxed) ||
+                                            teleportState != 0;
+                                        bool likelyPosition = inspectPosition &&
+                                            observe_likely_position(dport, plen);
                                         if (likelyPosition) {
                                             if (teleportState == 1 &&
                                                 capture_teleport_packet(
@@ -1393,8 +1405,9 @@ void* engine_thread(void*) {
                         processed = true;
                         g_flows[j].last_activity = get_now_ms(); // Update activity for GC
                         // Leer todos los paquetes recibidos en el socket proxy UDP de forma no bloqueante (Zero-Allocation)
-                        while (g_running) {
-                            PacketBuffer* pkt_buf = acquire_buffer();
+                        int udp_packets_processed = 0;
+                        while (g_running && udp_packets_processed < MAX_PACKETS_PER_EVENT) {
+                            PacketBuffer* pkt_buf = &packet_buffer;
                             sockaddr_storage from{};
                             socklen_t fromlen = sizeof(from);
                             int n = recvfrom(fd, pkt_buf->data, sizeof(pkt_buf->data), 0,
@@ -1409,6 +1422,7 @@ void* engine_thread(void*) {
                             if (n == 0) {
                                 break;
                             }
+                            ++udp_packets_processed;
                             
                             // Determinar si debemos aplicar el lag switch.
                             // Solo se aplica si el lag está activo Y es un puerto de partida del juego.
@@ -1517,8 +1531,9 @@ void* engine_thread(void*) {
                                 break;
                             }
                             
-                            while (g_running) {
-                                PacketBuffer* pkt_buf = acquire_buffer();
+                            int tcp_packets_processed = 0;
+                            while (g_running && tcp_packets_processed < MAX_PACKETS_PER_EVENT) {
+                                PacketBuffer* pkt_buf = &packet_buffer;
                                 int n = recv(fd, pkt_buf->data, sizeof(pkt_buf->data), 0);
                                 if (n < 0) {
                                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1536,6 +1551,7 @@ void* engine_thread(void*) {
                                     g_tcp_flows[j].sock = -1;
                                     break;
                                 }
+                                ++tcp_packets_processed;
                                 write_tcp_to_tun(tun, 
                                                  g_tcp_flows[j].server_ip, g_tcp_flows[j].server_port,
                                                  g_tcp_flows[j].client_ip, g_tcp_flows[j].client_port,
@@ -1571,7 +1587,11 @@ void* engine_thread(void*) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_freezy_AntigravityFirewall_startNativeEngine(
         JNIEnv* env, jobject thiz, jint fd) {
-    if (g_running) return;
+    pthread_mutex_lock(&g_lifecycle_mtx);
+    if (g_thread_started) {
+        pthread_mutex_unlock(&g_lifecycle_mtx);
+        return;
+    }
 
     // Store JavaVM + service reference for protect() callbacks
     env->GetJavaVM(&g_jvm);
@@ -1581,36 +1601,55 @@ Java_com_freezy_AntigravityFirewall_startNativeEngine(
     g_protect  = env->GetMethodID(cls, "protectSocket", "(I)Z");
     env->DeleteLocalRef(cls);
 
-    if (pipe(g_pipe) < 0) { LOGE("pipe() failed"); return; }
+    if (pipe2(g_pipe, O_NONBLOCK | O_CLOEXEC) < 0) {
+        LOGE("pipe2() failed");
+        if (g_svc_ref) { env->DeleteGlobalRef(g_svc_ref); g_svc_ref = nullptr; }
+        pthread_mutex_unlock(&g_lifecycle_mtx);
+        return;
+    }
     g_tun_fd = fd;
     // Conservar los estados solicitados mientras Android termina de crear o
     // recrear el TUN; reiniciarlos aquí producía una carrera al activar modos.
     g_running  = true;
 
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_create(&g_thread, &attr, engine_thread, nullptr);
-    pthread_attr_destroy(&attr);
+    int create_result = pthread_create(&g_thread, nullptr, engine_thread, nullptr);
+    if (create_result != 0) {
+        LOGE("pthread_create failed: %s", strerror(create_result));
+        g_running = false;
+        close(g_pipe[0]);
+        close(g_pipe[1]);
+        g_pipe[0] = g_pipe[1] = -1;
+        if (g_svc_ref) { env->DeleteGlobalRef(g_svc_ref); g_svc_ref = nullptr; }
+        pthread_mutex_unlock(&g_lifecycle_mtx);
+        return;
+    }
+    g_thread_started = true;
+    pthread_mutex_unlock(&g_lifecycle_mtx);
     LOGI("Engine started. fd=%d", fd);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_freezy_AntigravityFirewall_stopNativeEngine(
         JNIEnv* env, jobject /*thiz*/) {
-    if (!g_running) return;
+    pthread_mutex_lock(&g_lifecycle_mtx);
+    if (!g_thread_started) {
+        pthread_mutex_unlock(&g_lifecycle_mtx);
+        return;
+    }
     g_running = false;
     cancel_teleport_drop();
     g_tun_fd  = -1;
     // Paso 1: Solo cerrar el extremo de escritura y notificar al hilo
-    if (g_pipe[1] > 0) { 
-        uint8_t b = 1; 
-        write(g_pipe[1], &b, 1);
+    if (g_pipe[1] >= 0) {
+        wake_engine();
         close(g_pipe[1]); 
         g_pipe[1] = -1; 
     }
+    pthread_join(g_thread, nullptr);
+    g_thread_started = false;
     if (g_svc_ref) { env->DeleteGlobalRef(g_svc_ref); g_svc_ref = nullptr; }
-    LOGI("Engine stop signaled.");
+    pthread_mutex_unlock(&g_lifecycle_mtx);
+    LOGI("Engine stopped cleanly.");
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -1619,7 +1658,8 @@ Java_com_freezy_AntigravityFirewall_setLagActive(
     gLagActive = (bool)active;
     LOGI("Lag switch: %s", (bool)active ? "ON (enemy frozen)" : "OFF (normal)");
     if (!active && g_tun_fd >= 0) {
-        delay_queue_flush(g_tun_fd);
+        g_flush_delay_requested.store(true, std::memory_order_release);
+        wake_engine_from_control();
     }
 }
 
@@ -1645,6 +1685,7 @@ Java_com_freezy_AntigravityFirewall_setTeleportDropActive(
         begin_teleport_replay();
         LOGI("Teleport Drop: REPLAY");
     }
+    wake_engine_from_control();
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -1692,7 +1733,8 @@ Java_com_freezy_NativeBridge_setSelectiveUdpDelay(
 
     // Al apagar, enviar inmediatamente cualquier datagrama retenido.
     if (!active) {
-        clear_outbound_queue();
+        g_flush_outbound_requested.store(true, std::memory_order_release);
+        wake_engine_from_control();
     }
 }
 

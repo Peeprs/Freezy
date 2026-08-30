@@ -142,15 +142,9 @@ class AntigravityFirewall : VpnService() {
                 Log.e("AntigravityFirewall", "No se pudo registrar callback de red: ${e.message}")
             }
 
-            // Delegación Absoluta del FD al entorno JNI (C++)
-            Thread {
-                try {
-                    Log.i("AntigravityFirewall", "Delegando FD=${iface.fd} al motor nativo.")
-                    startNativeEngine(iface.fd)
-                } catch (e: Exception) {
-                    Log.e("AntigravityFirewall", "Error delegando FD: ${e.message}")
-                }
-            }.start()
+            // JNI solo crea la hebra nativa y retorna; no hace falta otra hebra Java.
+            Log.i("AntigravityFirewall", "Delegando FD=${iface.fd} al motor nativo.")
+            startNativeEngine(iface.fd)
 
         } catch (e: Exception) {
             Log.e("AntigravityFirewall", "Error abriendo túnel: ${e.message}")
@@ -166,7 +160,6 @@ class AntigravityFirewall : VpnService() {
             networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
         } catch (e: Exception) {}
         networkCallback = null
-        Thread.sleep(60) // Dar tiempo al thread C++ de salir del select()
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
     }
