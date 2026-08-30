@@ -82,7 +82,7 @@ class LicenseTimelineView @JvmOverloads constructor(
         val centerY = height / 2f
         val fraction = (progress.toFloat() / max.coerceAtLeast(1)).coerceIn(0f, 1f)
         val headX = startX + (endX - startX) * fraction
-        val accent = progressTintList?.defaultColor ?: Color.parseColor("#00E5FF")
+        val accent = progressTintList?.defaultColor ?: Color.parseColor("#FFE135")
 
         canvas.drawLine(startX, centerY, endX, centerY, trackPaint)
 

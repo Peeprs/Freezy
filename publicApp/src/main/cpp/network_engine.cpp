@@ -1398,3 +1398,44 @@ Java_com_freezy_publicapp_N_g(JNIEnv* /*env*/, jclass) {
     pthread_mutex_unlock(&g_flows_mtx);
     LOGI("All native proxy flows successfully reset. Sockets will be re-created on demand.");
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_startNativeEngine(
+        JNIEnv* env, jobject service, jint fd) {
+    Java_com_freezy_publicapp_N_d(env, nullptr, service, fd);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_stopNativeEngine(
+        JNIEnv* env, jobject) {
+    Java_com_freezy_publicapp_N_e(env, nullptr);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_setLagActive(
+        JNIEnv* env, jclass cls, jboolean active) {
+    Java_com_freezy_publicapp_N_f(env, cls, active);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_notifyNetworkChange(
+        JNIEnv* env, jclass cls) {
+    Java_com_freezy_publicapp_N_g(env, cls);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_setGhostActive(
+        JNIEnv*, jclass, jboolean) {}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_setTeleportDropActive(
+        JNIEnv*, jclass, jboolean) {}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_freezy_AntigravityFirewall_getTeleportDropState(
+        JNIEnv*, jclass) { return 0; }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_freezy_AntigravityFirewall_cancelTeleportDrop(
+        JNIEnv*, jclass) {}
+

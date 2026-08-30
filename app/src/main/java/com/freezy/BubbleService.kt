@@ -99,7 +99,6 @@ class BubbleService : Service() {
     }
 
     // Vista personalizada que dibuja el arco circular de progreso
-    // Vista personalizada que dibuja el arco circular de progreso
     inner class ArcProgressView(context: Context, var isRootMode: Boolean) : View(context) {
         fun updateMode(rootMode: Boolean) {
             this.isRootMode = rootMode
@@ -115,7 +114,7 @@ class BubbleService : Service() {
         }
 
         private fun getActiveColor(): Int {
-            return if (isRootMode) Color.parseColor("#B026FF") else Color.parseColor("#00E5FF")
+            return if (isRootMode) Color.parseColor("#B026FF") else Color.parseColor("#FFE135")
         }
 
         private val paint =
@@ -216,7 +215,7 @@ class BubbleService : Service() {
                 )
             } else {
                 bubbleIcon.setColorFilter(
-                        Color.parseColor("#00E5FF"),
+                        Color.parseColor("#FFE135"),
                         android.graphics.PorterDuff.Mode.SRC_IN
                 )
             }
@@ -638,7 +637,7 @@ class BubbleService : Service() {
         tabFly?.visibility = View.VISIBLE
         tabFly?.setBackgroundResource(R.drawable.shape_tab_active)
         tabFly?.setColorFilter(
-            Color.parseColor("#00E5FF"),
+            Color.parseColor("#FFE135"),
             android.graphics.PorterDuff.Mode.SRC_IN
         )
 
@@ -730,13 +729,13 @@ private fun setupMenu() {
 
     fun selectTab(tabIndex: Int) {
         tabEsp?.setBackgroundResource(if (tabIndex == 0) R.drawable.shape_tab_active else R.drawable.shape_tab_inactive)
-        tabEsp?.setColorFilter(if (tabIndex == 0) Color.parseColor("#00E5FF") else Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
+        tabEsp?.setColorFilter(if (tabIndex == 0) Color.parseColor("#FFE135") else Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
 
         tabAim?.setBackgroundResource(if (tabIndex == 1) R.drawable.shape_tab_active else R.drawable.shape_tab_inactive)
-        tabAim?.setColorFilter(if (tabIndex == 1) Color.parseColor("#00E5FF") else Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
+        tabAim?.setColorFilter(if (tabIndex == 1) Color.parseColor("#FFE135") else Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
 
         tabFly?.setBackgroundResource(if (tabIndex == 2) R.drawable.shape_tab_active else R.drawable.shape_tab_inactive)
-        tabFly?.setColorFilter(if (tabIndex == 2) Color.parseColor("#00E5FF") else Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
+        tabFly?.setColorFilter(if (tabIndex == 2) Color.parseColor("#FFE135") else Color.parseColor("#8A9BA8"), android.graphics.PorterDuff.Mode.SRC_IN)
 
         when (tabIndex) {
             0 -> {
@@ -1072,7 +1071,7 @@ private fun setupMenu() {
                 else android.R.color.transparent
             )
             button?.setTextColor(
-                Color.parseColor(if (buttonIndex == selectedVisualSubtab) "#00E5FF" else "#8A9BA8")
+                Color.parseColor(if (buttonIndex == selectedVisualSubtab) "#FFE135" else "#8A9BA8")
             )
         }
         espSection?.visibility = if (selectedVisualSubtab == 0) View.VISIBLE else View.GONE
@@ -1716,7 +1715,7 @@ private fun setEspSwitchSilently(checked: Boolean) {
         }
 
         if (::bubbleMainIcon.isInitialized && ::bubbleFaceOverlay.isInitialized) {
-            val colorStr = if (useRoot) "#B026FF" else "#00E5FF"
+            val colorStr = if (useRoot) "#B026FF" else "#FFE135"
             bubbleMainIcon.setColorFilter(
                     Color.parseColor(colorStr),
                     android.graphics.PorterDuff.Mode.SRC_IN
@@ -2127,7 +2126,7 @@ private fun setEspSwitchSilently(checked: Boolean) {
                 if (active) {
                     tvStatus?.text = "ON"
                     tvStatus?.setTextColor(Color.parseColor("#39FF14"))
-                    ivIcon?.setColorFilter(Color.parseColor("#00E5FF"), android.graphics.PorterDuff.Mode.SRC_IN)
+                    ivIcon?.setColorFilter(Color.parseColor("#FFE135"), android.graphics.PorterDuff.Mode.SRC_IN)
                 } else {
                     tvStatus?.text = "OFF"
                     tvStatus?.setTextColor(Color.parseColor("#FF3B30"))
@@ -2502,7 +2501,7 @@ private fun setEspSwitchSilently(checked: Boolean) {
                         status.text = "REC"
                         status.setTextColor(Color.parseColor("#39FF14"))
                         icon.setColorFilter(
-                            Color.parseColor("#00E5FF"),
+                            Color.parseColor("#FFE135"),
                             android.graphics.PorterDuff.Mode.SRC_IN
                         )
                     }

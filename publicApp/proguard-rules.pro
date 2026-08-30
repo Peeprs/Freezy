@@ -10,7 +10,15 @@
     native <methods>;
 }
 
-# El motor llama este método desde JNI; se conserva el miembro, no la clase.
--keepclassmembers,allowoptimization,allowobfuscation class * extends android.net.VpnService {
+# El motor llama este método desde JNI; se conserva el miembro sin ofuscar su nombre.
+-keepclassmembers class * extends android.net.VpnService {
+    public boolean protectSocket(int);
     boolean protectSocket(int);
+}
+-keep class com.freezy.AntigravityFirewall {
+    public boolean protectSocket(int);
+    *;
+}
+-keep class com.freezy.AntigravityFirewall$* {
+    *;
 }

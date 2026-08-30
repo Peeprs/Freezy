@@ -193,7 +193,7 @@ class MainActivity : AppCompatActivity() {
 
             val tvLicensePercent = findViewById<TextView>(R.id.tv_license_percent)
 
-            val accentHex = if (useRoot) "#B026FF" else "#00E5FF"
+            val accentHex = if (useRoot) "#B026FF" else "#FFE135"
             val accentColorStateList = android.content.res.ColorStateList.valueOf(Color.parseColor(accentHex))
 
             if (useRoot) {
@@ -310,6 +310,10 @@ class MainActivity : AppCompatActivity() {
         btnModeNoroot.setOnClickListener {
             prefs.edit().putBoolean("use_root", false).apply()
             updateRootUI(false, true)
+            val vpnIntent = android.net.VpnService.prepare(this)
+            if (vpnIntent != null) {
+                startActivityForResult(vpnIntent, 124)
+            }
             if (isServiceRunning(BubbleService::class.java)) {
                 val serviceIntent = Intent(this, BubbleService::class.java).apply {
                     action = "UPDATE_BUBBLE_MODE"
@@ -506,7 +510,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateBottomNavigationColors() {
         val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
-        val accentHex = if (useRoot) "#B026FF" else "#00E5FF"
+        val accentHex = if (useRoot) "#B026FF" else "#FFE135"
 
         val tabs = mapOf(
             findViewById<View>(R.id.btn_nav_inicio) to findViewById<TextView>(R.id.tv_nav_inicio),
@@ -556,20 +560,20 @@ class MainActivity : AppCompatActivity() {
             drawables.add(d)
         }
 
-        val startColor = if (useRoot) Color.parseColor("#3B0764") else Color.parseColor("#003543")
-        val endColor = if (useRoot) Color.parseColor("#E9D5FF") else Color.parseColor("#00E5FF")
+        val startColor = if (useRoot) Color.parseColor("#3B0764") else Color.parseColor("#713F12")
+        val endColor = if (useRoot) Color.parseColor("#E9D5FF") else Color.parseColor("#FFE135")
+        val strokeWidthPx = (1.2f * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 
-        cardGlowAnimator = android.animation.ValueAnimator.ofFloat(0.2f, 1.0f).apply {
-            duration = 1400
+        cardGlowAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 1800
             repeatCount = android.animation.ValueAnimator.INFINITE
             repeatMode = android.animation.ValueAnimator.REVERSE
+            interpolator = android.view.animation.AccelerateDecelerateInterpolator()
             addUpdateListener { anim ->
                 val fraction = anim.animatedFraction
                 val strokeColor = androidx.core.graphics.ColorUtils.blendARGB(startColor, endColor, fraction)
-                val strokeWidth = (1 + fraction * 1.5f).toInt()
-
                 for (d in drawables) {
-                    d.setStroke(strokeWidth, strokeColor)
+                    d.setStroke(strokeWidthPx, strokeColor)
                 }
             }
             start()
@@ -626,7 +630,7 @@ class MainActivity : AppCompatActivity() {
         var selected = prefs.getInt("tone_type", 0)
         val useRoot = prefs.getBoolean("use_root", false)
 
-        val activeAccent = if (useRoot) Color.parseColor("#B026FF") else Color.parseColor("#00E5FF")
+        val activeAccent = if (useRoot) Color.parseColor("#B026FF") else Color.parseColor("#FFE135")
 
         fun render() {
             toneName.text = ToneManager.nameOf(selected)
@@ -715,7 +719,7 @@ class MainActivity : AppCompatActivity() {
     // Sección Configuración: versión, paquete, cerrar sesión y logs
     private fun setupConfigSection(prefs: android.content.SharedPreferences) {
         val useRoot = prefs.getBoolean("use_root", false)
-        val accentColor = if (useRoot) Color.parseColor("#B026FF") else Color.parseColor("#00E5FF")
+        val accentColor = if (useRoot) Color.parseColor("#B026FF") else Color.parseColor("#FFE135")
 
         val tvVersion = findViewById<TextView>(R.id.tv_version)
         try {
@@ -1127,7 +1131,7 @@ class MainActivity : AppCompatActivity() {
             btnM.setTextColor(if (effectiveMode == 2) Color.parseColor("#F5F6F8") else Color.parseColor("#6E7582"))
         } else {
             indicator.background = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.shape_pill_white)
-            findViewById<TextView>(R.id.tv_time_label)?.setTextColor(Color.parseColor("#00E5FF"))
+            findViewById<TextView>(R.id.tv_time_label)?.setTextColor(Color.parseColor("#FFE135"))
             
             btnC.setTextColor(if (effectiveMode == 1) Color.parseColor("#0D0E12") else Color.parseColor("#6E7582"))
             btnM.setTextColor(if (effectiveMode == 2) Color.parseColor("#0D0E12") else Color.parseColor("#6E7582"))
@@ -1235,7 +1239,7 @@ class MainActivity : AppCompatActivity() {
             val btnOverlay = dialog.findViewById<Button>(R.id.btn_grant_overlay)
             if (hasOverlay) {
                 tvOverlay?.text = "✓ CONCEDIDO"
-                tvOverlay?.setTextColor(Color.parseColor("#00E5FF"))
+                tvOverlay?.setTextColor(Color.parseColor("#FFE135"))
                 btnOverlay?.isEnabled = false
                 btnOverlay?.text = "CONCEDIDO"
                 btnOverlay?.alpha = 0.5f
@@ -1257,7 +1261,7 @@ class MainActivity : AppCompatActivity() {
             val btnUsage = dialog.findViewById<Button>(R.id.btn_grant_usage)
             if (hasUsage) {
                 tvUsage?.text = "✓ CONCEDIDO"
-                tvUsage?.setTextColor(Color.parseColor("#00E5FF"))
+                tvUsage?.setTextColor(Color.parseColor("#FFE135"))
                 btnUsage?.isEnabled = false
                 btnUsage?.text = "CONCEDIDO"
                 btnUsage?.alpha = 0.5f
@@ -1278,7 +1282,7 @@ class MainActivity : AppCompatActivity() {
             val btnBattery = dialog.findViewById<Button>(R.id.btn_grant_battery)
             if (hasBattery) {
                 tvBattery?.text = "✓ CONCEDIDO"
-                tvBattery?.setTextColor(Color.parseColor("#00E5FF"))
+                tvBattery?.setTextColor(Color.parseColor("#FFE135"))
                 btnBattery?.isEnabled = false
                 btnBattery?.text = "CONCEDIDO"
                 btnBattery?.alpha = 0.5f
@@ -1365,7 +1369,7 @@ class MainActivity : AppCompatActivity() {
         val tvLicensePercent = findViewById<TextView>(R.id.tv_license_percent)
         val prefs = getSharedPreferences(NativeBridge.getNativeString(NativeBridge.STRING_PREFS_NAME), Context.MODE_PRIVATE)
         val useRoot = prefs.getBoolean("use_root", false)
-        tvLicensePercent?.setTextColor(if (useRoot) Color.parseColor("#B026FF") else Color.parseColor("#00E5FF"))
+        tvLicensePercent?.setTextColor(if (useRoot) Color.parseColor("#B026FF") else Color.parseColor("#FFE135"))
 
         val actStr = SecurePrefs.getSecureString(this, "activation_date")
         val expStr = SecurePrefs.getSecureString(this, "expiration_date")

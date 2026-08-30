@@ -224,7 +224,7 @@
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:text="INFO DE APP"
-                android:textColor="#00E5FF"
+                android:textColor="@color/colorAccentPrimary"
                 android:textSize="11sp"
                 android:textStyle="bold" />
         </LinearLayout>

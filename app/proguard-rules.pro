@@ -34,9 +34,10 @@
 
 # AntigravityFirewall — startNativeEngine/stopNativeEngine/setLagActive + VpnService del Manifest
 -keep class com.freezy.AntigravityFirewall {
-    private native <methods>;
-    public native <methods>;
-    public boolean protectSocket(int);
+    *;
+}
+-keep class com.freezy.AntigravityFirewall$* {
+    *;
 }
 
 # BubbleService — está en el Manifest

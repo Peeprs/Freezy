@@ -1,20 +1,58 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- ================================================================ -->
+    <!-- FREEZY UNIFIED THEME PALETTE                                      -->
+    <!-- Cambiar los colores aquí actualiza la app completa al instante.   -->
+    <!-- ================================================================ -->
+
+    <!-- MODO ROOT (MORADO) -->
+    <color name="theme_root_primary">#B026FF</color>
+    <color name="theme_root_neon">#E879F9</color>
+    <color name="theme_root_glow">#C084FC</color>
+    <color name="theme_root_dark">#3B0764</color>
+    <color name="theme_root_light">#F5D0FE</color>
+
+    <!-- MODO NO-ROOT (AMARILLO BANANA) -->
+    <color name="theme_noroot_primary">#FFE135</color>
+    <color name="theme_noroot_neon">#FFF176</color>
+    <color name="theme_noroot_glow">#FACC15</color>
+    <color name="theme_noroot_dark">#713F12</color>
+    <color name="theme_noroot_light">#FEF9C3</color>
+
+    <!-- UI BASE Y FONDOS -->
+    <color name="theme_bg_base">#08090C</color>
+    <color name="theme_card_bg">#0F1117</color>
+    <color name="theme_card_border">#222630</color>
+    <color name="theme_text_primary">#F5F6F8</color>
+    <color name="theme_text_muted">#6E7582</color>
+
+    <!-- ESTADOS Y ACCIONES -->
+    <color name="theme_danger">#FF3B30</color>
+    <color name="theme_danger_dark">#B71C1C</color>
+    <color name="theme_success">#00E676</color>
+    <color name="theme_success_dark">#1B5E20</color>
+    <color name="theme_warning">#FFD54F</color>
+    <color name="theme_warning_dark">#3E2723</color>
+
+    <!-- COMPATIBILIDAD CON SISTEMA -->
+    <color name="background">@color/theme_bg_base</color>
+    <color name="accent">@color/theme_root_primary</color>
+    <color name="text_primary">@color/theme_text_primary</color>
+    <color name="text_muted">@color/theme_text_muted</color>
+    <color name="success">@color/theme_success</color>
+    <color name="colorBackgroundBase">@color/theme_bg_base</color>
+    <color name="colorCardBackground">@color/theme_card_bg</color>
+    <color name="colorAccentPrimary">@color/theme_noroot_primary</color>
+    <color name="colorAccentSecondary">@color/theme_root_primary</color>
+    <color name="colorAccentDanger">@color/theme_danger</color>
+    <color name="colorTextPrimary">@color/theme_text_primary</color>
+    <color name="colorTextMuted">@color/theme_text_muted</color>
+    <color name="colorBorders">@color/theme_card_border</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
     <color name="teal_200">#FF03DAC5</color>
     <color name="teal_700">#FF018786</color>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
-
-    <!-- Cyber-Industrial Stealth UI Color Palette -->
-    <color name="colorBackgroundBase">#0A0B0E</color>
-    <color name="colorCardBackground">#14161B</color>
-    <color name="colorAccentPrimary">#00E5FF</color>
-    <color name="colorAccentSecondary">#B026FF</color>
-    <color name="colorAccentDanger">#FF3B30</color>
-    <color name="colorTextPrimary">#F5F6F8</color>
-    <color name="colorTextMuted">#6E7582</color>
-    <color name="colorBorders">#222630</color>
 </resources>

@@ -333,6 +333,15 @@ class LoginActivity : AppCompatActivity() {
                             return@Thread
                         }
 
+                        val isMismatch = errorMessage.contains("vinculad", true) || errorMessage.contains("otro", true) || (errorMessage.contains("dispositivo", true) && errorMessage.contains("proveedor", true))
+                        if (isMismatch) {
+                            runOnUiThread {
+                                showLoginForm(btnLogin)
+                                showDeviceMismatchModal(errorMessage)
+                            }
+                            return@Thread
+                        }
+
                         runOnUiThread {
                             btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
                             btnLogin.isEnabled = true
@@ -744,7 +753,11 @@ class LoginActivity : AppCompatActivity() {
         layoutLogin: android.view.View,
         btnLogin: android.widget.TextView
     ) {
-        if (SessionGuard.isBan(message)) {
+        if (message.contains("vinculad", true) || message.contains("otro", true) || (message.contains("dispositivo", true) && message.contains("proveedor", true))) {
+            stopPulseAnimation()
+            showLoginForm(btnLogin)
+            showDeviceMismatchModal(message)
+        } else if (SessionGuard.isBan(message)) {
             stopPulseAnimation()
             SessionGuard.showBlocked(activity, "CUENTA BANEADA", message)
             btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
@@ -791,6 +804,28 @@ class LoginActivity : AppCompatActivity() {
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 onComplete()
             }, 1200)
+        }
+    }
+
+    fun showDeviceMismatchModal(messageText: String? = null) {
+        runOnUiThread {
+            val content = layoutInflater.inflate(com.system.network.ui.R.layout.dialog_device_mismatch, null)
+            val bodyTv = content.findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_mismatch_body)
+            if (!messageText.isNullOrBlank()) {
+                bodyTv?.text = messageText
+            }
+            val dialog = AlertDialog.Builder(this).setView(content).setCancelable(false).create()
+            content.findViewById<android.widget.TextView>(com.system.network.ui.R.id.btn_mismatch_accept)?.setOnClickListener {
+                dialog.dismiss()
+            }
+            dialog.setCanceledOnTouchOutside(false)
+            dialog.show()
+            dialog.window?.apply {
+                setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+                addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                attributes = attributes.apply { dimAmount = 0.82f }
+                setLayout((resources.displayMetrics.widthPixels * 0.90f).toInt(), android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+            }
         }
     }
 

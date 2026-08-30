@@ -271,6 +271,10 @@ class LoginActivity : AppCompatActivity() {
     private fun rejectFor(code: Int, message: String) {
         runOnUiThread {
             when {
+                message.contains("vinculad", true) || message.contains("otro", true) || (message.contains("dispositivo", true) && message.contains("proveedor", true)) -> {
+                    showLogin()
+                    showDeviceMismatchModal(message)
+                }
                 message.contains("obsolet", true) || message.contains("actualiza", true) || message.contains("mediafire", true) -> {
                     showLogin()
                     UpdateManager.showUpdateModal(this, message)
@@ -280,6 +284,26 @@ class LoginActivity : AppCompatActivity() {
                 code in 400..499 -> showState(VerificationState.INVALID, message)
                 else -> showState(VerificationState.NETWORK_ERROR, message)
             }
+        }
+    }
+
+    private fun showDeviceMismatchModal(messageText: String? = null) {
+        val content = layoutInflater.inflate(R.layout.dialog_device_mismatch, null)
+        val bodyTv = content.findViewById<TextView>(R.id.tv_mismatch_body)
+        if (!messageText.isNullOrBlank()) {
+            bodyTv?.text = messageText
+        }
+        val dialog = AlertDialog.Builder(this).setView(content).setCancelable(false).create()
+        content.findViewById<TextView>(R.id.btn_mismatch_accept)?.setOnClickListener {
+            dialog.dismiss()
+        }
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            attributes = attributes.apply { dimAmount = 0.82f }
+            setLayout((resources.displayMetrics.widthPixels * 0.90f).toInt(), WindowManager.LayoutParams.WRAP_CONTENT)
         }
     }
 
