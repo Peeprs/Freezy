@@ -3,7 +3,7 @@
 #
 # Ofuscación XOR multi-byte: cada byte usa una posición de la clave,
 # así el cifrado ya no es reversible con un xor de un solo byte (0x55).
-XOR_KEY = bytes([0xF3, 0x71, 0x29, 0xA4, 0x0C, 0x6B, 0xD8, 0x52])
+XOR_KEY = bytes([0x7B, 0xE2, 0x4D, 0x93, 0x18, 0x6A, 0xC5, 0x3F])
 
 
 def xor_encrypt(s, key=XOR_KEY):
@@ -98,7 +98,7 @@ strings = {
     # comas. WebSecurity los usa SOLO si la lista no está vacía.
     # Pines TLS actuales del servidor (Sha256 SPKI, Base64), separados por comas.
     # verificado 2026-08-03: leaf=vercel.app intermedio=...
-    79: "ft9JFh9fyiSD0LI4vCAyVHDM1OKStfDBooxsWHHvngY=,yDu9og255NN5GEf+Bwa9rTrqFQ0EydZ0r1FCh9TdAW4=",
+    79: "xRUwi70J41GFIbtkDY38VXIAoWtbsGGG+LWfenCZh7k=,yDu9og255NN5GEf+Bwa9rTrqFQ0EydZ0r1FCh9TdAW4=,hxqRlPTu1bMS/0DITB1SSu0vd4u/8l8TjPgfaAp63Gc=,ft9JFh9fyiSD0LI4vCAyVHDM1OKStfDBooxsWHHvngY=",
     80: "Para evitar desincronizacion (antiban en gama baja), selecciona SIN RESTRICCIONES en el ahorro de bateria para Freezy.",
     81: "Entorno no seguro. Cerrando.",
     # ── Strings sensibles (comandos, rutas y paquetes) ──────────────
@@ -271,6 +271,41 @@ strings = {
      244: "ESP Weapon",
      245: "CUSTOMIZATION",
      246: "Color RGB (Anim)",
+     247: "Inicia sesión con tu licencia oficial",
+     248: "OBTENER LICENCIA GRATIS",
+     249: "Canales oficiales",
+     250: "VERIFICACIÓN SEGURA",
+     251: "Validando licencia",
+     252: "Comprobando tu acceso con el servidor de Freezy",
+     253: "VOLVER AL LOGIN",
+     254: "AVISO IMPORTANTE",
+     255: "DESCARGO DE RESPONSABILIDAD",
+     256: "Lee cuidadosamente antes de continuar",
+     257: "ACEPTO Y CONTINÚO",
+     258: "NO ACEPTO · SALIR",
+     259: "ACTUALIZACIÓN REQUERIDA",
+     260: "Hay una nueva versión disponible",
+     261: "Actualiza para continuar usando Freezy",
+     262: "ABRIR WHATSAPP",
+     263: "Novedades en TikTok",
+     264: "Cambios, avisos y demostraciones",
+     265: "ACCESO AUTORIZADO",
+     266: "Licencia válida",
+     267: "Identidad y licencia verificadas correctamente",
+     268: "ACCESO VENCIDO",
+     269: "Licencia expirada",
+     270: "Renueva tu licencia para volver a utilizar Freezy",
+     271: "CONEXIÓN INTERRUMPIDA",
+     272: "Error de red",
+     273: "Comprueba tu conexión a internet e inténtalo nuevamente",
+     274: "SERVICIO TEMPORALMENTE PAUSADO",
+     275: "Servidor en mantenimiento",
+     276: "Estamos realizando mejoras. Inténtalo de nuevo más tarde",
+     277: "ACCESO DENEGADO",
+     278: "Licencia no válida",
+     279: "Revisa los datos ingresados y vuelve a intentarlo",
+     280: "Canal de WhatsApp",
+     281: "TikTok",
 }
 
 

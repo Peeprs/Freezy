@@ -69,11 +69,18 @@ class LoginActivity : AppCompatActivity() {
             val dialogView = layoutInflater.inflate(R.layout.dialog_disclaimer, null)
             val btnAccept = dialogView.findViewById<TextView>(R.id.btn_accept_risk)
             val btnExit = dialogView.findViewById<TextView>(R.id.btn_exit_app)
-            
+            val tvBadge = dialogView.findViewById<TextView>(R.id.tv_disclaimer_badge)
+            val tvTitle = dialogView.findViewById<TextView>(R.id.tv_disclaimer_title)
+            val tvSubtitle = dialogView.findViewById<TextView>(R.id.tv_disclaimer_subtitle)
             val tvBody = dialogView.findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_disclaimer_body)
             
             // Cargar strings ofuscados de C++
+            tvBadge?.text = NativeBridge.getNativeString(NativeBridge.STRING_BADGE_IMPORTANT_NOTICE)
+            tvTitle?.text = NativeBridge.getNativeString(NativeBridge.STRING_DISCLAIMER_HEADER)
+            tvSubtitle?.text = NativeBridge.getNativeString(NativeBridge.STRING_DISCLAIMER_SUBTITLE)
             tvBody?.text = NativeBridge.getNativeString(NativeBridge.STRING_DISCLAIMER_BODY)
+            btnAccept?.text = NativeBridge.getNativeString(NativeBridge.STRING_BTN_ACCEPT_CONTINUE)
+            btnExit?.text = NativeBridge.getNativeString(NativeBridge.STRING_BTN_EXIT_DECLINE)
 
             val dialog = AlertDialog.Builder(this)
                     .setView(dialogView)
@@ -109,18 +116,20 @@ class LoginActivity : AppCompatActivity() {
 
         // Cargar strings ofuscados de C++ para los campos de login (Inicializar siempre primero)
         findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_app_name)?.text = NativeBridge.getNativeString(NativeBridge.STRING_APP_NAME)
+        findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_login_subtitle)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_SUBTITLE)
         findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_label_user)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LABEL_USER)
         findViewById<android.widget.EditText>(com.system.network.ui.R.id.et_user)?.hint = NativeBridge.getNativeString(NativeBridge.STRING_HINT_USER)
         findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_label_license_login)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LABEL_LICENSE)
         findViewById<android.widget.EditText>(com.system.network.ui.R.id.et_key)?.hint = NativeBridge.getNativeString(NativeBridge.STRING_HINT_LICENSE)
         findViewById<android.widget.TextView>(com.system.network.ui.R.id.btn_login)?.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
+        findViewById<android.widget.TextView>(com.system.network.ui.R.id.btn_getkey)?.text = NativeBridge.getNativeString(NativeBridge.STRING_BTN_GET_KEY)
+        findViewById<android.widget.TextView>(com.system.network.ui.R.id.tv_social_channels)?.text = NativeBridge.getNativeString(NativeBridge.STRING_OFFICIAL_CHANNELS)
+        findViewById<android.widget.TextView>(com.system.network.ui.R.id.btn_state_return)?.text = NativeBridge.getNativeString(NativeBridge.STRING_BTN_RETURN_LOGIN)
 
         val etUser = findViewById<EditText>(R.id.et_user)
         val etKey = findViewById<EditText>(R.id.et_key)
         val btnLogin = findViewById<TextView>(R.id.btn_login)
-
         val btnGetKey = findViewById<TextView>(R.id.btn_getkey)
-        btnGetKey.text = "GET KEY GRATIS"
         findViewById<TextView>(R.id.btn_state_return).setOnClickListener {
             showLoginForm(btnLogin)
         }
@@ -300,7 +309,7 @@ class LoginActivity : AppCompatActivity() {
                     challengeConn.readTimeout = 30000
                     challengeConn.doOutput = true
 
-                    val currentAppVersion = com.system.network.ui.BuildConfig.VERSION_NAME
+                    val currentAppVersion = if (com.system.network.ui.BuildConfig.DEBUG) "4.0.0" else com.system.network.ui.BuildConfig.VERSION_NAME.substringBefore("-")
                     val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
                     challengeConn.outputStream.use { os ->
                         val input = challengeJson.toByteArray(Charsets.UTF_8)
@@ -315,6 +324,15 @@ class LoginActivity : AppCompatActivity() {
                             } catch (e: Exception) { "Error de validación. Verifica tus datos o tu conexión." }
                         } else { "Error de validación. Verifica tus datos o tu conexión." }
                         
+                        val isUpdate = errorMessage.contains("obsolet", true) || errorMessage.contains("actualiza", true) || errorMessage.contains("mediafire", true)
+                        if (isUpdate) {
+                            runOnUiThread {
+                                showLoginForm(btnLogin)
+                                AppUpdateManager.showUpdateModal(this@LoginActivity, errorMessage)
+                            }
+                            return@Thread
+                        }
+
                         runOnUiThread {
                             btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
                             btnLogin.isEnabled = true
@@ -322,7 +340,8 @@ class LoginActivity : AppCompatActivity() {
                             val state = if (challengeConn.responseCode == 503 || errorMessage.contains("mantenimiento", true) || errorMessage.contains("maintenance", true)) {
                                 VerificationState.MAINTENANCE
                             } else VerificationState.INVALID
-                            renderVerificationState(state, errorMessage)
+                            val cleanMsg = if (errorMessage.contains("mediafire", true) || errorMessage.contains("http", true)) "Licencia no válida." else errorMessage
+                            renderVerificationState(state, cleanMsg)
                         }
                         return@Thread
                     }
@@ -512,7 +531,7 @@ class LoginActivity : AppCompatActivity() {
                     challengeConn.connectTimeout = 30000
                     challengeConn.readTimeout = 30000
                     challengeConn.doOutput = true
-                    val currentAppVersion = com.system.network.ui.BuildConfig.VERSION_NAME
+                    val currentAppVersion = if (com.system.network.ui.BuildConfig.DEBUG) "4.0.0" else com.system.network.ui.BuildConfig.VERSION_NAME.substringBefore("-")
                     val challengeJson = "{\"key\": \"$savedKey\", \"hwid\": \"$hwid\", \"username\": \"$savedUser\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
                     challengeConn.outputStream.write(challengeJson.toByteArray(Charsets.UTF_8))
 
@@ -624,55 +643,55 @@ class LoginActivity : AppCompatActivity() {
         when (state) {
             VerificationState.VALIDATING -> {
                 logo.setImageResource(R.drawable.freezy_logo)
-                badge.text = "VERIFICACIÓN SEGURA"
+                badge.text = NativeBridge.getNativeString(NativeBridge.STRING_BADGE_SECURE_VERIF)
                 badge.setTextColor(android.graphics.Color.parseColor("#D996FF"))
-                title.text = "Validando licencia"
+                title.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_VALIDATING)
                 title.setTextColor(android.graphics.Color.parseColor("#F8F5FC"))
-                message.text = detail ?: "Comprobando tu acceso con el servidor de Freezy"
+                message.text = detail ?: NativeBridge.getNativeString(NativeBridge.STRING_STATUS_CHECKING_ACCESS)
                 progress.visibility = android.view.View.VISIBLE
             }
             VerificationState.VALID -> {
                 logo.setImageResource(R.drawable.ic_cyber_check)
-                badge.text = "ACCESO AUTORIZADO"
+                badge.text = NativeBridge.getNativeString(NativeBridge.STRING_BADGE_ACCESS_AUTHORIZED)
                 badge.setTextColor(android.graphics.Color.parseColor("#58E6B0"))
-                title.text = "Licencia válida"
+                title.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_LICENSE_VALID)
                 title.setTextColor(android.graphics.Color.parseColor("#F8F5FC"))
-                message.text = detail ?: "Identidad y licencia verificadas correctamente"
+                message.text = detail ?: NativeBridge.getNativeString(NativeBridge.STRING_STATUS_VALID_DESC)
             }
             VerificationState.EXPIRED -> {
                 logo.setImageResource(R.drawable.ic_cross_red)
-                badge.text = "ACCESO VENCIDO"
+                badge.text = NativeBridge.getNativeString(NativeBridge.STRING_BADGE_EXPIRED)
                 badge.setTextColor(android.graphics.Color.parseColor("#FF8792"))
-                title.text = "Licencia expirada"
+                title.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_EXPIRED)
                 title.setTextColor(android.graphics.Color.parseColor("#FF6977"))
-                message.text = detail ?: "Renueva tu licencia para volver a utilizar Freezy"
+                message.text = detail ?: NativeBridge.getNativeString(NativeBridge.STRING_STATUS_EXPIRED_DESC)
                 returnButton.visibility = android.view.View.VISIBLE
             }
             VerificationState.NETWORK_ERROR -> {
                 logo.setImageResource(R.drawable.ic_network_error)
-                badge.text = "CONEXIÓN INTERRUMPIDA"
+                badge.text = NativeBridge.getNativeString(NativeBridge.STRING_BADGE_NET_ERROR)
                 badge.setTextColor(android.graphics.Color.parseColor("#FF8792"))
-                title.text = "Error de red"
+                title.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_NET_ERROR)
                 title.setTextColor(android.graphics.Color.parseColor("#FF6977"))
-                message.text = detail ?: "Comprueba tu conexión a internet e inténtalo nuevamente"
+                message.text = detail ?: NativeBridge.getNativeString(NativeBridge.STRING_STATUS_NET_ERROR_DESC)
                 returnButton.visibility = android.view.View.VISIBLE
             }
             VerificationState.MAINTENANCE -> {
                 logo.setImageResource(R.drawable.ic_maintenance)
-                badge.text = "SERVICIO TEMPORALMENTE PAUSADO"
+                badge.text = NativeBridge.getNativeString(NativeBridge.STRING_BADGE_MAINTENANCE)
                 badge.setTextColor(android.graphics.Color.parseColor("#FFC66D"))
-                title.text = "Servidor en mantenimiento"
+                title.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_MAINTENANCE)
                 title.setTextColor(android.graphics.Color.parseColor("#FFB84D"))
-                message.text = detail ?: "Estamos realizando mejoras. Inténtalo de nuevo más tarde"
+                message.text = detail ?: NativeBridge.getNativeString(NativeBridge.STRING_STATUS_MAINTENANCE_DESC)
                 returnButton.visibility = android.view.View.VISIBLE
             }
             VerificationState.INVALID -> {
                 logo.setImageResource(R.drawable.ic_cross_red)
-                badge.text = "ACCESO DENEGADO"
+                badge.text = NativeBridge.getNativeString(NativeBridge.STRING_BADGE_DENIED)
                 badge.setTextColor(android.graphics.Color.parseColor("#FF8792"))
-                title.text = "Licencia no válida"
+                title.text = NativeBridge.getNativeString(NativeBridge.STRING_TITLE_DENIED)
                 title.setTextColor(android.graphics.Color.parseColor("#FF6977"))
-                message.text = detail ?: "Revisa los datos ingresados y vuelve a intentarlo"
+                message.text = detail ?: NativeBridge.getNativeString(NativeBridge.STRING_STATUS_DENIED_DESC)
                 returnButton.visibility = android.view.View.VISIBLE
             }
         }
@@ -738,6 +757,10 @@ class LoginActivity : AppCompatActivity() {
             layoutLogin.visibility = android.view.View.GONE
             layoutSplash.visibility = android.view.View.VISIBLE
             renderVerificationState(VerificationState.EXPIRED, message)
+        } else if (message.contains("obsolet", true) || message.contains("actualiza", true) || message.contains("mediafire", true)) {
+            stopPulseAnimation()
+            showLoginForm(btnLogin)
+            AppUpdateManager.showUpdateModal(activity, message)
         } else {
             btnLogin.text = NativeBridge.getNativeString(NativeBridge.STRING_LOGIN_BTN)
             btnLogin.isEnabled = true
@@ -747,7 +770,8 @@ class LoginActivity : AppCompatActivity() {
             val state = if (message.contains("mantenimiento", true) || message.contains("maintenance", true)) {
                 VerificationState.MAINTENANCE
             } else VerificationState.INVALID
-            renderVerificationState(state, message)
+            val cleanMsg = if (message.contains("mediafire", true) || message.contains("http", true)) "Licencia no válida." else message
+            renderVerificationState(state, cleanMsg)
         }
     }
 

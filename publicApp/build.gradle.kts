@@ -14,6 +14,11 @@ val keystoreProperties = Properties().apply {
 android {
     namespace = "com.freezy.publicapp"
     compileSdk = 34
+    ndkVersion = "27.0.12077973"
+
+    buildFeatures {
+        buildConfig = true
+    }
 
     defaultConfig {
         // La variante release reemplaza la app publicada actual.
@@ -22,6 +27,18 @@ android {
         targetSdk = 36
         versionCode = 12
         versionName = "4.1.0"
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     signingConfigs {
@@ -37,9 +54,9 @@ android {
 
     buildTypes {
         debug {
-            // Permite instalar la vista previa junto a la app completa de desarrollo.
-            applicationIdSuffix = ".publicpreview"
-            versionNameSuffix = "-public-preview"
+            // La copia pública Debug se instala junto a la app release.
+            applicationIdSuffix = ".Debug"
+            versionNameSuffix = "-Debug"
         }
         release {
             isMinifyEnabled = true

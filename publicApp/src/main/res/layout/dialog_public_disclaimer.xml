@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_update_modal"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <ImageView
+        android:layout_width="68dp"
+        android:layout_height="68dp"
+        android:layout_gravity="center_horizontal"
+        android:scaleType="fitCenter"
+        android:src="@drawable/freezy_logo" />
+
+    <TextView
+        android:id="@+id/tv_disclaimer_badge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_update_badge"
+        android:letterSpacing="0.12"
+        android:textColor="#D996FF"
+        android:textSize="11sp" />
+
+    <TextView
+        android:id="@+id/tv_disclaimer_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:gravity="center"
+        android:textColor="#F8F5FC"
+        android:textSize="23sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tv_disclaimer_subtitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="7dp"
+        android:gravity="center"
+        android:textColor="#AFA9B8"
+        android:textSize="13sp" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="240dp"
+        android:layout_marginTop="18dp"
+        android:background="@drawable/bg_disclaimer_content"
+        android:fadeScrollbars="false">
+
+        <TextView
+            android:id="@+id/tv_disclaimer_body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:lineSpacingExtra="5dp"
+            android:textColor="#D8D3DE"
+            android:textSize="14sp" />
+    </ScrollView>
+
+    <TextView
+        android:id="@+id/btn_accept_risk"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="18dp"
+        android:background="@drawable/bg_update_primary"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/btn_exit_app"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/bg_disclaimer_exit"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:textColor="#E9A8B0"
+        android:textSize="13sp" />
+</LinearLayout>

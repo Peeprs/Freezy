@@ -900,7 +900,7 @@ class MainActivity : AppCompatActivity() {
             challengeConn.readTimeout = 30000
             challengeConn.doOutput = true
 
-            val currentAppVersion = com.system.network.ui.BuildConfig.VERSION_NAME
+            val currentAppVersion = if (com.system.network.ui.BuildConfig.DEBUG) "4.0.0" else com.system.network.ui.BuildConfig.VERSION_NAME.substringBefore("-")
             val challengeJson = "{\"key\": \"$key\", \"hwid\": \"$hwid\", \"username\": \"$username\", \"device_model\": \"$deviceModel\", \"app_version\": \"$currentAppVersion\"}"
             challengeConn.outputStream.write(challengeJson.toByteArray(Charsets.UTF_8))
 

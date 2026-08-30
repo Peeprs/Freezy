@@ -1,0 +1,58 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Helmet Outer Shell / Cap -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M3,13 C3,6.5 7,3 12,3 C17,3 21,6.5 21,13 C21,15.5 19.5,17 18,17 L6,17 C4.5,17 3,15.5 3,13 Z" />
+
+    <!-- Visor Contour -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M5,11 L19,11 C19.5,11 20,11.5 20,12.5 C19.5,15 16.5,15.5 12,15.5 C7.5,15.5 4.5,15 4,12.5 C4,11.5 4.5,11 5,11 Z" />
+
+    <!-- Visor Center Glow Accent Line -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M8,13.2 L16,13.2" />
+
+    <!-- Helmet Top Ridge / Tactical Plate -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:pathData="M9,4.5 C10.5,4 13.5,4 15,4.5" />
+
+    <!-- Side Mount / Ear Guard Left -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M3.5,12.5 L3.5,15.5 C3.5,16 4,16.5 4.5,16.5" />
+
+    <!-- Side Mount / Ear Guard Right -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M20.5,12.5 L20.5,15.5 C20.5,16 20,16.5 19.5,16.5" />
+
+    <!-- Chin Strap / Guard Base -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:pathData="M7,17.5 L8.5,21 L15.5,21 L17,17.5" />
+
+</vector>

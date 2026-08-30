@@ -13,10 +13,11 @@
         android:layout_width="68dp"
         android:layout_height="68dp"
         android:layout_gravity="center_horizontal"
-        android:contentDescription="Freezy"
+        android:scaleType="fitCenter"
         android:src="@drawable/freezy_logo" />
 
     <TextView
+        android:id="@+id/tv_disclaimer_badge"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
@@ -24,7 +25,6 @@
         android:background="@drawable/bg_update_badge"
         android:fontFamily="sans-serif-medium"
         android:letterSpacing="0.12"
-        android:text="AVISO IMPORTANTE"
         android:textColor="#D996FF"
         android:textSize="11sp" />
 
@@ -35,16 +35,15 @@
         android:layout_marginTop="14dp"
         android:fontFamily="sans-serif-black"
         android:gravity="center"
-        android:text="DESCARGO DE RESPONSABILIDAD"
         android:textColor="#F8F5FC"
         android:textSize="23sp" />
 
     <TextView
+        android:id="@+id/tv_disclaimer_subtitle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="7dp"
         android:gravity="center"
-        android:text="Lee cuidadosamente antes de continuar"
         android:textColor="#AFA9B8"
         android:textSize="13sp" />
 
@@ -75,7 +74,6 @@
         android:focusable="true"
         android:fontFamily="sans-serif-black"
         android:gravity="center"
-        android:text="ACEPTO Y CONTINÚO"
         android:textColor="#FFFFFF"
         android:textSize="15sp" />
 
@@ -89,7 +87,6 @@
         android:focusable="true"
         android:fontFamily="sans-serif-medium"
         android:gravity="center"
-        android:text="NO ACEPTO · SALIR"
         android:textColor="#E9A8B0"
         android:textSize="13sp" />
 

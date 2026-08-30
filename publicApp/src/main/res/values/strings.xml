@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Freezy</string>
     <string name="public_edition">Edición pública</string>
-    <string name="new_version_title">Nueva versión en preparación</string>
-    <string name="new_version_body">Esta base pública no incluye las funciones del menú de desarrollo. Las características se incorporarán individualmente después de revisarlas.</string>
+    <string name="license_active">Licencia activa</string>
+    <string name="public_description">Tu acceso está verificado. Administra tu licencia y las funciones disponibles desde este panel.</string>
     <string name="version_label">Versión 4.1.0</string>
 </resources>

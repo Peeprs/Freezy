@@ -16,7 +16,11 @@ import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 
-/** Comprobación global de versión, independiente del estado de la licencia. */
+/**
+ * Comprobación global de versión dinámica.
+ * El modal SOLO se muestra si la versión instalada es estrictamente inferior a la del servidor.
+ * Una vez que la versión coincide o es más reciente, NUNCA vuelve a mostrarse.
+ */
 object AppUpdateManager {
     private const val CHECK_INTERVAL_MS = 5 * 60 * 1000L
     private const val DEFAULT_WHATSAPP_URL = "https://whatsapp.com/channel/0029Vb9K5FJ545usgyohs136"
@@ -28,12 +32,11 @@ object AppUpdateManager {
     private var activeDialog: AlertDialog? = null
     private var activeActivity = WeakReference<Activity>(null)
 
-    /** Vista previa local disponible sólo en Debug; no modifica la versión publicada. */
     fun showDebugPreview(activity: Activity) {
         if (!BuildConfig.DEBUG) return
         val preview = JSONObject().apply {
-            put("versionName", "4.1.0")
-            put("changelog", "• Mejoras de estabilidad\n• Nuevo canal oficial de avisos\n• Experiencia de actualización renovada")
+            put("versionName", "4.2.0")
+            put("changelog", "• Flujo dinámico desde base de datos\n• Modal inteligente por versión\n• Mejoras de rendimiento")
             put("whatsappUrl", DEFAULT_WHATSAPP_URL)
             put("tiktokUrl", DEFAULT_TIKTOK_URL)
         }
@@ -41,8 +44,52 @@ object AppUpdateManager {
         showDialog(activity, preview)
     }
 
+    fun showUpdateModal(activity: Activity, rawMessage: String? = null) {
+        val (parsedVersion, parsedChangelog) = parseServerMessage(rawMessage)
+        val config = JSONObject().apply {
+            put("versionName", parsedVersion)
+            put("changelog", parsedChangelog)
+            put("whatsappUrl", pendingUpdateConfig?.optString("whatsappUrl") ?: DEFAULT_WHATSAPP_URL)
+            put("tiktokUrl", pendingUpdateConfig?.optString("tiktokUrl") ?: DEFAULT_TIKTOK_URL)
+        }
+
+        if (isUpdateRequired(config)) {
+            activity.runOnUiThread { showDialog(activity, config) }
+        }
+
+        // Consultar /api/version para enriquecer enlaces y changelog oficial
+        Thread {
+            try {
+                val endpoint = SecurePrefs.getSecureString(activity, "secure_endpoint")
+                    .ifEmpty { NativeBridge.getNativeString(NativeBridge.STRING_ENDPOINT) }
+                val baseUrl = endpoint.substringBefore("/api").trimEnd('/')
+                val conn = WebSecurity.open("$baseUrl/api/version")
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+
+                if (conn.responseCode == 200) {
+                    val serverConfig = JSONObject(conn.inputStream.bufferedReader().readText())
+                    if (isUpdateRequired(serverConfig)) {
+                        val updatedName = serverConfig.optString("versionName", parsedVersion).ifEmpty { parsedVersion }
+                        val updatedChangelog = serverConfig.optString("changelog", parsedChangelog).ifEmpty { parsedChangelog }
+                        serverConfig.put("versionName", updatedName)
+                        serverConfig.put("changelog", updatedChangelog)
+                        pendingUpdateConfig = serverConfig
+                        activity.runOnUiThread { showDialog(activity, serverConfig) }
+                    } else {
+                        pendingUpdateConfig = null
+                        activity.runOnUiThread { activeDialog?.dismiss() }
+                    }
+                }
+            } catch (_: Throwable) {}
+        }.start()
+    }
+
     fun check(activity: Activity, force: Boolean = false) {
-        pendingUpdateConfig?.let { showDialog(activity, it) }
+        pendingUpdateConfig?.let {
+            if (isUpdateRequired(it)) showDialog(activity, it) else pendingUpdateConfig = null
+        }
         val now = System.currentTimeMillis()
         if (!force && now - lastCheckAt < CHECK_INTERVAL_MS) return
         if (!checking.compareAndSet(false, true)) return
@@ -60,33 +107,98 @@ object AppUpdateManager {
                 if (conn.responseCode == 200) {
                     val config = JSONObject(conn.inputStream.bufferedReader().readText())
                     lastCheckAt = System.currentTimeMillis()
-                    val latestCode = config.optInt("versionCode", 0)
-                    val latestName = config.optString("versionName", "")
-                    val isNewer = latestCode > BuildConfig.VERSION_CODE ||
-                        (latestCode <= 0 && latestName.isNotEmpty() && latestName != BuildConfig.VERSION_NAME)
-
-                    if (isNewer) {
+                    if (isUpdateRequired(config)) {
                         pendingUpdateConfig = config
-                        activity.runOnUiThread {
-                            showDialog(activity, config)
-                        }
+                        activity.runOnUiThread { showDialog(activity, config) }
                     } else {
                         pendingUpdateConfig = null
                     }
                 }
             } catch (_: Exception) {
-                // Una caída de la comprobación no debe bloquear el acceso a la app.
+                // Failsafe
             } finally {
                 checking.set(false)
             }
         }.start()
     }
 
+    /** Compara semánticamente la versión del servidor contra la versión instalada. */
+    fun isUpdateRequired(serverConfig: JSONObject): Boolean {
+        val latestCode = serverConfig.optInt("versionCode", 0)
+        val latestName = serverConfig.optString("versionName", "")
+
+        val currentCode = BuildConfig.VERSION_CODE
+        val currentName = BuildConfig.VERSION_NAME.removePrefix("v").substringBefore("-")
+
+        if (latestCode > 0 && currentCode > 0) {
+            return latestCode > currentCode
+        }
+
+        if (latestName.isEmpty()) return false
+
+        val cleanLatest = latestName.removePrefix("v").substringBefore("-")
+        val lParts = cleanLatest.split(".").mapNotNull { it.toIntOrNull() }
+        val cParts = currentName.split(".").mapNotNull { it.toIntOrNull() }
+        val maxLen = maxOf(lParts.size, cParts.size)
+
+        for (i in 0 until maxLen) {
+            val l = lParts.getOrElse(i) { 0 }
+            val c = cParts.getOrElse(i) { 0 }
+            if (l > c) return true
+            if (l < c) return false
+        }
+        return false
+    }
+
+    private fun parseServerMessage(rawMessage: String?): Pair<String, String> {
+        if (rawMessage.isNullOrBlank()) {
+            val fallbackName = pendingUpdateConfig?.optString("versionName", "nueva") ?: "nueva"
+            val fallbackChangelog = pendingUpdateConfig?.optString("changelog", "Hay una nueva versión disponible. Por favor, actualiza desde nuestros canales oficiales.") ?: "Hay una nueva versión disponible. Por favor, actualiza desde nuestros canales oficiales."
+            return fallbackName to fallbackChangelog
+        }
+
+        val versionRegex = Regex("""v?(\d+\.\d+(\.\d+)?)""")
+        val match = versionRegex.find(rawMessage)
+        val extractedVersion = match?.groupValues?.get(1) ?: pendingUpdateConfig?.optString("versionName", "nueva") ?: "nueva"
+
+        val lines = rawMessage.lines()
+        val filtered = lines.filterNot {
+            it.contains("http", ignoreCase = true) ||
+            it.contains("mediafire", ignoreCase = true) ||
+            it.contains("Acceso Bloqueado", ignoreCase = true) ||
+            it.contains("versión es obsoleta", ignoreCase = true) ||
+            it.contains("Por favor actualiza", ignoreCase = true) ||
+            it.contains("descargándola", ignoreCase = true)
+        }.map { line ->
+            if (line.trimStart().startsWith("Novedades", ignoreCase = true)) {
+                line.substringAfter(":").trim()
+            } else line
+        }.filter { it.isNotBlank() }
+
+        val changelog = if (filtered.isEmpty()) {
+            "Hay una nueva versión disponible. Por favor, actualiza desde nuestros canales oficiales."
+        } else {
+            filtered.joinToString("\n").trim()
+        }
+
+        return extractedVersion to changelog
+    }
+
     private fun showDialog(activity: Activity, config: JSONObject) {
         if (activity.isFinishing || activity.isDestroyed) return
-        val shownDialog = activeDialog
-        if (shownDialog?.isShowing == true && activeActivity.get() === activity) return
-        if (shownDialog?.isShowing == true) shownDialog.dismiss()
+        if (!isUpdateRequired(config)) {
+            activeDialog?.dismiss()
+            return
+        }
+        if (activeDialog?.isShowing == true && activeActivity.get() === activity) {
+            val content = activeDialog?.findViewById<View>(android.R.id.content)
+            content?.findViewById<TextView>(R.id.tv_update_title)?.text =
+                "Freezy v${config.optString("versionName", "nueva")}"
+            content?.findViewById<TextView>(R.id.tv_update_changelog)?.text =
+                config.optString("changelog", "Hay una nueva versión disponible.")
+            return
+        }
+        activeDialog?.dismiss()
 
         val latestName = config.optString("versionName", "nueva")
         val changelog = config.optString("changelog", "Hay una nueva versión disponible.")
@@ -96,8 +208,20 @@ object AppUpdateManager {
             .trim().ifEmpty { DEFAULT_TIKTOK_URL }
 
         val content = activity.layoutInflater.inflate(R.layout.dialog_update_required, null)
-        content.findViewById<TextView>(R.id.tv_update_title).text = "Freezy v$latestName"
-        content.findViewById<TextView>(R.id.tv_update_changelog).text = changelog
+        content.findViewById<TextView>(R.id.tv_update_badge)?.text =
+            NativeBridge.getNativeString(NativeBridge.STRING_BADGE_UPDATE_REQUIRED)
+        content.findViewById<TextView>(R.id.tv_update_title)?.text = "Freezy v$latestName"
+        content.findViewById<TextView>(R.id.tv_update_subtitle)?.text =
+            NativeBridge.getNativeString(NativeBridge.STRING_UPDATE_SUBTITLE)
+        content.findViewById<TextView>(R.id.tv_update_changelog)?.text = changelog
+        content.findViewById<TextView>(R.id.tv_update_hint)?.text =
+            NativeBridge.getNativeString(NativeBridge.STRING_UPDATE_HINT)
+        content.findViewById<TextView>(R.id.btn_update_whatsapp)?.text =
+            NativeBridge.getNativeString(NativeBridge.STRING_BTN_OPEN_WHATSAPP)
+        content.findViewById<TextView>(R.id.tv_update_tiktok_title)?.text =
+            NativeBridge.getNativeString(NativeBridge.STRING_TIKTOK_TITLE)
+        content.findViewById<TextView>(R.id.tv_update_tiktok_subtitle)?.text =
+            NativeBridge.getNativeString(NativeBridge.STRING_TIKTOK_SUBTITLE)
 
         val dialog = AlertDialog.Builder(activity)
             .setView(content)
@@ -137,12 +261,11 @@ object AppUpdateManager {
         }
         for (packageName in packages) {
             try {
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                if (packageName != null) intent.setPackage(packageName)
-                activity.startActivity(intent)
+                activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    if (packageName != null) setPackage(packageName)
+                })
                 return
             } catch (_: Exception) {
-                // Probar la siguiente aplicación o el navegador genérico.
             }
         }
         Toast.makeText(activity, "No se pudo abrir el enlace.", Toast.LENGTH_LONG).show()

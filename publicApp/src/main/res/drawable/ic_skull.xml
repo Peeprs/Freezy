@@ -1,0 +1,35 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Cyber / Tactical Skull Vector Icon -->
+    <!-- Cranium & Jaw Outline -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2 C6.48,2 2,6.48 2,12 C2,15.7 4.02,18.94 7,20.67 L7,22 C7,22.55 7.45,23 8,23 L16,23 C16.55,23 17,22.55 17,22 L17,20.67 C19.98,18.94 22,15.7 22,12 C22,6.48 17.52,2 12,2 Z" />
+
+    <!-- Left Eye Socket -->
+    <path
+        android:fillColor="#0D1117"
+        android:pathData="M8.5,10.5 C7.4,10.5 6.5,11.62 6.5,13 C6.5,14.38 7.4,15.5 8.5,15.5 C9.6,15.5 10.5,14.38 10.5,13 C10.5,11.62 9.6,10.5 8.5,10.5 Z" />
+
+    <!-- Right Eye Socket -->
+    <path
+        android:fillColor="#0D1117"
+        android:pathData="M15.5,10.5 C14.4,10.5 13.5,11.62 13.5,13 C13.5,14.38 14.4,15.5 15.5,15.5 C16.6,15.5 17.5,14.38 17.5,13 C17.5,11.62 16.6,10.5 15.5,10.5 Z" />
+
+    <!-- Nose Cavity (Inverted Triangle) -->
+    <path
+        android:fillColor="#0D1117"
+        android:pathData="M12,14.8 L10.8,17.2 L13.2,17.2 Z" />
+
+    <!-- Teeth Separators -->
+    <path
+        android:strokeColor="#0D1117"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M10,20.5 L10,22.5 M12,20.5 L12,22.5 M14,20.5 L14,22.5" />
+
+</vector>

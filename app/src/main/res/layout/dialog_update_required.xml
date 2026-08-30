@@ -13,7 +13,6 @@
         android:layout_width="76dp"
         android:layout_height="76dp"
         android:layout_gravity="center_horizontal"
-        android:contentDescription="Freezy"
         android:scaleType="fitCenter"
         android:src="@drawable/freezy_logo" />
 
@@ -26,7 +25,6 @@
         android:background="@drawable/bg_update_badge"
         android:fontFamily="sans-serif-medium"
         android:letterSpacing="0.12"
-        android:text="ACTUALIZACIÓN REQUERIDA"
         android:textColor="#D996FF"
         android:textSize="11sp" />
 
@@ -37,16 +35,15 @@
         android:layout_marginTop="15dp"
         android:fontFamily="sans-serif-black"
         android:gravity="center"
-        android:text="Freezy v4.1.0"
         android:textColor="#F8F5FC"
         android:textSize="27sp" />
 
     <TextView
+        android:id="@+id/tv_update_subtitle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="7dp"
         android:gravity="center"
-        android:text="Hay una nueva versión disponible"
         android:textColor="#AFA9B8"
         android:textSize="14sp" />
 
@@ -66,11 +63,11 @@
         android:textSize="15sp" />
 
     <TextView
+        android:id="@+id/tv_update_hint"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="18dp"
         android:gravity="center"
-        android:text="Actualiza para continuar usando Freezy"
         android:textColor="#8F8798"
         android:textSize="12sp" />
 
@@ -84,7 +81,6 @@
         android:focusable="true"
         android:fontFamily="sans-serif-black"
         android:gravity="center"
-        android:text="ABRIR WHATSAPP"
         android:textColor="#FFFFFF"
         android:textSize="15sp" />
 
@@ -104,7 +100,6 @@
         <ImageView
             android:layout_width="28dp"
             android:layout_height="28dp"
-            android:contentDescription="TikTok"
             android:src="@drawable/ic_tiktok" />
 
         <LinearLayout
@@ -115,18 +110,18 @@
             android:orientation="vertical">
 
             <TextView
+                android:id="@+id/tv_update_tiktok_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:fontFamily="sans-serif-medium"
-                android:text="Novedades en TikTok"
                 android:textColor="#F0EAF4"
                 android:textSize="14sp" />
 
             <TextView
+                android:id="@+id/tv_update_tiktok_subtitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="Cambios, avisos y demostraciones"
                 android:textColor="#8F8798"
                 android:textSize="10sp" />
         </LinearLayout>

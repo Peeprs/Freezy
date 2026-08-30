@@ -57,6 +57,8 @@ android {
             )
         }
         debug {
+            applicationIdSuffix = ".Debug"
+            versionNameSuffix = "-Debug"
             isMinifyEnabled = false
             isShrinkResources = false
         }
